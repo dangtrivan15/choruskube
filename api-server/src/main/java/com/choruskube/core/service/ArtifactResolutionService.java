@@ -326,23 +326,17 @@ public class ArtifactResolutionService {
      * Passthrough arm: attachments from the human gate whose decision routed back to this node.
      *
      * <p>Two ways a human gate can have routed work here, and the two arms below are genuinely
-     * alternative — neither shares a precondition with the other, because the Supervisor's
-     * execution row is not reliably a {@code reviewerType == human} row (see below):
+     * alternative — neither shares a precondition with the other:
      *
      * <ul>
      *   <li>An ordinary gate fires an edge, which the orchestrator records in {@code
      *       traversed_edge_ids}, so that case is an exact lookup rather than a re-evaluation of
-     *       edge conditions, gated on {@code reviewerType == human} to exclude AI nodes that
-     *       happen to share a traversed edge id space.
+     *       edge conditions, gated on the deciding node being human (see {@link #isHumanGate}) to
+     *       exclude AI nodes that happen to share a traversed edge id space.
      *   <li>The Supervisor fires no edge at all, so it is matched instead on its {@code
      *       route:<label>} decision string, structurally confirmed by requiring the deciding
      *       execution's template node id to actually be the template's routing hub — not merely
-     *       inferred from the decision string shape. This cannot be folded into the same {@code
-     *       reviewerType == human} precondition as the edge-based arm: {@code reviewerType} is
-     *       only ever set by {@code InternalRunService.writeReviewHistory}, which the orchestrator
-     *       calls solely for nodes with a non-empty loop group, and the Supervisor has none by
-     *       design (its loop-group context comes from the escalator, not itself) — so its
-     *       execution row's {@code reviewerType} stays {@code null} in production.
+     *       inferred from the decision string shape.
      * </ul>
      */
     private void collectRoutingGateArtifacts(UUID runId, NodeExecution exec, Map<String, String> artifacts) {
@@ -372,14 +366,16 @@ public class ArtifactResolutionService {
             // edges at all, e.g. the template's entrypoint — has nothing in traversed_edge_ids to
             // match; the decision string is the only record of where it sent the run.
             String myLabel = null;
+            Set<UUID> humanNodeIds = new HashSet<>();
             JsonNode nodes = snapshot.get("nodes");
             if (nodes != null) {
                 for (JsonNode node : nodes) {
-                    if (node.path("template_node_id")
-                            .asText()
-                            .equals(exec.getTemplateNodeId().toString())) {
+                    String nodeId = node.path("template_node_id").asText();
+                    if (nodeId.equals(exec.getTemplateNodeId().toString())) {
                         myLabel = node.path("label").asText(null);
-                        break;
+                    }
+                    if ("human".equalsIgnoreCase(node.path("executor_type").asText())) {
+                        humanNodeIds.add(UUID.fromString(nodeId));
                     }
                 }
             }
@@ -395,7 +391,7 @@ public class ArtifactResolutionService {
 
             NodeExecution gate =
                     nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed).stream()
-                            .filter(e -> (e.getReviewerType() == ReviewerType.human && traversedAny(e, inboundEdgeIds))
+                            .filter(e -> (isHumanGate(e, humanNodeIds) && traversedAny(e, inboundEdgeIds))
                                     || (hubNodeId != null
                                             && hubNodeId.equals(e.getTemplateNodeId())
                                             && targetLabel != null
@@ -419,6 +415,18 @@ public class ArtifactResolutionService {
             log.warn(
                     "Failed to resolve routing-gate artifacts for node execution {}: {}", exec.getId(), e.getMessage());
         }
+    }
+
+    /**
+     * {@code reviewerType} is written only by {@code InternalRunService.writeReviewHistory}, which
+     * the orchestrator calls solely for a node in a loop group, so a gate outside one (Task
+     * Delivery's Await Story Revision, the Supervisor) is known as human only by the run's graph.
+     */
+    private static boolean isHumanGate(NodeExecution exec, Set<UUID> humanNodeIds) {
+        if (exec.getReviewerType() != null) {
+            return exec.getReviewerType() == ReviewerType.human;
+        }
+        return humanNodeIds.contains(exec.getTemplateNodeId());
     }
 
     private boolean traversedAny(NodeExecution exec, Set<UUID> edgeIds) {

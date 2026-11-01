@@ -587,7 +587,20 @@ assert_analyze "with the story_conflict marker" story_conflict story_conflict.md
 run_analyze 1 "Plain Task" "## Task [e2e-analyze:needs_spec]"
 assert_analyze "with the marker in the prompt" needs_spec task_spec.md
 run_analyze 2 "Task [e2e-analyze:story_conflict]" ""
+mkdir -p "$SD_IN/await_story_revision"
+printf 'The Story spec moved from v1 to v2 while this Task waited.\n' > "$SD_IN/await_story_revision/human_guidance.md"
+run_sd analyze
 assert_analyze "on iteration 2" planned ""
+
+# A resume after a story conflict carries the reconciler's guidance; without it the server's
+# passthrough of the Await gate's attachments regressed.
+run_analyze 2 "Task [e2e-analyze:story_conflict]" ""
+[ "$SD_RUN_RC" -ne 0 ] && [ -z "$SD_RUN_DECISION" ] \
+  && ok "analyze resumed after a story conflict without the Await gate's guidance fails before deciding" \
+  || fail "analyze resumed after a story conflict without the Await gate's guidance fails before deciding (rc=$SD_RUN_RC decision='$SD_RUN_DECISION')"
+grep -q "await_story_revision/human_guidance.md" <<<"$SD_RUN_OUT" \
+  && ok "analyze names the missing Await gate guidance" \
+  || fail "analyze names the missing Await gate guidance ($SD_RUN_OUT)"
 
 run_analyze 1 "Task [e2e-analyze:replan]" ""
 [ "$SD_RUN_RC" -ne 0 ] && [ -z "$SD_RUN_DECISION" ] \

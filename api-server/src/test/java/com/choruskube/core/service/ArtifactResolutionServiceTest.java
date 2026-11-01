@@ -687,6 +687,37 @@ class ArtifactResolutionServiceTest {
         assertThat(manifest.artifacts()).isEmpty();
     }
 
+    @Test
+    void resolveInputArtifactManifest_humanGateWithoutLoopGroup_passesItsAttachmentsOn() {
+        // A gate outside any loop group never gets a review-history row, so production leaves its
+        // reviewerType null: Task Delivery's Await Story Revision resumes Analyze this way.
+        ManifestFixture f = new ManifestFixture();
+        f.gateWithoutReviewHistoryRoutedHere(
+                "await_story_revision",
+                "human",
+                "{\"human_guidance.md\":\"system/runs/r/gate-attachments/g2/human_guidance.md\"}");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts())
+                .containsEntry(
+                        "await_story_revision/human_guidance.md",
+                        "system/runs/r/gate-attachments/g2/human_guidance.md");
+        assertThat(manifest.required()).isEmpty();
+    }
+
+    @Test
+    void resolveInputArtifactManifest_agentNodeWithoutLoopGroup_isNotAGate() {
+        ManifestFixture f = new ManifestFixture();
+        f.gateWithoutReviewHistoryRoutedHere("analyze", "ai", "{\"output\":\"system/runs/r/analyze-1/out/\"}");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts()).isEmpty();
+    }
+
     // --- resolveInputArtifactManifest: newest-producer group ---
 
     private static final String PLAN_GROUP = "[{\"newest_of\":[\"analyze\",\"task_spec_review\"],\"alias\":\"plan\","
@@ -904,6 +935,7 @@ class ArtifactResolutionServiceTest {
         final List<NodeExecution> completed = new ArrayList<>();
         final List<TemplateNode> extraNodes = new ArrayList<>();
         final Map<String, TemplateNode> producerNodes = new HashMap<>();
+        final Map<UUID, String> executorTypeByNodeId = new HashMap<>();
 
         ManifestFixture() {
             targetNode.setId(targetNodeId);
@@ -964,14 +996,24 @@ class ArtifactResolutionServiceTest {
         }
 
         void gateRoutedHere(String label, String artifactRefs) {
-            addGate(label, artifactRefs, inboundEdgeId);
+            addGate(label, artifactRefs, inboundEdgeId, ReviewerType.human, "human");
         }
 
         void gateRoutedElsewhere(String label, String artifactRefs) {
-            addGate(label, artifactRefs, otherEdgeId);
+            addGate(label, artifactRefs, otherEdgeId, ReviewerType.human, "human");
         }
 
-        private void addGate(String label, String artifactRefs, UUID traversedEdgeId) {
+        /** A node outside any loop group, whose execution row production leaves without a reviewerType. */
+        void gateWithoutReviewHistoryRoutedHere(String label, String executorType, String artifactRefs) {
+            addGate(label, artifactRefs, inboundEdgeId, null, executorType);
+        }
+
+        private void addGate(
+                String label,
+                String artifactRefs,
+                UUID traversedEdgeId,
+                ReviewerType reviewerType,
+                String executorType) {
             NodeExecution gate = new NodeExecution();
             gate.setId(UUID.randomUUID());
             gate.setWorkflowRunId(runId);
@@ -979,18 +1021,26 @@ class ArtifactResolutionServiceTest {
             gate.setStatus(NodeExecutionStatus.completed);
             gate.setIteration(1);
             gate.setLabel(label);
-            gate.setReviewerType(ReviewerType.human);
+            gate.setReviewerType(reviewerType);
             gate.setArtifactRefs(artifactRefs);
             gate.setTraversedEdgeIds(new UUID[] {traversedEdgeId});
             gate.setCompletedAt(Instant.now());
             completed.add(gate);
+            executorTypeByNodeId.put(gate.getTemplateNodeId(), executorType);
         }
 
         void stub() {
             WorkflowRun run = new WorkflowRun();
             run.setId(runId);
 
-            String snapshot = "{\"edges\":[" + "{\"template_edge_id\":\""
+            StringBuilder nodes = new StringBuilder();
+            executorTypeByNodeId.forEach((nodeId, executorType) -> nodes.append(nodes.isEmpty() ? "" : ",")
+                    .append("{\"template_node_id\":\"")
+                    .append(nodeId)
+                    .append("\",\"executor_type\":\"")
+                    .append(executorType)
+                    .append("\"}"));
+            String snapshot = "{\"nodes\":[" + nodes + "],\"edges\":[" + "{\"template_edge_id\":\""
                     + inboundEdgeId + "\",\"source_node_id\":\"" + sourceNodeId + "\",\"target_node_id\":\""
                     + targetNodeId + "\"}," + "{\"template_edge_id\":\""
                     + otherEdgeId + "\",\"source_node_id\":\"" + sourceNodeId + "\",\"target_node_id\":\""

@@ -90,7 +90,9 @@
 #   analyze          Task Delivery's Analyze: decides on the marker
 #                    [e2e-analyze:planned|needs_spec|story_conflict] in config.json's
 #                    prompt or Task title (default planned; always planned on iteration
-#                    2+), writing plan.md plus the file that decision requires
+#                    2+), writing plan.md plus the file that decision requires. With the
+#                    story_conflict marker, iteration 2+ is a resume from Await Story
+#                    Revision and requires await_story_revision/human_guidance.md
 #   task_spec_review  Task Spec Review: approves plan/plan.md and plan/task_spec.md
 #                    unchanged, writing them back with task_spec_review.md
 #   rate_limited     Mock parity for the Claude quota park-and-resume contract
@@ -1117,8 +1119,12 @@ None."
         ;;
     esac
     # The marker outlives a resume; deciding story_conflict again would loop the Task through
-    # Story revisions forever.
+    # Story revisions forever. The resume itself must deliver the Await gate's guidance, which
+    # is what the real prompt reads to re-plan.
     if [ "$ITERATION" -ge 2 ]; then
+      if [ "$DECISION" = "story_conflict" ]; then
+        require_input await_story_revision/human_guidance.md
+      fi
       DECISION="planned"
     fi
     REALISES=$(spec_headings "$SPEC")
