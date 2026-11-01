@@ -76,9 +76,28 @@ class DeliveryPromptsTest {
                 .as("PR bodies draw Context and Approach from the Task spec, else the realised story sections")
                 .contains("`task_spec.md` when it is present; otherwise it is the story spec")
                 .as("a story spec section another Task realises is that Task's to graduate")
-                .contains("Take each decision from whichever spec states it")
-                .as("the Story's own deferrals were proposed at the Story gate")
-                .contains("never propose them again");
+                .contains("Take each decision from whichever spec states it");
+    }
+
+    @Test
+    void taskDeliveryImplementProposesOnlyTheTaskSpecsDeferrals() {
+        String prompt = DeliveryPrompts.implement(TASK_DELIVERY);
+        int start = prompt.indexOf("## Proposing deferred work to the roadmap");
+        int end = prompt.indexOf("A deferral criterion is one of:", start);
+        assertThat(start).isGreaterThanOrEqualTo(0);
+        assertThat(end).isGreaterThan(start);
+        String section = prompt.substring(start, end).replaceAll("\\s+", " ");
+        assertThat(section)
+                .as("the Story's deferrals were proposed at the Story gate; re-proposing them per Task duplicates them")
+                .contains("containing every Caveat tagged Future work in `task_spec.md`")
+                .contains("without a `task_spec.md`, propose only those additions")
+                .contains("The story spec's Future-work caveats are not this run's to propose")
+                .as("an unscoped 'every Caveat' read against the story spec re-proposes the Story's deferrals")
+                .doesNotContain("The spec already decided what to defer")
+                .doesNotContain("containing every Caveat tagged Future work,");
+        assertThat(prompt.replaceAll("\\s+", " "))
+                .as("the scope is stated once, where the proposal is written")
+                .doesNotContain("never propose them again");
     }
 
     @Test

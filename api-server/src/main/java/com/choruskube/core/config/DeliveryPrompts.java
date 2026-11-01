@@ -179,11 +179,7 @@ final class DeliveryPrompts {
             the server rejects create-proposal, update-proposal, create-story, create-task,
             create-dependency and create-milestone.
 
-            The spec already decided what to defer, and the human approved it with the spec.
-            After every repo's implementation is done, write ONE proposal for the whole run
-            containing every Caveat tagged Future work, placed as its "Proposed as" line
-            says, and nothing else except the additions below. If this run's change completed
-            a Future-work caveat after all, leave it out and say so in the PR body.
+            <<ROADMAP_SOURCE>>
 
             A deferral criterion is one of:
               (a) it needs its own design decision with real alternatives, one this
@@ -858,6 +854,13 @@ final class DeliveryPrompts {
                       - Expected Changed Files, Testing Strategy, Manual Operations and Part 2
                                             -> discard; they are execution scaffolding
                     """),
+            entry("ROADMAP_SOURCE", """
+                    The spec already decided what to defer, and the human approved it with the spec.
+                    After every repo's implementation is done, write ONE proposal for the whole run
+                    containing every Caveat tagged Future work, placed as its "Proposed as" line
+                    says, and nothing else except the additions below. If this run's change completed
+                    a Future-work caveat after all, leave it out and say so in the PR body.
+                    """),
             entry("PR_SPEC_SOURCE", ""),
             entry("REVIEW_TARGET", """
                     Note: by the time code reaches you, the spec is already approved — do not
@@ -898,9 +901,7 @@ final class DeliveryPrompts {
 
                     Below, "the spec" means `task_spec.md` when it is present, and otherwise the
                     story spec cut to what concerns the sections that `plan.md`'s `Realises:`
-                    line names; the rest of the story spec is context here. The story spec's
-                    own Future-work caveats were proposed to the roadmap when it was approved:
-                    never propose them again.
+                    line names; the rest of the story spec is context here.
                     """),
             entry("SPEC_INPUTS", """
                     - `/workspace/in/plan/plan.md` — the Task plan described above. Always
@@ -938,6 +939,16 @@ final class DeliveryPrompts {
             entry("ROUTING_DISCARD", """
                       - Testing Strategy, Manual Operations and plan.md
                                             -> discard; they are execution scaffolding
+                    """),
+            entry("ROADMAP_SOURCE", """
+                    Only `task_spec.md` decided what this Task defers, and the human approved it
+                    with that spec. After every repo's implementation is done, write ONE proposal
+                    for the whole run containing every Caveat tagged Future work in
+                    `task_spec.md`, placed as its "Proposed as" line says, and nothing else except
+                    the additions below; without a `task_spec.md`, propose only those additions.
+                    The story spec's Future-work caveats are not this run's to propose: they were
+                    proposed when the Story spec was approved. If this run's change completed a
+                    Future-work caveat after all, leave it out and say so in the PR body.
                     """),
             entry("PR_SPEC_SOURCE", """
                          "The specification" below is `task_spec.md` when it is present;
