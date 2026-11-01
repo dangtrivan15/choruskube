@@ -220,7 +220,14 @@ public class GateFinalizeService {
         if (held.isEmpty()) {
             return new HeldClaim(null);
         }
-        Optional<String> reason = gateRecheck.reasonNotToReapply(held.get(), runService.readSnapshot(run(runId)));
+        WorkflowRun run = run(runId);
+        JsonNode snapshot = runService.readSnapshot(run);
+        // Re-applied past a moved or revising Story spec, it would merge what no one re-checked against it.
+        Optional<String> reason = gateRecheck
+                .reasonNotToReapply(held.get(), snapshot)
+                .or(() -> runService
+                        .storyVersionStale(run, gate.getTemplateNodeId(), snapshot)
+                        .map(RunService.StoryVersionStale::reason));
         if (reason.isPresent()) {
             gateRecheck.voidStamp(held.get().getId(), reason.get(), gateExecId);
             publish(runId, gateExecId, NodeExecutionStatus.awaiting_human);
@@ -253,7 +260,14 @@ public class GateFinalizeService {
             return refusedPlan(stamp.getVoidReason());
         }
         requireFinalizing(gate, stamp);
-        JsonNode snapshot = runService.readSnapshot(run(runId));
+        WorkflowRun run = run(runId);
+        JsonNode snapshot = runService.readSnapshot(run);
+        // Again here: a revision or a new spec version can land between the approval and its merge.
+        Optional<RunService.StoryVersionStale> storyStale =
+                runService.storyVersionStale(run, gate.getTemplateNodeId(), snapshot);
+        if (storyStale.isPresent()) {
+            return refusedPlan(storyStale.get().reason());
+        }
         JsonNode config = nodeConfig(snapshot, gate);
 
         Optional<RoadmapMaterializeMode> mode = RoadmapMaterializeMode.fromConfigOverrides(config);

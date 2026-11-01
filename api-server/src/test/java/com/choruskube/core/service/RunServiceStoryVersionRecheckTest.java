@@ -8,6 +8,7 @@ import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.dto.SignalRequest;
 import com.choruskube.core.dto.SignalResponse;
 import com.choruskube.core.exception.ConflictException;
+import com.choruskube.core.exception.GateClaimConflictException;
 import com.choruskube.core.model.DriftRecheckConfig.StampMode;
 import com.choruskube.core.model.GateStamp;
 import com.choruskube.core.model.NodeExecution;
@@ -29,6 +30,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -332,6 +334,24 @@ class RunServiceStoryVersionRecheckTest {
         verifyNoInteractions(storySpecService, taskRepo);
     }
 
+    @Test
+    void approved_gateNoLongerAwaiting_versionMoved_writesNothingAndIsRefusedByTheClaim() {
+        NodeExecution exec = stubExec();
+        exec.setStatus(NodeExecutionStatus.running);
+        when(nodeExecutionClaimService.compareAndSetStatus(
+                        nodeExecId, NodeExecutionStatus.awaiting_human, NodeExecutionStatus.running))
+                .thenReturn(0);
+        stubRun(STORY_RECHECK_GATE, taskId, 1);
+        currentVersion(2);
+
+        assertThatThrownBy(this::approve).isInstanceOf(GateClaimConflictException.class);
+
+        verify(uploadService, never()).overwriteRunInput(any(), any(), any());
+        verify(uploadService, never()).uploadGateText(any(), any(), any(), any(), any());
+        verify(runRepo, never()).setStorySpecVersion(any(), anyInt());
+        verify(workflowStub, never()).signal(anyString(), any());
+    }
+
     private GateStamp stubHeld() {
         GateStamp stamp = new GateStamp();
         stamp.setId(UUID.randomUUID());
@@ -376,7 +396,10 @@ class RunServiceStoryVersionRecheckTest {
 
         service.applyHeldApproval(stamp.getId());
 
-        verify(gateRecheck).voidStamp(eq(stamp.getId()), contains("v1 to v2"), isNull());
+        InOrder order = inOrder(gateRecheck);
+        order.verify(gateRecheck)
+                .voidStamp(stamp.getId(), "The Story spec moved from v1 to v2 since this Task planned.", null);
+        order.verify(gateRecheck).voidPendingFor(runId, templateNodeId, GateRecheckService.REVIEWER_DECIDED);
         assertThat(signalled().path("decision").asText()).isEqualTo("rereview");
         verify(gateRecheck, never()).consume(any());
         verify(runRepo).setStorySpecVersion(runId, 2);

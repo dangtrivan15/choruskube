@@ -703,35 +703,26 @@ public class RunService {
      */
     private Optional<SignalResponse> recheckStoryVersion(
             WorkflowRun run, NodeExecution exec, SignalRequest request, GateStamp heldStamp) {
-        if (run.getTaskId() == null || !"approved".equalsIgnoreCase(request.decision())) {
+        // A gate no longer awaiting is refused by the claim; writing first would replace the
+        // guidance a reviewer's decision left at this execution.
+        if (exec.getStatus() != NodeExecutionStatus.awaiting_human
+                || run.getTaskId() == null
+                || !"approved".equalsIgnoreCase(request.decision())) {
             return Optional.empty();
         }
-        JsonNode nodeConfig = decisionOptionsResolver.findNodeConfigOverrides(
-                readSnapshot(run).get("nodes"), exec.getTemplateNodeId());
-        Optional<StoryVersionRecheckConfig> recheck = StoryVersionRecheckConfig.fromConfigOverrides(nodeConfig);
-        if (recheck.isEmpty()) {
+        Optional<StoryVersionStale> stale = storyVersionStale(run, exec.getTemplateNodeId(), readSnapshot(run));
+        if (stale.isEmpty()) {
             return Optional.empty();
         }
-        UUID storyId = taskRepo.findById(run.getTaskId()).map(Task::getStoryId).orElse(null);
-        if (storyId == null) {
-            return Optional.empty();
-        }
-        Optional<WorkflowRun> revision = storySpecService.openDesignRun(storyId);
-        if (revision.isPresent()) {
-            throw new ConflictException("The Story spec is under revision (run "
-                    + revision.get().getId() + "); approve after it completes");
-        }
-        Optional<StorySpecVersion> current = storySpecService.current(storyId);
-        Integer planned = run.getStorySpecVersion();
-        if (current.isEmpty() || planned == null || current.get().getVersion() <= planned) {
-            return Optional.empty();
+        if (stale.get().revisionRunId() != null) {
+            throw new ConflictException(stale.get().reason());
         }
 
         UUID runId = run.getId();
-        int to = current.get().getVersion();
-        String guidance = storyVersionGuidance(planned, to);
-        uploadService.overwriteRunInput(
-                runId, StorySpecLifecycleService.SPEC_FILE, current.get().getContent());
+        int planned = stale.get().planned();
+        StorySpecVersion current = stale.get().current();
+        String guidance = storyVersionGuidance(planned, current.getVersion());
+        uploadService.overwriteRunInput(runId, StorySpecLifecycleService.SPEC_FILE, current.getContent());
         String guidanceRefs = uploadService.uploadGateText(
                 storagePrefixResolver.storagePrefixForRun(runId),
                 runId,
@@ -740,29 +731,71 @@ public class RunService {
                 guidance);
         if (heldStamp != null) {
             // Otherwise the rerouted decision voids it as a reviewer's.
-            gateRecheck.voidStamp(
-                    heldStamp.getId(),
-                    "The Story spec moved from v" + planned + " to v" + to
-                            + ", so the approval became a re-review against it.",
-                    null);
+            gateRecheck.voidStamp(heldStamp.getId(), stale.get().reason(), null);
         }
         SignalResponse response =
-                decideGate(run, exec, new SignalRequest(recheck.get().route(), guidance, guidanceRefs, null), null);
+                decideGate(run, exec, new SignalRequest(stale.get().route(), guidance, guidanceRefs, null), null);
         // Recorded only once the round is under way: recorded for a round that never started, it
         // would let the next approval skip that round. Unrecorded, the next approval re-runs it.
         try {
-            runRepo.setStorySpecVersion(runId, to);
+            runRepo.setStorySpecVersion(runId, current.getVersion());
         } catch (RuntimeException e) {
-            logger.error("Could not record Story spec v{} on run {}: {}", to, runId, e.getMessage(), e);
+            logger.error(
+                    "Could not record Story spec v{} on run {}: {}", current.getVersion(), runId, e.getMessage(), e);
         }
         logger.info(
-                "Approval of gate {} of run {} became '{}': the Story spec moved from v{} to v{}",
+                "Approval of gate {} of run {} became '{}': {}",
                 exec.getId(),
                 runId,
-                recheck.get().route(),
-                planned,
-                to);
+                stale.get().route(),
+                stale.get().reason());
         return Optional.of(response);
+    }
+
+    /**
+     * Why an approval at this gate by a Task's run must not apply as it is: set {@code
+     * revisionRunId} while the Story's spec is under revision, otherwise the spec moved from {@code
+     * planned} to {@code current}.
+     */
+    record StoryVersionStale(UUID revisionRunId, String route, int planned, StorySpecVersion current) {
+
+        String reason() {
+            return revisionRunId != null
+                    ? "The Story spec is under revision (run " + revisionRunId + "); approve after it completes"
+                    : "The Story spec moved from v" + planned + " to v" + current.getVersion()
+                            + " since this Task planned.";
+        }
+    }
+
+    /**
+     * The one story-version test every path applying an approval asks, so a held approval re-applied
+     * by the workflow is judged exactly as a human's click. Empty for a gate without {@code
+     * story_version_recheck}, a run without a Task, or a spec unchanged since the run planned.
+     */
+    Optional<StoryVersionStale> storyVersionStale(WorkflowRun run, UUID gateTemplateNodeId, JsonNode snapshot) {
+        if (run.getTaskId() == null) {
+            return Optional.empty();
+        }
+        Optional<StoryVersionRecheckConfig> recheck = StoryVersionRecheckConfig.fromConfigOverrides(
+                decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), gateTemplateNodeId));
+        if (recheck.isEmpty()) {
+            return Optional.empty();
+        }
+        UUID storyId = taskRepo.findById(run.getTaskId()).map(Task::getStoryId).orElse(null);
+        if (storyId == null) {
+            return Optional.empty();
+        }
+        String route = recheck.get().route();
+        Optional<WorkflowRun> revision = storySpecService.openDesignRun(storyId);
+        if (revision.isPresent()) {
+            return Optional.of(new StoryVersionStale(revision.get().getId(), route, 0, null));
+        }
+        Optional<StorySpecVersion> current = storySpecService.current(storyId);
+        Integer planned = run.getStorySpecVersion();
+        if (current.isEmpty() || planned == null || current.get().getVersion() <= planned) {
+            return Optional.empty();
+        }
+        return Optional.of(new StoryVersionStale(null, route, planned, current.get()));
     }
 
     static String storyVersionGuidance(int planned, int current) {
