@@ -118,13 +118,9 @@ test.describe("Task Delivery", () => {
       await page.goto(`/tasks/${task.id}`);
       await expect(roadmapPage.taskStartButton).toBeVisible();
       await expect(roadmapPage.taskStartButton).toBeDisabled();
-      // Re-hovered on each attempt: a live update can re-render the trigger under a resting cursor.
-      await expect(async () => {
-        await roadmapPage.taskStartBlockedTrigger.hover();
-        await expect(roadmapPage.taskStartBlockedTooltip).toContainText("Story spec not approved yet", {
-          timeout: 2_000,
-        });
-      }).toPass({ timeout: 15_000 });
+      await expect(roadmapPage.taskStartReason).toContainText("Story spec not approved yet");
+      await expect(roadmapPage.taskStartButton).toHaveAccessibleDescription(/Story spec not approved yet/);
+      await expect(roadmapPage.taskDesignStoryButton).toBeVisible();
 
       await expect(api.startTask(task.id)).rejects.toThrow(
         /→ 409:.*Cannot start this Task: Story spec not approved yet/,

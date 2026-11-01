@@ -68,8 +68,8 @@ export class RoadmapPage {
   readonly taskEditButton: Locator;
   readonly taskDeleteButton: Locator;
   readonly taskRunHistoryList: Locator;
-  readonly taskStartBlockedTrigger: Locator;
-  readonly taskStartBlockedTooltip: Locator;
+  readonly taskStartReason: Locator;
+  readonly taskDesignStoryButton: Locator;
   readonly backToStoryLink: Locator;
 
   // Create Epic dialog
@@ -182,9 +182,8 @@ export class RoadmapPage {
     this.taskEditButton = page.getByTestId("task-edit-button");
     this.taskDeleteButton = page.getByTestId("task-delete-button");
     this.taskRunHistoryList = page.getByTestId("task-run-history-list");
-    // A disabled Start button takes no pointer events, so its tooltip hangs off a wrapping span.
-    this.taskStartBlockedTrigger = page.getByTestId("task-start-button-tooltip-trigger");
-    this.taskStartBlockedTooltip = page.getByTestId("task-start-blocked-tooltip");
+    this.taskStartReason = page.getByTestId("task-start-reason");
+    this.taskDesignStoryButton = page.getByTestId("task-design-story-button");
     this.backToStoryLink = page.getByRole("link", { name: "Back to Story" });
 
     // Create Epic dialog

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { ArrowLeft, Trash2, Pencil, Play, CheckCircle2, GitBranch, Layers } from "lucide-react";
+import { ArrowLeft, Trash2, Pencil, Play, CheckCircle2, GitBranch, Layers, Sparkles } from "lucide-react";
 import Authorized from "@/components/Authorized";
 import { apiErrorMessage } from "@/lib/api";
 import { useTask, useDeleteTask, useStartTask, useCompleteTask } from "@/hooks/useTasks";
 import { useStory } from "@/hooks/useStories";
+import { useDesignStory } from "@/hooks/useStorySpec";
 import { useTaskRuns } from "@/hooks/useTaskRuns";
 import { useRoadmapSubscription } from "@/hooks/useRoadmapSubscription";
 import { useBlockingChain } from "@/hooks/useBlockingChain";
@@ -79,10 +80,13 @@ export default function TaskDetailPage() {
   const chainQuery = useBlockingChain("task", id ?? "", !!id);
   const isBlocked = chainQuery.data?.readiness === "BLOCKED";
   const specReason = storySpecStartReason(parentStory);
+  const openDesignRunId = parentStory?.openDesignRunId ?? null;
   const startDisabled = isBlocked || specReason != null;
   const deleteTask = useDeleteTask(task?.storyId ?? "");
   const startTask = useStartTask();
   const completeTask = useCompleteTask();
+  const designStory = useDesignStory();
+  const startReasonId = useId();
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -143,7 +147,13 @@ export default function TaskDetailPage() {
   // the span underneath it.
   function renderStartTrigger(testId: string, label: string) {
     const button = (
-      <Button data-testid={testId} size="sm" onClick={() => setStartOpen(true)} disabled={startDisabled}>
+      <Button
+        data-testid={testId}
+        size="sm"
+        onClick={() => setStartOpen(true)}
+        disabled={startDisabled}
+        aria-describedby={startDisabled ? startReasonId : undefined}
+      >
         <Play className="size-4" />
         {label}
       </Button>
@@ -252,6 +262,43 @@ export default function TaskDetailPage() {
           </Authorized>
         )}
       </div>
+      {startDisabled && (task.status === "backlog" || canRestart) && (
+        <div data-testid="task-start-reason" className="space-y-2 text-sm text-muted-foreground">
+          <div id={startReasonId} className="space-y-1">
+            {specReason && (
+              <p>
+                {specReason}.
+                {openDesignRunId && (
+                  <>
+                    {" "}A{" "}
+                    <Link to={`/runs/${openDesignRunId}`} className="underline">
+                      {parentStory?.specUnderRevision ? "revision run" : "Story Design run"}
+                    </Link>{" "}
+                    is {parentStory?.specUnderRevision ? "reworking" : "drafting"} it.
+                  </>
+                )}
+              </p>
+            )}
+            {isBlocked && (
+              <p>Blocked by: {(chainQuery.data?.blockedBy ?? []).map((blocker) => blocker.title).join(", ")}</p>
+            )}
+          </div>
+          {parentStory && parentStory.specVersion == null && !openDesignRunId && (
+            <Authorized require="canOperate">
+              <Button
+                data-testid="task-design-story-button"
+                size="sm"
+                variant="outline"
+                onClick={() => designStory.mutate(parentStory.id)}
+                disabled={designStory.isPending}
+              >
+                <Sparkles className="size-4" />
+                {designStory.isPending ? "Starting..." : "Design Story"}
+              </Button>
+            </Authorized>
+          )}
+        </div>
+      )}
       {completeTask.isError && (
         <p className="text-sm text-destructive">Failed to complete.</p>
       )}
