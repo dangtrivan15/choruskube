@@ -61,10 +61,10 @@ public class ArtifactService {
      * repository lookup, no org-access check.
      *
      * <p>INTERNAL ONLY, package-private on purpose so an {@code /api/**} controller cannot reach
-     * it even by accident — use {@link #listArtifacts} there, which checks org access. The single
-     * caller is the node-completion callback path (already authenticated by {@code
-     * InternalAuthFilter} on {@code /internal/**}), which passes the execution's in-flight,
-     * not-yet-persisted {@code artifactRefs} deliberately: {@code updateNodeExecutionStatus} is
+     * it even by accident — use {@link #listArtifacts} there, which checks org access. Callers sit
+     * on {@code /internal/**}, already authenticated by {@code InternalAuthFilter}. The
+     * node-completion callback passes the execution's in-flight, not-yet-persisted {@code
+     * artifactRefs} deliberately: {@code updateNodeExecutionStatus} is
      * not {@code @Transactional} and Spring Boot runs with {@code open-in-view=false}, so an
      * execId-keyed re-fetch here would read the last-committed row instead of the mutation the
      * caller just made in memory — exactly the state the agent's completion callback is racing

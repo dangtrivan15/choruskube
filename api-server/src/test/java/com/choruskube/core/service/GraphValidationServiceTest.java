@@ -433,6 +433,23 @@ class GraphValidationServiceTest {
     }
 
     @Test
+    void roadmapGateDeclaringArtifactInNewestOfGroupIsValid() {
+        UUID analyzer = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides("{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_extension\"}");
+        gateNode.setRequiredInputArtifacts("[{\"newest_of\":[\"analyzer\"],\"alias\":\"candidates\","
+                + "\"artifacts\":[{\"name\":\"roadmap_candidates.json\"}]}]");
+        var nodes = List.of(makeNode(analyzer, "analyzer", true), gateNode);
+        var edges = List.of(makeEdge(analyzer, gate, null), makeEdge(gate, analyzer, "rejected"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isTrue();
+        assertThat(result.errors()).isEmpty();
+    }
+
+    @Test
     void unknownMergePullRequestsMethodIsRejected() {
         UUID entry = UUID.randomUUID();
         UUID gate = UUID.randomUUID();

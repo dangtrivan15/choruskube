@@ -26,12 +26,17 @@ public class ArtifactResolutionService {
     /** Key under which an agent node records the object storage prefix holding its output files. */
     private static final String OUTPUT_PREFIX_KEY = "output";
 
+    private static final String NEWEST_OF_KEY = "newest_of";
+
+    private static final String ALIAS_KEY = "alias";
+
     private final TemplateNodeRepository templateNodeRepo;
     private final NodeExecutionRepository nodeExecutionRepo;
     private final WorkflowRunRepository workflowRunRepo;
     private final GraphSnapshotBuilder snapshotBuilder;
     private final ObjectMapper objectMapper;
     private final DecisionOptionsResolver decisionOptionsResolver;
+    private final ArtifactService artifactService;
 
     public ArtifactResolutionService(
             TemplateNodeRepository templateNodeRepo,
@@ -39,22 +44,36 @@ public class ArtifactResolutionService {
             WorkflowRunRepository workflowRunRepo,
             GraphSnapshotBuilder snapshotBuilder,
             ObjectMapper objectMapper,
-            DecisionOptionsResolver decisionOptionsResolver) {
+            DecisionOptionsResolver decisionOptionsResolver,
+            ArtifactService artifactService) {
         this.templateNodeRepo = templateNodeRepo;
         this.nodeExecutionRepo = nodeExecutionRepo;
         this.workflowRunRepo = workflowRunRepo;
         this.snapshotBuilder = snapshotBuilder;
         this.objectMapper = objectMapper;
         this.decisionOptionsResolver = decisionOptionsResolver;
+        this.artifactService = artifactService;
     }
 
     /**
      * Resolves required input artifacts for a human-gate template node in a run.
      *
+     * <p>A group names either one producer ({@code template_node_label}, resolved to that node's
+     * highest completed iteration) or several ({@code newest_of} + {@code alias}, resolved to
+     * whichever of them completed most recently and exposed under the alias).
+     *
      * @return List of resolved artifact groups; {@code List.of()} for the Supervisor when nothing
      *     has escalated yet; or {@code null} if no declarations exist (legacy mode).
      */
     public List<ResolvedArtifactGroup> resolveRequiredArtifacts(UUID templateNodeId, UUID runId) {
+        List<DeclaredGroup> groups = resolveDeclaredGroups(templateNodeId, runId);
+        return groups == null ? null : groups.stream().map(DeclaredGroup::group).toList();
+    }
+
+    /** {@code newestOf} marks the groups whose winning producer may not have written every declared name. */
+    private record DeclaredGroup(ResolvedArtifactGroup group, boolean newestOf) {}
+
+    private List<DeclaredGroup> resolveDeclaredGroups(UUID templateNodeId, UUID runId) {
         TemplateNode gateNode = templateNodeRepo.findById(templateNodeId).orElse(null);
         if (gateNode == null) {
             return null;
@@ -68,11 +87,13 @@ public class ArtifactResolutionService {
             if (escalator == null) {
                 return List.of();
             }
-            return List.of(new ResolvedArtifactGroup(
-                    escalator.getId(),
-                    escalator.getLabel() == null ? "" : escalator.getLabel(),
-                    List.of(new ResolvedArtifactEntry(
-                            "escalation.md", "Why this run was escalated to the Supervisor", true))));
+            return List.of(new DeclaredGroup(
+                    new ResolvedArtifactGroup(
+                            escalator.getId(),
+                            escalator.getLabel() == null ? "" : escalator.getLabel(),
+                            List.of(new ResolvedArtifactEntry(
+                                    "escalation.md", "Why this run was escalated to the Supervisor", true))),
+                    false));
         }
         if (gateNode.getRequiredInputArtifacts() == null) {
             return null;
@@ -98,14 +119,21 @@ public class ArtifactResolutionService {
             List<NodeExecution> completedExecs =
                     nodeExecutionRepo.findByWorkflowRunIdAndStatus(runId, NodeExecutionStatus.completed);
 
-            List<ResolvedArtifactGroup> groups = new ArrayList<>();
+            List<DeclaredGroup> groups = new ArrayList<>();
             for (JsonNode group : declarations) {
-                String nodeLabel = group.path("template_node_label").asText(null);
                 JsonNode artifactsNode = group.path("artifacts");
-                if (nodeLabel == null || !artifactsNode.isArray()) {
+                boolean newestOf = group.has(NEWEST_OF_KEY);
+                String groupName = newestOf
+                        ? group.path(ALIAS_KEY).asText(null)
+                        : group.path("template_node_label").asText(null);
+                List<String> producerLabels = newestOf ? producerLabels(group.path(NEWEST_OF_KEY)) : List.of();
+                boolean unnamed = newestOf
+                        ? groupName == null || groupName.isBlank() || producerLabels.isEmpty()
+                        : groupName == null;
+                if (unnamed || !artifactsNode.isArray()) {
                     log.warn(
                             "Skipping malformed required_input_artifacts group for template node {}: "
-                                    + "missing template_node_label or non-array artifacts",
+                                    + "missing template_node_label (or newest_of + alias) or non-array artifacts",
                             templateNodeId);
                     continue;
                 }
@@ -126,17 +154,11 @@ public class ArtifactResolutionService {
                             artifactNode.path("required").asBoolean(false)));
                 }
 
-                UUID sourceTemplateNodeId = labelToTemplateNodeId.get(nodeLabel);
-                UUID resolvedExecId = null;
-                if (sourceTemplateNodeId != null) {
-                    resolvedExecId = completedExecs.stream()
-                            .filter(e -> e.getTemplateNodeId().equals(sourceTemplateNodeId))
-                            .max(Comparator.comparingInt(NodeExecution::getIteration))
-                            .map(NodeExecution::getId)
-                            .orElse(null);
-                }
+                UUID resolvedExecId = newestOf
+                        ? newestProducer(producerLabels, labelToTemplateNodeId, completedExecs)
+                        : latestIterationOf(groupName, labelToTemplateNodeId, completedExecs);
 
-                groups.add(new ResolvedArtifactGroup(resolvedExecId, nodeLabel, entries));
+                groups.add(new DeclaredGroup(new ResolvedArtifactGroup(resolvedExecId, groupName, entries), newestOf));
             }
 
             return groups;
@@ -144,6 +166,56 @@ public class ArtifactResolutionService {
             log.warn("Failed to resolve required artifacts for template node {}: {}", templateNodeId, e.getMessage());
             return null;
         }
+    }
+
+    private static List<String> producerLabels(JsonNode newestOf) {
+        List<String> labels = new ArrayList<>();
+        if (newestOf.isArray()) {
+            for (JsonNode label : newestOf) {
+                if (label.isTextual() && !label.asText().isBlank()) {
+                    labels.add(label.asText());
+                }
+            }
+        }
+        return labels;
+    }
+
+    /** The label's highest-iteration completed execution, or {@code null} if it has none yet. */
+    private static UUID latestIterationOf(
+            String label, Map<String, UUID> labelToTemplateNodeId, List<NodeExecution> completedExecs) {
+        UUID sourceTemplateNodeId = labelToTemplateNodeId.get(label);
+        if (sourceTemplateNodeId == null) {
+            return null;
+        }
+        return completedExecs.stream()
+                .filter(e -> e.getTemplateNodeId().equals(sourceTemplateNodeId))
+                .max(Comparator.comparingInt(NodeExecution::getIteration))
+                .map(NodeExecution::getId)
+                .orElse(null);
+    }
+
+    /**
+     * The most recently completed execution of any listed producer. Ordered by {@code completed_at}
+     * alone: iteration counts are per node, so they cannot rank one producer against another.
+     */
+    private static UUID newestProducer(
+            List<String> producerLabels, Map<String, UUID> labelToTemplateNodeId, List<NodeExecution> completedExecs) {
+        Map<UUID, Integer> declarationOrder = new HashMap<>();
+        for (int i = 0; i < producerLabels.size(); i++) {
+            UUID templateNodeId = labelToTemplateNodeId.get(producerLabels.get(i));
+            if (templateNodeId != null) {
+                declarationOrder.putIfAbsent(templateNodeId, i);
+            }
+        }
+        return completedExecs.stream()
+                .filter(e -> declarationOrder.containsKey(e.getTemplateNodeId()))
+                .min(Comparator.comparing(
+                                NodeExecution::getCompletedAt, Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(e -> declarationOrder.get(e.getTemplateNodeId()))
+                        .thenComparing(Comparator.comparingInt(NodeExecution::getIteration)
+                                .reversed()))
+                .map(NodeExecution::getId)
+                .orElse(null);
     }
 
     /**
@@ -169,7 +241,8 @@ public class ArtifactResolutionService {
      * <ul>
      *   <li><b>Declared</b> — {@code required_input_artifacts} names a file and a source label;
      *       the source's {@code artifact_refs["output"]} supplies the directory prefix. Selection is
-     *       latest-iteration, matching {@code resolveRequiredArtifacts}.
+     *       latest-iteration, matching {@code resolveRequiredArtifacts}; a {@code newest_of} group
+     *       instead takes the newest completed of several sources and only the files it wrote.
      *   <li><b>Passthrough</b> — a human gate's {@code artifact_refs} is already a
      *       filename → object path map, so it needs no declaration. This matters because gate
      *       attachments are arbitrary (a reviewer can attach anything) and cannot be declared when
@@ -197,11 +270,12 @@ public class ArtifactResolutionService {
     /** Declared arm: {@code required_input_artifacts} × the source execution's output prefix. */
     private void collectDeclaredArtifacts(
             UUID runId, NodeExecution exec, Map<String, String> artifacts, List<String> required) {
-        List<ResolvedArtifactGroup> groups = resolveRequiredArtifacts(exec.getTemplateNodeId(), runId);
+        List<DeclaredGroup> groups = resolveDeclaredGroups(exec.getTemplateNodeId(), runId);
         if (groups == null) {
             return;
         }
-        for (ResolvedArtifactGroup group : groups) {
+        for (DeclaredGroup declared : groups) {
+            ResolvedArtifactGroup group = declared.group();
             if (group.nodeExecutionId() == null) {
                 // Source node has not completed in this run yet — nothing to materialise.
                 continue;
@@ -218,13 +292,33 @@ public class ArtifactResolutionService {
             if (!prefix.endsWith("/")) {
                 prefix = prefix + "/";
             }
+            Set<String> written = declared.newestOf() ? filesWrittenBy(source) : null;
             for (ResolvedArtifactEntry entry : group.artifacts()) {
+                // A newest_of group's producers write different files, so an entry the winner did
+                // not write is stale or absent — except a required one, which stays so the pod
+                // aborts on it instead of running without a file it was promised.
+                if (written != null && !written.contains(entry.name()) && !entry.required()) {
+                    continue;
+                }
                 String key = group.nodeLabel() + "/" + entry.name();
                 artifacts.put(key, prefix + entry.name());
                 if (entry.required()) {
                     required.add(key);
                 }
             }
+        }
+    }
+
+    /** {@code null} when the store cannot be listed: that admits every declared name instead of failing the launch. */
+    private Set<String> filesWrittenBy(NodeExecution source) {
+        try {
+            return new HashSet<>(artifactService.listArtifactNamesInternal(source.getArtifactRefs()));
+        } catch (RuntimeException e) {
+            log.warn(
+                    "Could not list the output of node execution {}; admitting every declared name: {}",
+                    source.getId(),
+                    e.getMessage());
+            return null;
         }
     }
 
