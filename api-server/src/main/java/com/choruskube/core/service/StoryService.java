@@ -1,7 +1,10 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.dto.StoryConflictResponse;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
+import com.choruskube.core.dto.StorySpecResponse;
+import com.choruskube.core.dto.StorySpecVersionSummary;
 import com.choruskube.core.dto.StoryUpdateRequest;
 import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.WorkItemStatus;
@@ -53,6 +56,16 @@ public interface StoryService {
     List<StoryResponse> listInternal(UUID epicId, UUID runId, UUID runSoftwareProjectId);
 
     StoryResponse get(UUID id);
+
+    /** The current approved spec; {@link com.choruskube.core.exception.NotFoundException} before the first. */
+    StorySpecResponse getSpec(UUID id);
+
+    List<StorySpecVersionSummary> listSpecVersions(UUID id);
+
+    StorySpecResponse getSpecVersion(UUID id, int version);
+
+    /** Conflicts whose Task run still waits on a Story revision, oldest first. */
+    List<StoryConflictResponse> listOpenConflicts(UUID id);
 
     StoryResponse update(UUID id, StoryUpdateRequest request);
 

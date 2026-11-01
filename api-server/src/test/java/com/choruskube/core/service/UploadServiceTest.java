@@ -6,7 +6,10 @@ import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,12 +34,15 @@ class UploadServiceTest {
     @Mock
     private S3Client s3Client;
 
+    @Mock
+    private StoragePrefixResolver storagePrefixResolver;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
     private UploadService uploadService;
 
     @BeforeEach
     void setUp() {
-        uploadService = new UploadService(s3Client, objectMapper);
+        uploadService = new UploadService(s3Client, objectMapper, storagePrefixResolver);
         ReflectionTestUtils.setField(uploadService, "bucket", "choruskube-test");
     }
 
@@ -137,6 +143,66 @@ class UploadServiceTest {
 
         assertThat(result).isEqualTo("{}");
         verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    }
+
+    // ----------------------------
+    // stageTexts
+    // ----------------------------
+
+    @Test
+    void stageTexts_putsEachTextUnderTheCurrentOrgsStagingPrefix() throws Exception {
+        when(storagePrefixResolver.currentStoragePrefix()).thenReturn("acme");
+        Map<String, String> texts = new LinkedHashMap<>();
+        texts.put("story_spec.md", "# Spec");
+        texts.put("prior_review_v1.md", "Reasoning");
+
+        String result = uploadService.stageTexts(texts);
+
+        ArgumentCaptor<PutObjectRequest> puts = ArgumentCaptor.forClass(PutObjectRequest.class);
+        ArgumentCaptor<RequestBody> bodies = ArgumentCaptor.forClass(RequestBody.class);
+        verify(s3Client, times(2)).putObject(puts.capture(), bodies.capture());
+        String stagingId = puts.getAllValues().get(0).key().split("/")[2];
+        assertThatCode(() -> UUID.fromString(stagingId)).doesNotThrowAnyException();
+        assertThat(puts.getAllValues())
+                .extracting(PutObjectRequest::key)
+                .containsExactly(
+                        "acme/staging/" + stagingId + "/story_spec.md",
+                        "acme/staging/" + stagingId + "/prior_review_v1.md");
+        assertThat(puts.getAllValues())
+                .extracting(PutObjectRequest::contentType)
+                .containsOnly("text/markdown");
+        assertThat(new String(
+                        bodies.getAllValues()
+                                .get(0)
+                                .contentStreamProvider()
+                                .newStream()
+                                .readAllBytes(),
+                        StandardCharsets.UTF_8))
+                .isEqualTo("# Spec");
+        JsonNode refs = objectMapper.readTree(result);
+        assertThat(refs.get("story_spec.md").asText()).isEqualTo("acme/staging/" + stagingId + "/story_spec.md");
+        assertThat(refs.get("prior_review_v1.md").asText())
+                .isEqualTo("acme/staging/" + stagingId + "/prior_review_v1.md");
+    }
+
+    @Test
+    void stageTexts_returnsRefsThatCopyStagingToRunMovesIntoTheRun() throws Exception {
+        when(storagePrefixResolver.currentStoragePrefix()).thenReturn("acme");
+        UUID runId = UUID.randomUUID();
+
+        String staged = uploadService.stageTexts(Map.of("story_spec.md", "# Spec"));
+        String moved = uploadService.copyStagingToRun("acme", runId, staged);
+
+        assertThat(objectMapper.readTree(moved).get("story_spec.md").asText())
+                .isEqualTo("acme/runs/" + runId + "/inputs/story_spec.md");
+    }
+
+    @Test
+    void stageTexts_empty_returnsEmptyRefsWithoutTouchingStorage() {
+        String result = uploadService.stageTexts(Map.of());
+
+        assertThat(result).isEqualTo("{}");
+        verifyNoInteractions(s3Client, storagePrefixResolver);
     }
 
     // ----------------------------

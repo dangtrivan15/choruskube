@@ -288,6 +288,9 @@ class InternalRunServiceEpicTest {
                 null,
                 null,
                 null,
+                null,
+                null,
+                false,
                 null);
         when(storyService.create(eq(epicId), any(), eq(runId), eq(PROJECT_ID))).thenReturn(expected);
 

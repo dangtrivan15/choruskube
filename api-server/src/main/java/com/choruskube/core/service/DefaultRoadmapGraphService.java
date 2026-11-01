@@ -11,6 +11,7 @@ import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.enums.Readiness;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -36,16 +37,19 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
     // readiness scan of their own, calling them here (once per Story, for tasks) would multiply
     // that scan N times over just to gather base data before this class's own single pass below.
     private final EpicReadinessAssembler readinessAssembler;
+    private final StorySpecService specService;
 
     public DefaultRoadmapGraphService(
             EpicService epicService,
             TaskService taskService,
             SoftwareProjectRefResolver softwareProjectRefResolver,
-            EpicReadinessAssembler readinessAssembler) {
+            EpicReadinessAssembler readinessAssembler,
+            StorySpecService specService) {
         this.epicService = epicService;
         this.taskService = taskService;
         this.softwareProjectRefResolver = softwareProjectRefResolver;
         this.readinessAssembler = readinessAssembler;
+        this.specService = specService;
     }
 
     @Override
@@ -85,6 +89,8 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
         EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
                 candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
 
+        Map<UUID, StorySpecService.DesignState> designStates = specService.designStates(
+                candidates.stories().stream().map(Story::getId).toList());
         List<StoryResponse> stories = candidates.stories().stream()
                 .map(s -> {
                     List<Task> storyTasks = candidates.tasksByStoryId().getOrDefault(s.getId(), List.of());
@@ -92,7 +98,8 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
                             s,
                             storyTasks,
                             assembly.readinessById().get(s.getId()),
-                            EpicReadinessAssembler.startableCount(storyTasks, assembly));
+                            EpicReadinessAssembler.startableCount(storyTasks, assembly),
+                            designStates.get(s.getId()));
                 })
                 .toList();
         boolean useInternalRunListing = usesInternalRunListing(mode);
@@ -123,7 +130,8 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
         };
     }
 
-    private static StoryResponse toStoryResponse(Story s, List<Task> tasks, Readiness readiness, Long readyTaskCount) {
+    private static StoryResponse toStoryResponse(
+            Story s, List<Task> tasks, Readiness readiness, Long readyTaskCount, StorySpecService.DesignState design) {
         RollupCalculator.Rollup rollup = RollupCalculator.compute(tasks);
         return new StoryResponse(
                 s.getId(),
@@ -137,7 +145,10 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
                 readyTaskCount,
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks(), rollup.startedTasks()),
                 s.getCreatedAt(),
-                s.getUpdatedAt());
+                s.getUpdatedAt(),
+                design.specVersion(),
+                design.underRevision(),
+                design.openDesignRunId());
     }
 
     private TaskResponse toTaskResponse(Task t, Readiness readiness, boolean internal) {

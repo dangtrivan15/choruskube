@@ -1,8 +1,11 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.dto.EpicResponse;
+import com.choruskube.core.dto.StoryConflictResponse;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
+import com.choruskube.core.dto.StorySpecResponse;
+import com.choruskube.core.dto.StorySpecVersionSummary;
 import com.choruskube.core.dto.StoryUpdateRequest;
 import com.choruskube.core.event.MappableCreated;
 import com.choruskube.core.exception.BadRequestException;
@@ -11,6 +14,7 @@ import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.Story;
+import com.choruskube.core.model.StorySpecVersion;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.Priority;
@@ -57,6 +61,7 @@ public class DefaultStoryService implements StoryService {
     // the Roadmap Graph View uses, so the two can never disagree.
     private final EpicReadinessAssembler readinessAssembler;
     private final ScopeProvider scopeProvider;
+    private final StorySpecService specService;
 
     public DefaultStoryService(
             StoryRepository repo,
@@ -69,7 +74,8 @@ public class DefaultStoryService implements StoryService {
             ApplicationEventPublisher applicationEventPublisher,
             WorkItemDependencyService workItemDependencyService,
             EpicReadinessAssembler readinessAssembler,
-            ScopeProvider scopeProvider) {
+            ScopeProvider scopeProvider,
+            StorySpecService specService) {
         this.repo = repo;
         this.epicRepo = epicRepo;
         this.taskRepo = taskRepo;
@@ -81,6 +87,7 @@ public class DefaultStoryService implements StoryService {
         this.workItemDependencyService = workItemDependencyService;
         this.readinessAssembler = readinessAssembler;
         this.scopeProvider = scopeProvider;
+        this.specService = specService;
     }
 
     @Override
@@ -152,8 +159,16 @@ public class DefaultStoryService implements StoryService {
             spec = spec.and((root, query, cb) -> cb.equal(root.get("priority"), priority));
         }
         Page<Story> page = repo.findAll(spec, pageable);
-        List<StoryResponse> content =
-                page.getContent().stream().map(this::toResponse).toList();
+        Map<UUID, StorySpecService.DesignState> designStates = specService.designStates(
+                page.getContent().stream().map(Story::getId).toList());
+        List<StoryResponse> content = page.getContent().stream()
+                .map(s -> toResponse(
+                        s,
+                        taskRepo.findByStoryIdOrderByCreatedAtDesc(s.getId()),
+                        null,
+                        null,
+                        designStates.get(s.getId())))
+                .toList();
         return new PageImpl<>(content, pageable, page.getTotalElements());
     }
 
@@ -168,6 +183,8 @@ public class DefaultStoryService implements StoryService {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
         EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
                 candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
+        Map<UUID, StorySpecService.DesignState> designStates = specService.designStates(
+                candidates.stories().stream().map(Story::getId).toList());
         return candidates.stories().stream()
                 .map(s -> {
                     List<Task> tasks = candidates.tasksByStoryId().getOrDefault(s.getId(), List.of());
@@ -175,7 +192,8 @@ public class DefaultStoryService implements StoryService {
                             s,
                             tasks,
                             assembly.readinessById().get(s.getId()),
-                            EpicReadinessAssembler.startableCount(tasks, assembly));
+                            EpicReadinessAssembler.startableCount(tasks, assembly),
+                            designStates.get(s.getId()));
                 })
                 .toList();
     }
@@ -186,6 +204,47 @@ public class DefaultStoryService implements StoryService {
         Story story = findOrThrow(id);
         authService.checkOrgAccess("story", id);
         return toResponse(story);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public StorySpecResponse getSpec(UUID id) {
+        findOrThrow(id);
+        authService.checkOrgAccess("story", id);
+        return specService
+                .current(id)
+                .map(DefaultStoryService::toSpecResponse)
+                .orElseThrow(() -> new NotFoundException("Story " + id + " has no approved spec"));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<StorySpecVersionSummary> listSpecVersions(UUID id) {
+        findOrThrow(id);
+        authService.checkOrgAccess("story", id);
+        return specService.versions(id).stream()
+                .map(v -> new StorySpecVersionSummary(v.getVersion(), v.getApprovedAt(), v.getRunId()))
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public StorySpecResponse getSpecVersion(UUID id, int version) {
+        findOrThrow(id);
+        authService.checkOrgAccess("story", id);
+        return toSpecResponse(specService.version(id, version));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<StoryConflictResponse> listOpenConflicts(UUID id) {
+        findOrThrow(id);
+        authService.checkOrgAccess("story", id);
+        return specService.openConflicts(id);
+    }
+
+    private static StorySpecResponse toSpecResponse(StorySpecVersion v) {
+        return new StorySpecResponse(v.getStoryId(), v.getVersion(), v.getContent(), v.getApprovedAt(), v.getRunId());
     }
 
     @Override
@@ -300,10 +359,16 @@ public class DefaultStoryService implements StoryService {
      * readiness is scoped to the flat list endpoints and the Roadmap Graph View only). */
     private StoryResponse toResponse(Story s) {
         List<Task> tasks = taskRepo.findByStoryIdOrderByCreatedAtDesc(s.getId());
-        return toResponse(s, tasks, null, null);
+        return toResponse(
+                s,
+                tasks,
+                null,
+                null,
+                specService.designStates(List.of(s.getId())).get(s.getId()));
     }
 
-    private StoryResponse toResponse(Story s, List<Task> tasks, Readiness readiness, Long readyTaskCount) {
+    private StoryResponse toResponse(
+            Story s, List<Task> tasks, Readiness readiness, Long readyTaskCount, StorySpecService.DesignState design) {
         RollupCalculator.Rollup rollup = RollupCalculator.compute(tasks);
         return new StoryResponse(
                 s.getId(),
@@ -317,7 +382,10 @@ public class DefaultStoryService implements StoryService {
                 readyTaskCount,
                 new EpicResponse.Progress(rollup.totalTasks(), rollup.doneTasks(), rollup.startedTasks()),
                 s.getCreatedAt(),
-                s.getUpdatedAt());
+                s.getUpdatedAt(),
+                design.specVersion(),
+                design.underRevision(),
+                design.openDesignRunId());
     }
 
     private Epic findEpicOrThrow(UUID epicId) {

@@ -22,6 +22,10 @@ import java.util.UUID;
  * *dependencies*, so a Story whose Tasks are all finished is still READY. It is populated on
  * exactly the paths {@code readiness} is, and is {@code null} on the single-item reads for the
  * same reason.
+ *
+ * <p>{@code specVersion} is the current approved Story spec version, null before the first
+ * approval. {@code specUnderRevision} is true only while a revision of an approved spec is open; an
+ * initial design in progress shows as a null {@code specVersion} with an {@code openDesignRunId}.
  */
 public record StoryResponse(
         UUID id,
@@ -35,4 +39,7 @@ public record StoryResponse(
         @Nullable Long readyTaskCount,
         EpicResponse.Progress progress,
         Instant createdAt,
-        Instant updatedAt) {}
+        Instant updatedAt,
+        @Nullable Integer specVersion,
+        boolean specUnderRevision,
+        @Nullable UUID openDesignRunId) {}

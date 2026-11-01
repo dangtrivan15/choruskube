@@ -22,13 +22,15 @@ public class UploadService {
 
     private final S3Client s3Client;
     private final ObjectMapper objectMapper;
+    private final StoragePrefixResolver storagePrefixResolver;
 
     @Value("${objectstore.bucket}")
     private String bucket;
 
-    public UploadService(S3Client s3Client, ObjectMapper objectMapper) {
+    public UploadService(S3Client s3Client, ObjectMapper objectMapper, StoragePrefixResolver storagePrefixResolver) {
         this.s3Client = s3Client;
         this.objectMapper = objectMapper;
+        this.storagePrefixResolver = storagePrefixResolver;
     }
 
     /**
@@ -53,6 +55,36 @@ public class UploadService {
             refs.put(safeName, objectKey);
         }
         return objectMapper.writeValueAsString(refs);
+    }
+
+    /**
+     * Returns refs in the shape {@link #copyStagingToRun} consumes. The prefix is the current
+     * tenant's, so an off-request caller must run inside a bound org scope.
+     */
+    public String stageTexts(Map<String, String> contentByFileName) {
+        if (contentByFileName.isEmpty()) {
+            return "{}";
+        }
+        String orgSlug = storagePrefixResolver.currentStoragePrefix();
+        String stagingId = UUID.randomUUID().toString();
+        Map<String, String> refs = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : contentByFileName.entrySet()) {
+            String safeName = sanitiseFilename(entry.getKey());
+            String objectKey = orgSlug + "/staging/" + stagingId + "/" + safeName;
+            s3Client.putObject(
+                    PutObjectRequest.builder()
+                            .bucket(bucket)
+                            .key(objectKey)
+                            .contentType("text/markdown")
+                            .build(),
+                    RequestBody.fromString(entry.getValue(), StandardCharsets.UTF_8));
+            refs.put(safeName, objectKey);
+        }
+        try {
+            return objectMapper.writeValueAsString(refs);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to serialise staging refs", e);
+        }
     }
 
     /**

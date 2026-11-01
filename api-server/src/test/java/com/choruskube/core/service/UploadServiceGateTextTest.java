@@ -19,7 +19,7 @@ class UploadServiceGateTextTest {
     @Test
     void storesTextAsAGateAttachment_keyedLikeUploadedFiles() throws Exception {
         S3Client s3 = mock(S3Client.class);
-        UploadService service = new UploadService(s3, new ObjectMapper());
+        UploadService service = new UploadService(s3, new ObjectMapper(), mock(StoragePrefixResolver.class));
         ReflectionTestUtils.setField(service, "bucket", "artifacts");
         UUID runId = UUID.randomUUID();
         UUID execId = UUID.randomUUID();

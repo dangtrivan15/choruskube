@@ -5,6 +5,7 @@ import com.choruskube.core.model.enums.NodeExecutionStatus;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
@@ -54,6 +55,9 @@ public interface NodeExecutionRepository
     List<NodeExecution> findByWorkflowRunIdAndLoopGroupIsNotNullOrderByCompletedAtAsc(UUID workflowRunId);
 
     List<NodeExecution> findByWorkflowRunIdAndLoopGroupOrderByIterationAsc(UUID workflowRunId, String loopGroup);
+
+    Optional<NodeExecution> findFirstByWorkflowRunIdAndLabelAndStatusOrderByIterationDesc(
+            UUID workflowRunId, String label, NodeExecutionStatus status);
 
     boolean existsByJobSecretHash(String jobSecretHash);
 
