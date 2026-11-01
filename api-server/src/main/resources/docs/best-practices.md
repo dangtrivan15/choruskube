@@ -65,8 +65,9 @@ GitHub and review the diff before approving. The PR links appear in the run summ
 the Run Monitor. Do not approve based solely on the agent's summary.
 
 > [!WARNING]
-> On a gate configured to merge pull requests (Feature Development's Final Approval), approving
-> merges every registered PR — there is no separate confirmation step after you click Approve.
+> On a gate configured to merge pull requests (the Final Approval of Feature Development or Task
+> Delivery), approving merges every registered PR — there is no separate confirmation step after
+> you click Approve.
 
 ### 9. Monitor the Analytics Page for Recurring Bottlenecks
 
