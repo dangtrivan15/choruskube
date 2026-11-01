@@ -16,6 +16,7 @@ import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -68,13 +69,17 @@ class EpicReadinessAssembler {
      * the blocker names a refused start reports are built on it. A Story whose design keeps its
      * Tasks from starting is in {@code notDesignedReasonByStoryId} instead; a Story absent from it
      * holds nothing back.
+     *
+     * <p>{@code effectiveStatusById} is the status the walk read for every candidate and for every
+     * direct blocker outside this Epic, which no other field carries.
      */
     record Assembly(
             Map<UUID, Readiness> readinessById,
             List<DependencyEdgeResponse> dependencies,
             List<ExternalBlockerRef> externalBlockers,
             List<WorkItemDependency> edges,
-            Map<UUID, String> notDesignedReasonByStoryId) {}
+            Map<UUID, String> notDesignedReasonByStoryId,
+            Map<UUID, String> effectiveStatusById) {}
 
     /**
      * Whether {@code task} is work that can be picked up right now: still in {@code backlog},
@@ -262,7 +267,12 @@ class EpicReadinessAssembler {
         applyContainmentCascade(readinessById, parentOf);
 
         return new Assembly(
-                readinessById, dependencies, externalBlockers, rows, notDesignedReasons(candidateIds, parentOf));
+                readinessById,
+                dependencies,
+                externalBlockers,
+                rows,
+                notDesignedReasons(candidateIds, parentOf),
+                Collections.unmodifiableMap(effectiveStatusById));
     }
 
     /**

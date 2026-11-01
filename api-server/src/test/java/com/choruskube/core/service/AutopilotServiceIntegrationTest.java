@@ -214,6 +214,31 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     }
 
     @Test
+    void tick_startsStoryDesignRunStampedWithAutopilot() {
+        StoryResponse story = makeUndesignedStory(makeRepo("autopilot-design").getId());
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("Waits on the design", "D"));
+        UUID autopilotId = engage();
+        // A free slot on the second tick, so only the open design run can keep it from designing again.
+        setMaxParallel(autopilotId, 2);
+
+        autopilotService.tick();
+
+        List<WorkflowRun> runs = runsFor(autopilotId);
+        assertThat(runs).hasSize(1);
+        WorkflowRun design = runs.getFirst();
+        assertThat(design.getStoryId()).isEqualTo(story.id());
+        assertThat(design.getTaskId()).isNull();
+        assertThat(design.getStatus()).isEqualTo(WorkflowRunStatus.pending);
+        assertThat(taskService.get(task.id()).status()).isEqualTo("backlog");
+
+        autopilotService.tick();
+
+        assertThat(runsFor(autopilotId))
+                .as("a Story with an open design run is not designed again")
+                .hasSize(1);
+    }
+
+    @Test
     void tick_blockedTask_isNeverStarted() {
         StoryResponse story = makeStory(makeRepo("autopilot-blocked").getId());
         TaskResponse blocker = taskService.create(story.id(), new TaskRequest("Blocker", "D"));
