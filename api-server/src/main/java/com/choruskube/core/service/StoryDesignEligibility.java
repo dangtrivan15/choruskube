@@ -2,9 +2,13 @@ package com.choruskube.core.service;
 
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.WorkItemDependency;
+import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
+import java.util.EnumSet;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -20,20 +24,28 @@ final class StoryDesignEligibility {
     private StoryDesignEligibility() {}
 
     /**
+     * A failed or cancelled first design leaves the Story without an outcome, like a Task left
+     * {@code in_progress} by a finished run. Restarting it would undo a human's cancel on every
+     * tick, and retry a broken design until the failure breaker trips.
+     */
+    private static final Set<WorkflowRunStatus> HOLDING =
+            EnumSet.of(WorkflowRunStatus.failed, WorkflowRunStatus.cancelled);
+
+    /**
      * @param versions approved spec version per Story; must cover every Story that directly blocks
      *     {@code s} or its Epic, wherever that Story lives
      * @param openDesign Stories with an open Story Design run
+     * @param latestDesignRuns each Story's newest non-deleted design run
      */
     static boolean isDesignable(
             Story s,
             EpicReadinessAssembler.EpicCandidates c,
             EpicReadinessAssembler.Assembly a,
             Map<UUID, Integer> versions,
-            Set<UUID> openDesign) {
-        if (versions.containsKey(s.getId()) || openDesign.contains(s.getId())) {
-            return false;
-        }
-        if (s.getStage() == WorkItemStatus.rolled_out || isDone(c.statusById().get(s.getId()))) {
+            Set<UUID> openDesign,
+            Map<UUID, WorkflowRun> latestDesignRuns) {
+        if (!awaitsFirstDesign(s, c, versions, openDesign)
+                || holdingRun(s, c, versions, openDesign, latestDesignRuns).isPresent()) {
             return false;
         }
         for (WorkItemDependency edge : a.edges()) {
@@ -42,6 +54,32 @@ final class StoryDesignEligibility {
             }
         }
         return true;
+    }
+
+    /**
+     * The finished run that keeps the Autopilot from designing {@code s}: its newest design run,
+     * when that run failed or was cancelled. A human releases it by designing the Story by hand or
+     * by deleting the run.
+     */
+    static Optional<WorkflowRun> holdingRun(
+            Story s,
+            EpicReadinessAssembler.EpicCandidates c,
+            Map<UUID, Integer> versions,
+            Set<UUID> openDesign,
+            Map<UUID, WorkflowRun> latestDesignRuns) {
+        if (!awaitsFirstDesign(s, c, versions, openDesign)) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(latestDesignRuns.get(s.getId())).filter(run -> HOLDING.contains(run.getStatus()));
+    }
+
+    /** An open run, completed-but-unrecorded included, is design in progress and never a hold. */
+    private static boolean awaitsFirstDesign(
+            Story s, EpicReadinessAssembler.EpicCandidates c, Map<UUID, Integer> versions, Set<UUID> openDesign) {
+        return !versions.containsKey(s.getId())
+                && !openDesign.contains(s.getId())
+                && s.getStage() != WorkItemStatus.rolled_out
+                && !isDone(c.statusById().get(s.getId()));
     }
 
     /** Direct edges only: a Story's own Tasks, and its blockers' blockers, gate its delivery, not its design. */

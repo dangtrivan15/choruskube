@@ -5,13 +5,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.WorkItemDependency;
+import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -30,6 +33,7 @@ class StoryDesignEligibilityTest {
     private final List<WorkItemDependency> edges = new ArrayList<>();
     private final Map<UUID, Integer> versions = new HashMap<>();
     private final Set<UUID> openDesign = new HashSet<>();
+    private final Map<UUID, WorkflowRun> latestDesignRuns = new HashMap<>();
 
     @Test
     void undesignedStoryWithNoTasks_isDesignable() {
@@ -137,19 +141,72 @@ class StoryDesignEligibilityTest {
         assertThat(designable()).isTrue();
     }
 
+    @Test
+    void failedLatestDesignRun_holdsTheStory() {
+        WorkflowRun failed = latestDesignRun(WorkflowRunStatus.failed);
+
+        assertThat(designable()).isFalse();
+        assertThat(holdingRun()).contains(failed);
+    }
+
+    @Test
+    void cancelledLatestDesignRun_holdsTheStory() {
+        WorkflowRun cancelled = latestDesignRun(WorkflowRunStatus.cancelled);
+
+        assertThat(designable()).isFalse();
+        assertThat(holdingRun()).contains(cancelled);
+    }
+
+    @Test
+    void openDesignRun_isNeverAHold() {
+        // Completed-but-unrecorded counts as open too, so it is not a hold either.
+        latestDesignRun(WorkflowRunStatus.completed);
+        openDesign.add(story.getId());
+
+        assertThat(holdingRun()).isEmpty();
+    }
+
+    @Test
+    void approvedOrDoneStory_isNeverHeld() {
+        latestDesignRun(WorkflowRunStatus.failed);
+        versions.put(story.getId(), 1);
+        assertThat(holdingRun()).isEmpty();
+
+        versions.clear();
+        candidateStatuses.put(story.getId(), WorkItemStatus.done.name());
+        assertThat(holdingRun()).isEmpty();
+    }
+
     private boolean designable() {
-        candidateStatuses.putIfAbsent(story.getId(), WorkItemStatus.backlog.name());
+        EpicReadinessAssembler.EpicCandidates candidates = candidates();
         Map<UUID, String> effective = new HashMap<>(candidateStatuses);
         effective.putAll(externalStatuses);
-        EpicReadinessAssembler.EpicCandidates candidates = new EpicReadinessAssembler.EpicCandidates(
+        EpicReadinessAssembler.Assembly assembly =
+                new EpicReadinessAssembler.Assembly(Map.of(), List.of(), List.of(), edges, Map.of(), effective);
+        return StoryDesignEligibility.isDesignable(story, candidates, assembly, versions, openDesign, latestDesignRuns);
+    }
+
+    private Optional<WorkflowRun> holdingRun() {
+        return StoryDesignEligibility.holdingRun(story, candidates(), versions, openDesign, latestDesignRuns);
+    }
+
+    private EpicReadinessAssembler.EpicCandidates candidates() {
+        candidateStatuses.putIfAbsent(story.getId(), WorkItemStatus.backlog.name());
+        return new EpicReadinessAssembler.EpicCandidates(
                 List.of(story),
                 Map.of(story.getId(), List.of()),
                 Set.copyOf(candidateStatuses.keySet()),
                 Map.copyOf(candidateStatuses),
                 Map.of(story.getId(), epic.getId()));
-        EpicReadinessAssembler.Assembly assembly =
-                new EpicReadinessAssembler.Assembly(Map.of(), List.of(), List.of(), edges, Map.of(), effective);
-        return StoryDesignEligibility.isDesignable(story, candidates, assembly, versions, openDesign);
+    }
+
+    private WorkflowRun latestDesignRun(WorkflowRunStatus status) {
+        WorkflowRun run = new WorkflowRun();
+        run.setId(UUID.randomUUID());
+        run.setStoryId(story.getId());
+        run.setStatus(status);
+        latestDesignRuns.put(story.getId(), run);
+        return run;
     }
 
     private UUID inEpicStory(WorkItemStatus status) {

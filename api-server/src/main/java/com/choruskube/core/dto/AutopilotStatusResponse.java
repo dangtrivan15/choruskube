@@ -32,7 +32,8 @@ import java.util.List;
  *     the ready frontier only considers {@code backlog} Tasks, so until a human re-opens one it is
  *     invisible to the Autopilot and blocks everything downstream of it. {@code runId}/{@code
  *     status} name the finished run, since which one it was decides whether re-opening or
- *     completing is the right answer.
+ *     completing is the right answer. Also lists, as {@code kind = "design_story"}, Stories whose
+ *     newest design run failed or was cancelled: the Autopilot will not design those again.
  */
 public record AutopilotStatusResponse(
         boolean engaged,

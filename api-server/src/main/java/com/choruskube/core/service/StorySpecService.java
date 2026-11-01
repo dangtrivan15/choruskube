@@ -20,6 +20,7 @@ import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +28,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
@@ -126,6 +128,26 @@ public class StorySpecService {
             byStory.putIfAbsent(run.getStoryId(), run.getId());
         }
         return byStory;
+    }
+
+    /**
+     * Each Story's newest design run, for the Stories that have one, in one query. A soft-deleted
+     * run never counts: deleting a failed run is how a human releases its Story to the Autopilot.
+     */
+    @Transactional(readOnly = true)
+    public Map<UUID, WorkflowRun> latestDesignRuns(Collection<UUID> storyIds) {
+        if (storyIds.isEmpty()) {
+            return Map.of();
+        }
+        Comparator<WorkflowRun> newest = Comparator.comparing(
+                        WorkflowRun::getCreatedAt, Comparator.nullsFirst(Comparator.naturalOrder()))
+                .thenComparing(WorkflowRun::getId);
+        Map<UUID, WorkflowRun> latest = new HashMap<>();
+        for (WorkflowRun run : runRepo.findByStoryIdInAndStatusInAndDeletedAtIsNull(
+                storyIds, EnumSet.allOf(WorkflowRunStatus.class))) {
+            latest.merge(run.getStoryId(), run, BinaryOperator.maxBy(newest));
+        }
+        return latest;
     }
 
     /** A Story's spec version and open design run, as the Story responses report them. */

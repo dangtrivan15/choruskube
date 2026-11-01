@@ -175,6 +175,10 @@ class AutopilotServiceTest {
     private final Map<UUID, Integer> specVersions = new HashMap<>();
 
     private final Set<UUID> openDesignRuns = new HashSet<>();
+
+    /** Every Story Design run, live or finished, soft-deleted included — what the newest-run read sees. */
+    private final List<WorkflowRun> designRunHistory = new ArrayList<>();
+
     private final List<WorkItemDependency> edges = new ArrayList<>();
     private final Map<UUID, Task> tasksById = new LinkedHashMap<>();
     private final Map<UUID, Story> storiesById = new LinkedHashMap<>();
@@ -1952,6 +1956,92 @@ class AutopilotServiceTest {
                                 "task"));
     }
 
+    @Test
+    void frontier_cancelledDesignRun_holdsStoryNotRestarted() {
+        // A human cancelled it; designing it again would undo that cancel on every tick.
+        StoryFixture cancelled = undesignedStory(epic("E"));
+        WorkflowRun run = pastDesignRun(cancelled, WorkflowRunStatus.cancelled, Instant.now());
+
+        AutopilotStatusResponse published = tickAndCapturePublished();
+
+        verify(storyDesignService, never()).startDesignForAutopilot(any(), any());
+        assertThat(published.nextUp()).isEmpty();
+        assertThat(published.heldTasks())
+                .extracting(AutopilotTaskRef::storyId, AutopilotTaskRef::runId, AutopilotTaskRef::kind)
+                .containsExactly(tuple(cancelled.story().getId(), run.getId(), "design_story"));
+    }
+
+    @Test
+    void frontier_failedDesignRun_holdsStory() {
+        // Retrying a broken design every tick would only feed the failure breaker.
+        StoryFixture failed = undesignedStory(epic("High", Priority.high));
+        pastDesignRun(failed, WorkflowRunStatus.failed, Instant.now());
+        Task elsewhere =
+                task(story(epic("Low", Priority.low)), "Ready elsewhere", WorkItemStatus.backlog, Readiness.READY);
+
+        newService().tick();
+
+        verify(storyDesignService, never()).startDesignForAutopilot(any(), any());
+        verify(taskService).startForAutopilot(elsewhere.getId(), autopilotId);
+        assertThat(autopilot.getConsecutiveFailures()).isZero();
+    }
+
+    @Test
+    void frontier_deletedFailedDesignRun_designableAgain() {
+        StoryFixture released = undesignedStory(epic("E"));
+        WorkflowRun failed = pastDesignRun(released, WorkflowRunStatus.failed, Instant.now());
+        failed.setDeletedAt(Instant.now());
+
+        AutopilotStatusResponse published = tickAndCapturePublished();
+
+        verify(storyDesignService).startDesignForAutopilot(released.story().getId(), autopilotId);
+        assertThat(published.heldTasks()).isEmpty();
+    }
+
+    @Test
+    void frontier_manualDesignAfterFailure_notHeld() {
+        // A person designed it again by hand: the newest run is open, so the Story is in design
+        // rather than held, and the older failure no longer speaks for it.
+        StoryFixture retried = undesignedStory(epic("E"));
+        pastDesignRun(retried, WorkflowRunStatus.failed, Instant.now().minus(Duration.ofHours(1)));
+        pastDesignRun(retried, WorkflowRunStatus.running, Instant.now());
+        designInFlight(retried);
+
+        AutopilotStatusResponse published = tickAndCapturePublished();
+
+        verify(storyDesignService, never()).startDesignForAutopilot(any(), any());
+        assertThat(published.heldTasks()).isEmpty();
+        assertThat(published.whyIdle()).noneMatch(reason -> reason.startsWith("Story design run"));
+    }
+
+    @Test
+    void status_heldStoryListedWithReason() {
+        StoryFixture held = undesignedStory(epic("E"));
+        held.story().setTitle("Checkout");
+        WorkflowRun failed = pastDesignRun(held, WorkflowRunStatus.failed, Instant.now());
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.heldTasks())
+                .extracting(
+                        AutopilotTaskRef::taskId,
+                        AutopilotTaskRef::title,
+                        AutopilotTaskRef::runId,
+                        AutopilotTaskRef::status,
+                        AutopilotTaskRef::storyId,
+                        AutopilotTaskRef::kind)
+                .containsExactly(tuple(
+                        null,
+                        "Design: Checkout",
+                        failed.getId(),
+                        "failed",
+                        held.story().getId(),
+                        "design_story"));
+        assertThat(status.whyIdle())
+                .contains("Story design run " + failed.getId()
+                        + " for 'Checkout' failed — design it again from the Story page or delete the run");
+    }
+
     // -----------------------------------------------------------------------------------
     // Harness
     // -----------------------------------------------------------------------------------
@@ -2198,6 +2288,19 @@ class AutopilotServiceTest {
             }
             return found;
         });
+        when(specService.latestDesignRuns(any())).thenAnswer(invocation -> {
+            Collection<?> ids = invocation.getArgument(0);
+            Map<UUID, WorkflowRun> latest = new HashMap<>();
+            if (ids != null) {
+                designRunHistory.stream()
+                        .filter(run -> ids.contains(run.getStoryId()) && run.getDeletedAt() == null)
+                        .forEach(run -> latest.merge(
+                                run.getStoryId(),
+                                run,
+                                (a, b) -> a.getCreatedAt().isAfter(b.getCreatedAt()) ? a : b));
+            }
+            return latest;
+        });
         Map<UUID, String> statuses = new HashMap<>();
         epics.forEach(fixture -> statuses.putAll(fixture.candidates().statusById()));
         for (EpicFixture fixture : epics) {
@@ -2353,6 +2456,18 @@ class AutopilotServiceTest {
     private WorkflowRun designRun(WorkflowRunStatus status, UUID storyId) {
         WorkflowRun run = run(status, null);
         run.setStoryId(storyId);
+        designRunHistory.add(run);
+        return run;
+    }
+
+    /** A Story Design run in the Story's history only — finished, or a person's, so not this Autopilot's live run. */
+    private WorkflowRun pastDesignRun(StoryFixture fixture, WorkflowRunStatus status, Instant createdAt) {
+        WorkflowRun run = new WorkflowRun();
+        run.setId(UUID.randomUUID());
+        run.setStatus(status);
+        run.setStoryId(fixture.story().getId());
+        ReflectionTestUtils.setField(run, "createdAt", createdAt);
+        designRunHistory.add(run);
         return run;
     }
 

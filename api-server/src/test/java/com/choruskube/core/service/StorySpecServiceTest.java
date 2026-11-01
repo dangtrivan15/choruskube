@@ -18,12 +18,15 @@ import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
@@ -46,6 +49,12 @@ class StorySpecServiceTest extends BaseTest {
 
     @Autowired
     private GraphTemplateRepository templateRepo;
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Test
     void recordApproved_numbersVersionsPerStory() {
@@ -172,6 +181,37 @@ class StorySpecServiceTest extends BaseTest {
         assertThat(service.currentVersions(List.of(designed.id(), undesigned.id())))
                 .containsExactlyEntriesOf(Map.of(designed.id(), 2));
         assertThat(service.currentVersions(List.of())).isEmpty();
+    }
+
+    @Test
+    void latestDesignRuns_newestNonDeletedRunPerStory() {
+        StoryResponse story = makeStory("spec-latest-runs");
+        StoryResponse other = makeStory("spec-latest-runs-other");
+        StoryResponse neverDesigned = makeStory("spec-latest-runs-none");
+        UUID older = designRun(story.id(), WorkflowRunStatus.failed);
+        UUID newer = designRun(story.id(), WorkflowRunStatus.cancelled);
+        UUID newestButDeleted = designRun(story.id(), WorkflowRunStatus.running);
+        UUID otherRun = designRun(other.id(), WorkflowRunStatus.failed);
+        age(older, 3);
+        age(newer, 2);
+        age(otherRun, 1);
+        WorkflowRun deleted = runRepo.findById(newestButDeleted).orElseThrow();
+        deleted.setDeletedAt(Instant.now());
+        runRepo.saveAndFlush(deleted);
+        entityManager.clear();
+
+        Map<UUID, WorkflowRun> latest = service.latestDesignRuns(List.of(story.id(), other.id(), neverDesigned.id()));
+
+        assertThat(latest).containsOnlyKeys(story.id(), other.id());
+        assertThat(latest.get(story.id()).getId()).isEqualTo(newer);
+        assertThat(latest.get(other.id()).getId()).isEqualTo(otherRun);
+        assertThat(service.latestDesignRuns(List.of())).isEmpty();
+    }
+
+    /** Backdates a run by whole hours, so "newest" does not hang on two inserts' clock ticks. */
+    private void age(UUID runId, int hours) {
+        jdbc.update(
+                "UPDATE workflow_run SET created_at = now() - make_interval(hours => ?) WHERE id = ?", hours, runId);
     }
 
     private UUID designRun(UUID storyId, WorkflowRunStatus status) {
