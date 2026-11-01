@@ -30,6 +30,7 @@ import io.temporal.client.WorkflowStub;
 import jakarta.annotation.Nullable;
 import java.util.*;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -179,6 +180,20 @@ public class RunService {
 
     @Transactional
     public RunResponse startRun(CreateRunRequest request) {
+        return startRun(request, QuotaChecker::checkRunQuota);
+    }
+
+    /**
+     * {@link #startRun} without the concurrent-run cap; every other run-start limit still applies.
+     * Only for a system start that unblocks runs already holding concurrent-run slots — see
+     * {@link QuotaChecker#checkRunQuotaExceptConcurrency()}. A start a human asks for never uses it.
+     */
+    @Transactional
+    public RunResponse startRunExemptFromConcurrentQuota(CreateRunRequest request) {
+        return startRun(request, QuotaChecker::checkRunQuotaExceptConcurrency);
+    }
+
+    private RunResponse startRun(CreateRunRequest request, Consumer<QuotaChecker> runQuotaCheck) {
         GraphTemplate template = graphTemplateRepo
                 .findById(request.graphTemplateId())
                 .orElseThrow(() -> new NotFoundException("Template not found"));
@@ -212,7 +227,7 @@ public class RunService {
         // of the second save (alongside externalRunId) so the column never holds a
         // staging path the agent would later be forbidden from reading.
 
-        quotaService.ifPresent(QuotaChecker::checkRunQuota); // throws QuotaExceededException (429)
+        quotaService.ifPresent(runQuotaCheck); // throws QuotaExceededException (429)
 
         run = runRepo.save(run);
 

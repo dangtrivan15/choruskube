@@ -139,6 +139,9 @@ class StoryDesignServiceTest extends BaseTest {
     @MockitoBean
     private S3Client s3Client;
 
+    @MockitoBean
+    private QuotaChecker quotaChecker;
+
     @BeforeEach
     void setUp() {
         WorkflowStub mockStub = Mockito.mock(WorkflowStub.class);
@@ -453,6 +456,54 @@ class StoryDesignServiceTest extends BaseTest {
                 .containsExactlyInAnyOrderElementsOf(staged.getAllValues().stream()
                         .map(PutObjectRequest::key)
                         .toList());
+    }
+
+    // ---- run-start quota ----
+
+    @Test
+    void startDesign_checksTheFullRunQuota() {
+        StoryResponse story = makeStory("story-design-quota", "Story");
+
+        service.startDesign(story.id());
+
+        verify(quotaChecker).checkRunQuota();
+        verify(quotaChecker, never()).checkRunQuotaExceptConcurrency();
+    }
+
+    @Test
+    void startDesignForAutopilot_checksTheFullRunQuota() {
+        StoryResponse story = makeStory("story-design-autopilot-quota", "Story");
+
+        service.startDesignForAutopilot(story.id(), makeAutopilot());
+
+        verify(quotaChecker).checkRunQuota();
+        verify(quotaChecker, never()).checkRunQuotaExceptConcurrency();
+    }
+
+    @Test
+    void startRevision_checksTheFullRunQuota() {
+        StoryResponse story = makeStory("story-revision-quota", "Story");
+        approveSpec(story.id());
+
+        service.startRevision(story.id(), "Guidance");
+
+        verify(quotaChecker).checkRunQuota();
+        verify(quotaChecker, never()).checkRunQuotaExceptConcurrency();
+    }
+
+    /** The Task runs a conflict revision answers hold concurrent-run slots while they wait on it. */
+    @Test
+    void startRevisionForConflicts_checksEveryRunQuotaButTheConcurrentCap() {
+        StoryResponse story = makeStory("story-revision-conflicts-quota", "Story");
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("Task", "D"));
+        approveSpec(story.id());
+        approveSpec(story.id());
+        StoryConflict conflict = conflict(story.id(), taskRun(task.id()), "The spec is wrong about X.");
+
+        service.startRevisionForConflicts(story.id(), List.of(conflict), null);
+
+        verify(quotaChecker).checkRunQuotaExceptConcurrency();
+        verify(quotaChecker, never()).checkRunQuota();
     }
 
     // ---- helpers ----

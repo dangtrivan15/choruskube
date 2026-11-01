@@ -98,21 +98,21 @@ public class StoryDesignService {
     public RunResponse startDesign(UUID storyId) {
         requireStory(storyId);
         authService.checkOrgAccess("story", storyId);
-        return start(storyId, null, null);
+        return start(storyId, null, null, runService::startRun);
     }
 
     @Transactional
     public RunResponse startDesignForAutopilot(UUID storyId, UUID autopilotId) {
         requireStory(storyId);
         authService.assertSameOrg("story", storyId, "autopilot", autopilotId);
-        return start(storyId, autopilotId, null);
+        return start(storyId, autopilotId, null, runService::startRun);
     }
 
     @Transactional
     public RunResponse startRevision(UUID storyId, String guidance) {
         requireStory(storyId);
         authService.checkOrgAccess("story", storyId);
-        return start(storyId, null, new Revision(List.of(), guidance));
+        return start(storyId, null, new Revision(List.of(), guidance), runService::startRun);
     }
 
     /**
@@ -130,7 +130,13 @@ public class StoryDesignService {
         if (!foreign.isEmpty()) {
             throw new IllegalArgumentException("Conflicts " + foreign + " do not belong to Story " + storyId);
         }
-        RunResponse started = start(storyId, autopilotIdOrNull, new Revision(conflicts, null));
+        // Skips the concurrent-run cap: it counts the parked Task runs this revision unblocks, so at
+        // the cap a checked start is refused on every pass until their gates time out.
+        RunResponse started = start(
+                storyId,
+                autopilotIdOrNull,
+                new Revision(conflicts, null),
+                runService::startRunExemptFromConcurrentQuota);
         List<UUID> ids = conflicts.stream().map(StoryConflict::getId).toList();
         if (!ids.isEmpty() && conflictRepo.assignToRevision(ids, storyId, started.id()) != ids.size()) {
             throw new IllegalStateException(
@@ -141,7 +147,8 @@ public class StoryDesignService {
 
     private record Revision(List<StoryConflict> conflicts, String guidance) {}
 
-    private RunResponse start(UUID storyId, UUID autopilotId, Revision revision) {
+    private RunResponse start(
+            UUID storyId, UUID autopilotId, Revision revision, Function<CreateRunRequest, RunResponse> startRun) {
         // Every start serialises on the Story row, so two starters (a human and the Autopilot, or
         // the conflict reconciler) cannot both pass the open-run guard below.
         Story story = storyRepo
@@ -192,7 +199,7 @@ public class StoryDesignService {
 
         RunResponse started;
         try {
-            started = runService.startRun(new CreateRunRequest(template.getId(), inputs, name, stagingRefs));
+            started = startRun.apply(new CreateRunRequest(template.getId(), inputs, name, stagingRefs));
         } catch (RuntimeException e) {
             uploadService.discardStaged(stagingRefs);
             throw e;

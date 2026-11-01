@@ -129,6 +129,11 @@ else, per unreleased conflict:
   the conflict reports, any guidance), on the latest template version. It goes through Story Spec
   Review and Approve Story Spec like the first design. A human can start one without a conflict,
   from the Story page, with guidance.
+- **A revision the reconciler starts skips a concurrent-run cap.** The parked Task runs it answers
+  are active and hold slots while they wait on it, so at the cap a checked start is refused on every
+  pass until their gates time out. Every other run-start limit still applies
+  (`QuotaChecker#checkRunQuotaExceptConcurrency`), and the overshoot is bounded: one open revision
+  per Story, started for runs already counted. A human's Design or Revise keeps the full check.
 - **Release guidance names the Revisions entries by version and never claims one answers the
   conflict.** Analyze may still find the conflict standing, and then raises it again.
 - **A revision that fails or is cancelled** leaves its conflicts unreleased until a human decides
