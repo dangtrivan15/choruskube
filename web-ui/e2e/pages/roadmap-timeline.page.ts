@@ -69,6 +69,20 @@ export class RoadmapTimelinePage {
     await expect(this.heading).toBeVisible({ timeout: 15_000 });
   }
 
+  /**
+   * `goto()` that replays the first `/roadmap/timeline` response for the page's lifetime, so no
+   * other worker's event can re-lay out a marker mid-hover. Breaks any assertion on the timeline's
+   * live updates.
+   */
+  async gotoPinned() {
+    let pinned: Promise<unknown> | undefined;
+    await this.page.route("**/api/v1/roadmap/timeline", async (route) => {
+      if (!pinned) pinned = route.fetch().then((response) => response.json());
+      await route.fulfill({ json: await pinned });
+    });
+    await this.goto();
+  }
+
   /** Locates an Epic lane header by its raw title (matches the lane node's `data-label`). */
   laneByLabel(label: string): Locator {
     return this.page.locator(`[data-testid="roadmap-timeline-epic-lane"][data-label="${label}"]`);
@@ -89,11 +103,14 @@ export class RoadmapTimelinePage {
    * on the next `["epics"]`-prefixed refetch (`useRoadmapSubscription` invalidates on every
    * `/topic/roadmap-items` event, org-wide, by design — see the existing "reflects a Story
    * created out-of-band" test). A `hover()` that fires once and then waits can lose the race: the
-   * marker slides out from under an already-resting cursor before the Tooltip's hover-rest delay
-   * elapses, and a CSS-transform move alone doesn't re-fire `mouseenter`/`mouseleave`, so the
-   * preview just never opens. Re-issuing `hover()` inside `toPass` re-measures the marker's
-   * *current* position each attempt; the analogous drag flake is closed by `dragBoardCard`, which
-   * retries the gesture after checking what was grabbed (see web-ui/e2e/PARALLELISM.md).
+   * marker slides out from under an already-resting cursor during the Tooltip's 600 ms hover-rest
+   * delay, the preview still opens, and mounting it re-hit-tests the pointer, which is no longer on
+   * the marker, so it closes at once. Re-issuing `hover()` inside `toPass` re-measures the marker
+   * each attempt, but under sustained traffic every attempt loses the same race, which
+   * `gotoPinned()` removes. Toasts stacking over the marker would do the same, and don't only
+   * because the shared fixture makes them click-through (`e2e/fixtures/index.ts`). The analogous
+   * drag flake is closed by `dragBoardCard`, which retries the gesture after checking what was
+   * grabbed (see web-ui/e2e/PARALLELISM.md).
    *
    * `afterOpen`, when given, runs inside the same retried attempt as the hover — per
    * PARALLELISM.md's "re-entrant hover" rule, any assertion that reads the opened preview has to

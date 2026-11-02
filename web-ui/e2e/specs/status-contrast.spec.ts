@@ -193,14 +193,12 @@ test.describe("status-contrast: roadmap surfaces", () => {
 
       // Timeline hover preview: inverted tooltip, stage word and readiness chip.
       const timelinePage = new RoadmapTimelinePage(page);
-      await timelinePage.goto();
+      await timelinePage.gotoPinned();
       const marker = timelinePage.markerByLabel(blockedStory.title);
       await expect(marker).toBeVisible();
       await forBothThemes(page, async () => {
-        // The theme toggle click moves the pointer off the marker, closing the preview. The
-        // contrast reads run inside the same re-hover retry as the open check: an org-wide
-        // refetch from a concurrent worker's mutation can unmount/remount the preview between
-        // the open check and a later read, same as it can reposition the marker mid-hover.
+        // The theme toggle click moves the pointer off the marker, closing the preview, so each
+        // theme re-hovers; the contrast reads share that retry in case the preview closes mid-read.
         await timelinePage.hoverToRevealPreview(marker, [blockedStory.title], async () => {
           await expectReadable(timelinePage.itemPreview.getByTestId("roadmap-timeline-item-preview-stage"));
           await expectReadable(timelinePage.itemPreview.getByTitle("Blocked by an unfinished dependency"));

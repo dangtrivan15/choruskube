@@ -200,7 +200,7 @@ test.describe("Roadmap Timeline View", () => {
       const timelinePage = new RoadmapTimelinePage(page);
 
       try {
-        await timelinePage.goto();
+        await timelinePage.gotoPinned();
         const marker = timelinePage.markerByLabel(story.title);
         await expect(marker).toBeVisible();
 

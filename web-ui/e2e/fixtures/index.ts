@@ -72,6 +72,17 @@ export interface WorkerFixtures {
 }
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
+  // Without this, other workers' toasts stacking bottom-right intercept clicks, take hover from
+  // what lies under them, and stop dismissing while the cursor rests on them (e2e/PARALLELISM.md).
+  context: async ({ context }, use) => {
+    await context.addInitScript(() => {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync("[data-sonner-toaster], [data-sonner-toaster] * { pointer-events: none !important; }");
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    });
+    await use(context);
+  },
+
   api: async ({}, use) => {
     const client = new TestApiClient();
     await use(client);
