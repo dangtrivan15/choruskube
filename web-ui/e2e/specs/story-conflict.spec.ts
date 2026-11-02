@@ -22,7 +22,7 @@ interface StartedTask {
 async function startTaskOnDesignedStory(
   api: TestApiClient,
   projectId: string,
-  marker: "story_conflict",
+  marker: "story_conflict" | "needs_spec",
 ): Promise<StartedTask> {
   const epic = await api.createEpic({
     title: uniqueName("E2E Story Conflict Epic"),
@@ -200,6 +200,64 @@ test.describe("Story conflict", () => {
         await api.approveDesignRun(revisionRunId);
         await api.waitForStorySpecVersion(storyId, 2, 90_000);
         await expectResumedOnV2(api, page, runMonitorPage, runId);
+      });
+    } finally {
+      await api.cancelRun(runId).catch(() => {});
+      if (revisionRunId) await api.cancelRun(revisionRunId).catch(() => {});
+    }
+  });
+
+  test("approving a Task gate after its Story spec moved re-checks it instead", async ({
+    page,
+    api,
+    cloneableProject,
+    runMonitorPage,
+  }) => {
+    test.setTimeout(600_000);
+
+    // needs_spec parks the run at Approve Task Spec, a gate that re-checks the Story spec version.
+    const { storyId, runId } = await startTaskOnDesignedStory(api, cloneableProject.id, "needs_spec");
+    let revisionRunId = "";
+
+    try {
+      await test.step("the Task run waits at Approve Task Spec, planned on spec v1", async () => {
+        await api.waitForNodeStatus(runId, "approve_task_spec", ["awaiting_human"], 240_000);
+      });
+
+      await test.step("a manual Revise moves the Story spec to v2", async () => {
+        revisionRunId = (await api.reviseStory(storyId, "Move the spec on while the Task waits at its gate.")).id;
+        await api.approveDesignRun(revisionRunId);
+        await api.waitForStorySpecVersion(storyId, 2, 90_000);
+      });
+
+      await test.step("the approval is turned into a re-check, and the gate opens again after it", async () => {
+        await runMonitorPage.goto(runId);
+        await runMonitorPage.selectNode("approve_task_spec");
+        await runMonitorPage.approveGate();
+
+        await expect(
+          page
+            .locator('[data-sonner-toast][data-type="warning"]')
+            .filter({ hasText: "Not approved yet: The Story spec moved from v1 to v2 since this Task planned." }),
+        ).toBeVisible();
+
+        await expect
+          .poll(
+            async () =>
+              (await api.getRun(runId)).nodeExecutions.find(
+                (ne) => ne.label === "approve_task_spec" && ne.iteration === 1,
+              )?.decision,
+            { timeout: 30_000, intervals: [1_000] },
+          )
+          .toBe("rereview");
+        await api.waitForNodeIteration(runId, "task_spec_review", 2, ["completed"], 180_000);
+        await api.waitForNodeIteration(runId, "approve_task_spec", 2, ["awaiting_human"], 60_000);
+
+        const run = await api.getRun(runId);
+        expect(run.nodeExecutions.filter((ne) => ne.label === "implement")).toHaveLength(0);
+
+        await runMonitorPage.goto(runId);
+        await expect(page.getByTestId("run-summary-spec-version").first()).toContainText("spec v2");
       });
     } finally {
       await api.cancelRun(runId).catch(() => {});

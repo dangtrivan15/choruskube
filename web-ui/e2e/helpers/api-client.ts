@@ -603,6 +603,11 @@ export class TestApiClient {
     return this.post(`/api/v1/stories/${storyId}/design`);
   }
 
+  /** Starts a revision run of the Story's approved spec, as the Story page's Revise does. */
+  async reviseStory(storyId: string, guidance: string): Promise<WorkflowRun> {
+    return this.post(`/api/v1/stories/${storyId}/revise`, { guidance });
+  }
+
   /** The Story's current approved spec, or `null` before its first approval (the endpoint's 404). */
   async getStorySpec(storyId: string): Promise<StorySpecResponse | null> {
     const path = `/api/v1/stories/${storyId}/spec`;
