@@ -53,6 +53,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -375,7 +376,8 @@ class StoryDesignServiceTest extends BaseTest {
         StoryConflict conflict = conflict(story.id(), taskRun, "The spec's cache cannot work: X.");
         UUID autopilotId = makeAutopilot();
 
-        RunResponse started = service.startRevisionForConflicts(story.id(), List.of(conflict), autopilotId);
+        RunResponse started = service.startRevisionForConflicts(story.id(), List.of(conflict), autopilotId)
+                .orElseThrow();
 
         WorkflowRun run = runRepo.findById(started.id()).orElseThrow();
         assertThat(run.getAutopilotId()).isEqualTo(autopilotId);
@@ -400,7 +402,8 @@ class StoryDesignServiceTest extends BaseTest {
         StoryConflict a = conflict(story.id(), taskRun(first.id()), "A");
         StoryConflict b = conflict(story.id(), taskRun(second.id()), "B");
 
-        RunResponse started = service.startRevisionForConflicts(story.id(), List.of(a, b), null);
+        RunResponse started = service.startRevisionForConflicts(story.id(), List.of(a, b), null)
+                .orElseThrow();
 
         assertThat(reload(a).getRevisionRunId()).isEqualTo(started.id());
         assertThat(reload(b).getRevisionRunId()).isEqualTo(started.id());
@@ -424,19 +427,107 @@ class StoryDesignServiceTest extends BaseTest {
     }
 
     @Test
-    void startRevisionForConflicts_conflictAlreadyAssigned_refused() {
-        StoryResponse story = makeStory("story-revision-assigned", "Story");
+    void manualReviseAnswersWaitingAndStrandedConflicts() throws Exception {
+        StoryResponse story = makeStory("story-revise-waiting-stranded", "Story");
+        TaskResponse waitingTask = taskService.create(story.id(), new TaskRequest("Waiting", "D"));
+        TaskResponse strandedTask = taskService.create(story.id(), new TaskRequest("Stranded", "D"));
+        TaskResponse outdatedTask = taskService.create(story.id(), new TaskRequest("Outdated", "D"));
+        TaskResponse closedTask = taskService.create(story.id(), new TaskRequest("Closed", "D"));
+        approveSpec(story.id());
+        approveSpec(story.id());
+        RunResponse cancelled = service.startRevision(story.id(), "First attempt");
+        setStatus(cancelled.id(), WorkflowRunStatus.cancelled);
+        StoryConflict waiting = conflict(story.id(), taskRun(waitingTask.id()), "Waiting report");
+        StoryConflict stranded = conflict(story.id(), taskRun(strandedTask.id()), "Stranded report");
+        conflictRepo.assignToRevision(List.of(stranded.getId()), story.id(), cancelled.id());
+        StoryConflict outdated = conflict(story.id(), taskRun(outdatedTask.id()), "Outdated report", 1);
+        StoryConflict closed = conflict(story.id(), taskRun(closedTask.id()), "Closed report");
+        conflictRepo.markReleased(closed.getId(), Instant.now());
+
+        RunResponse started = service.startRevision(story.id(), "g");
+
+        assertThat(inputOf(started.id(), "revision_context"))
+                .contains("### Conflict " + waiting.getId(), "Waiting report")
+                .contains("### Conflict " + stranded.getId(), "Stranded report")
+                .doesNotContain(outdated.getId().toString(), "Outdated report")
+                .doesNotContain(closed.getId().toString(), "Closed report");
+        assertThat(reload(waiting).getRevisionRunId()).isEqualTo(started.id());
+        assertThat(reload(stranded).getRevisionRunId()).isEqualTo(started.id());
+        assertThat(reload(outdated)).satisfies(c -> {
+            assertThat(c.getRevisionRunId()).isNull();
+            assertThat(c.getReleasedAt()).isNull();
+        });
+        assertThat(reload(closed).getRevisionRunId()).isNull();
+    }
+
+    @Test
+    void manualReviseWithNoConflictsSaysNone() throws Exception {
+        StoryResponse story = makeStory("story-revise-no-conflicts", "Story");
+        approveSpec(story.id());
+
+        RunResponse started = service.startRevision(story.id(), "Tighten the API");
+
+        assertThat(inputOf(started.id(), "revision_context")).contains("## Conflicts to answer\n\nNone.");
+    }
+
+    /** Another pass or replica moved both conflicts on after the caller read them. */
+    @Test
+    void systemRevisionSkipsConflictsAssignedOrReleasedSinceRead() {
+        StoryResponse story = makeStory("story-revision-taken-since-read", "Story");
+        TaskResponse first = taskService.create(story.id(), new TaskRequest("First", "D"));
+        TaskResponse second = taskService.create(story.id(), new TaskRequest("Second", "D"));
+        approveSpec(story.id());
+        approveSpec(story.id());
+        WorkflowRun otherRun = taskRun(first.id());
+        StoryConflict assigned = conflict(story.id(), otherRun, "A");
+        StoryConflict released = conflict(story.id(), taskRun(second.id()), "B");
+        conflictRepo.assignToRevision(List.of(assigned.getId()), story.id(), otherRun.getId());
+        conflictRepo.markReleased(released.getId(), Instant.now());
+
+        Optional<RunResponse> started =
+                service.startRevisionForConflicts(story.id(), List.of(assigned, released), null);
+
+        assertThat(started).isEmpty();
+        assertThat(designRunsOf(story.id())).isEmpty();
+        verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    }
+
+    /** A version recorded after the caller read the conflict releases it rather than revising it. */
+    @Test
+    void systemRevisionSkipsConflictsRaisedAgainstAnOlderVersion() {
+        StoryResponse story = makeStory("story-revision-older-version", "Story");
         TaskResponse task = taskService.create(story.id(), new TaskRequest("Task", "D"));
         approveSpec(story.id());
         approveSpec(story.id());
-        WorkflowRun taskRun = taskRun(task.id());
-        StoryConflict assigned = conflict(story.id(), taskRun, "Already covered");
-        assigned.setRevisionRunId(taskRun.getId());
-        StoryConflict stale = conflictRepo.saveAndFlush(assigned);
+        StoryConflict outdated = conflict(story.id(), taskRun(task.id()), "A", 1);
 
-        assertThatThrownBy(() -> service.startRevisionForConflicts(story.id(), List.of(stale), null))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining(stale.getId().toString());
+        Optional<RunResponse> started = service.startRevisionForConflicts(story.id(), List.of(outdated), null);
+
+        assertThat(started).isEmpty();
+        assertThat(designRunsOf(story.id())).isEmpty();
+        assertThat(reload(outdated).getRevisionRunId()).isNull();
+    }
+
+    @Test
+    void systemRevisionStartsForTheStillOpenSubset() throws Exception {
+        StoryResponse story = makeStory("story-revision-open-subset", "Story");
+        TaskResponse first = taskService.create(story.id(), new TaskRequest("First", "D"));
+        TaskResponse second = taskService.create(story.id(), new TaskRequest("Second", "D"));
+        approveSpec(story.id());
+        approveSpec(story.id());
+        StoryConflict open = conflict(story.id(), taskRun(first.id()), "Still open");
+        WorkflowRun otherRun = taskRun(second.id());
+        StoryConflict taken = conflict(story.id(), otherRun, "Taken meanwhile");
+        conflictRepo.assignToRevision(List.of(taken.getId()), story.id(), otherRun.getId());
+
+        RunResponse started = service.startRevisionForConflicts(story.id(), List.of(open, taken), null)
+                .orElseThrow();
+
+        assertThat(inputOf(started.id(), "revision_context"))
+                .contains("### Conflict " + open.getId(), "Still open")
+                .doesNotContain(taken.getId().toString(), "Taken meanwhile");
+        assertThat(reload(open).getRevisionRunId()).isEqualTo(started.id());
+        assertThat(reload(taken).getRevisionRunId()).isEqualTo(otherRun.getId());
     }
 
     @Test
@@ -574,6 +665,10 @@ class StoryDesignServiceTest extends BaseTest {
 
     /** A persisted conflict raised by an execution of {@code taskRun} against the Story's v2. */
     private StoryConflict conflict(UUID storyId, WorkflowRun taskRun, String report) {
+        return conflict(storyId, taskRun, report, 2);
+    }
+
+    private StoryConflict conflict(UUID storyId, WorkflowRun taskRun, String report, int raisedAgainst) {
         TemplateNode node = templateNodeRepo.findByGraphTemplateId(taskRun.getGraphTemplateId()).stream()
                 .findFirst()
                 .orElseThrow();
@@ -587,7 +682,7 @@ class StoryDesignServiceTest extends BaseTest {
         c.setStoryId(storyId);
         c.setTaskRunId(taskRun.getId());
         c.setAnalyzeNodeExecutionId(analyze.getId());
-        c.setRaisedAgainstVersion(2);
+        c.setRaisedAgainstVersion(raisedAgainst);
         c.setReport(report);
         return conflictRepo.saveAndFlush(c);
     }
