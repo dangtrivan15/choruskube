@@ -14,6 +14,7 @@ import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.StoryDesignGraph;
 import com.choruskube.core.credential.GitHubCredentialResolver;
+import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.RunResponse;
@@ -72,6 +73,7 @@ import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @Transactional
@@ -91,6 +93,9 @@ class StoryDesignServiceTest extends BaseTest {
 
     @Autowired
     private TaskService taskService;
+
+    @Autowired
+    private WorkItemDependencyService dependencyService;
 
     @Autowired
     private GitRepoRepository gitRepoRepo;
@@ -296,6 +301,47 @@ class StoryDesignServiceTest extends BaseTest {
         assertThat(started.autopilotId()).isEqualTo(autopilotId);
     }
 
+    /** The frontier is swept before the start: a blocker added in between is seen only under the Story lock. */
+    @Test
+    void startDesignForAutopilot_blockerAddedSinceThePlan_conflictsAndStartsNothing() {
+        StoryResponse story = makeStory("story-design-autopilot-blocked", "Story");
+        StoryResponse blocker = makeStory("story-design-autopilot-blocker", "Blocker");
+        UUID autopilotId = makeAutopilot();
+        dependencyService.create(new CreateDependencyRequest("story", blocker.id(), "story", story.id()));
+
+        assertThatThrownBy(() -> service.startDesignForAutopilot(story.id(), autopilotId))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("no longer eligible");
+        assertThat(designRunsOf(story.id())).isEmpty();
+    }
+
+    @Test
+    void startDesignForAutopilot_blockerWithApprovedSpec_starts() {
+        StoryResponse story = makeStory("story-design-autopilot-unblocked", "Story");
+        StoryResponse blocker = makeStory("story-design-autopilot-designed-blocker", "Blocker");
+        approveSpec(blocker.id());
+        UUID autopilotId = makeAutopilot();
+        dependencyService.create(new CreateDependencyRequest("story", blocker.id(), "story", story.id()));
+
+        RunResponse started = service.startDesignForAutopilot(story.id(), autopilotId);
+
+        assertThat(designRunsOf(story.id())).extracting(WorkflowRun::getId).containsExactly(started.id());
+    }
+
+    /** A person's failed or cancelled design stays put until they release it; the Autopilot must not undo it. */
+    @Test
+    void startDesignForAutopilot_afterAFailedDesignRun_conflictsAndStartsNothing() {
+        StoryResponse story = makeStory("story-design-autopilot-held", "Story");
+        UUID autopilotId = makeAutopilot();
+        RunResponse failed = service.startDesign(story.id());
+        setStatus(failed.id(), WorkflowRunStatus.failed);
+
+        assertThatThrownBy(() -> service.startDesignForAutopilot(story.id(), autopilotId))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("no longer eligible");
+        assertThat(designRunsOf(story.id())).extracting(WorkflowRun::getId).containsExactly(failed.id());
+    }
+
     @Test
     void startRevision_stagesCurrentSpecAndPriorReviews() throws Exception {
         StoryResponse story = makeStory("story-revision-staging", "Widget backend");
@@ -329,6 +375,33 @@ class StoryDesignServiceTest extends BaseTest {
         assertThat(revisionContext).contains("## Conflicts to answer");
         assertThat(revisionContext).contains("## Human guidance\n\nUse a hard cutoff, no fallback");
         assertThat(inputOf(started.id(), "story_request")).startsWith("## Widget backend");
+    }
+
+    @Test
+    void startRevision_priorReviewObjectMissing_stagesOnlyTheSpec() throws Exception {
+        StoryResponse story = makeStory("story-revision-review-missing", "Story");
+        WorkflowRun designRun = completedDesignRun(story.id());
+        reviewExecution(designRun, "system/runs/" + designRun.getId() + "/outputs/review/");
+        specService.recordApproved(story.id(), designRun.getId(), "# Spec v1 body");
+        when(s3Client.getObject(any(GetObjectRequest.class)))
+                .thenThrow(NoSuchKeyException.builder().message("missing").build());
+
+        RunResponse started = service.startRevision(story.id(), "Tighten the API");
+
+        assertThat(stagedInputNames(started.id())).containsExactly("story_spec.md");
+        assertThat(stagedTexts()).containsEntry("story_spec.md", "# Spec v1 body");
+    }
+
+    @Test
+    void startRevision_designRunWithoutAReviewExecution_stagesOnlyTheSpec() throws Exception {
+        StoryResponse story = makeStory("story-revision-no-review", "Story");
+        WorkflowRun designRun = completedDesignRun(story.id());
+        specService.recordApproved(story.id(), designRun.getId(), "# Spec v1 body");
+
+        RunResponse started = service.startRevision(story.id(), "Tighten the API");
+
+        assertThat(stagedInputNames(started.id())).containsExactly("story_spec.md");
+        verify(s3Client, never()).getObject(any(GetObjectRequest.class));
     }
 
     @Test
@@ -602,6 +675,15 @@ class StoryDesignServiceTest extends BaseTest {
     private void approveSpec(UUID storyId) {
         entityManager.flush();
         StorySpecFixtures.approve(jdbc, storyId);
+    }
+
+    private List<String> stagedInputNames(UUID runId) throws Exception {
+        List<String> names = new ArrayList<>();
+        objectMapper
+                .readTree(runRepo.findById(runId).orElseThrow().getInputArtifactRefs())
+                .fieldNames()
+                .forEachRemaining(names::add);
+        return names;
     }
 
     private Map<String, String> stagedTexts() throws Exception {

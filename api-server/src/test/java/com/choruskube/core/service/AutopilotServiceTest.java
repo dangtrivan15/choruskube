@@ -1866,6 +1866,30 @@ class AutopilotServiceTest {
     }
 
     @Test
+    void frontier_blockerInAnotherEpicWithApprovedSpec_allowsDesign() {
+        // The blocker's Epic is not swept, so only the version lookup for blockers can find its spec.
+        StoryFixture dependent = undesignedStory(epic("E"));
+        Story blocker = storyInAnUnsweptEpic();
+        specVersions.put(blocker.getId(), 1);
+        blocks(blocker.getId(), BlockableItemType.story, dependent.story().getId(), BlockableItemType.story);
+
+        newService().tick();
+
+        verify(storyDesignService).startDesignForAutopilot(dependent.story().getId(), autopilotId);
+    }
+
+    @Test
+    void frontier_blockerInAnotherEpicWithoutSpec_blocksDesign() {
+        StoryFixture dependent = undesignedStory(epic("E"));
+        Story blocker = storyInAnUnsweptEpic();
+        blocks(blocker.getId(), BlockableItemType.story, dependent.story().getId(), BlockableItemType.story);
+
+        newService().tick();
+
+        verify(storyDesignService, never()).startDesignForAutopilot(any(), any());
+    }
+
+    @Test
     void frontier_blockerWithoutSpec_blocksDesign() {
         EpicFixture e = epic("E");
         StoryFixture blocker = undesignedStory(e);
@@ -2048,6 +2072,10 @@ class AutopilotServiceTest {
         pastDesignRun(failed, WorkflowRunStatus.failed, Instant.now());
         Task elsewhere =
                 task(story(epic("Low", Priority.low)), "Ready elsewhere", WorkItemStatus.backlog, Readiness.READY);
+        // Were the held Story started it would fail, so the breaker assertion below can only pass by
+        // the Story never being started.
+        when(storyDesignService.startDesignForAutopilot(eq(failed.story().getId()), any()))
+                .thenThrow(new IllegalStateException("Story Design template not found"));
 
         newService().tick();
 
@@ -2515,6 +2543,15 @@ class AutopilotServiceTest {
         storiesById.put(story.getId(), story);
         specVersions.put(story.getId(), 1);
         return new StoryFixture(story, epic);
+    }
+
+    /** A Story whose Epic no candidate source returns, so the sweep reads nothing of it but its edges. */
+    private Story storyInAnUnsweptEpic() {
+        Story story = new Story();
+        story.setId(UUID.randomUUID());
+        story.setEpicId(UUID.randomUUID());
+        story.setStage(WorkItemStatus.backlog);
+        return story;
     }
 
     /** No approved spec and no design run: a Story the Autopilot designs, whose Tasks cannot start. */

@@ -218,6 +218,62 @@ class StorySpecVersionRepositoryTest extends BaseTest {
                 .isNull();
     }
 
+    /** The revision agent answers conflicts in this order, so a Story's open ones must not come back newest first. */
+    @Test
+    void openConflicts_comeOldestFirstFromEveryFinder() {
+        Story story = newStory("oldest-first");
+        WorkflowRun taskRun = newRun(null, WorkflowRunStatus.running);
+        StoryConflict newer = conflict(story, taskRun, 1);
+        newer.setCreatedAt(Instant.parse("2026-01-02T00:00:00Z"));
+        newer = conflictRepo.saveAndFlush(newer);
+        StoryConflict older = conflict(story, taskRun, 1);
+        older.setCreatedAt(Instant.parse("2026-01-01T00:00:00Z"));
+        older = conflictRepo.saveAndFlush(older);
+        List<UUID> both = List.of(newer.getId(), older.getId());
+
+        assertThat(conflictRepo.findByStoryIdAndReleasedAtIsNullOrderByCreatedAtAsc(story.getId()))
+                .extracting(StoryConflict::getId)
+                .containsExactly(older.getId(), newer.getId());
+        assertThat(conflictRepo.lockOpenUnassignedRaisedAgainst(story.getId(), 1, both))
+                .extracting(StoryConflict::getId)
+                .containsExactly(older.getId(), newer.getId());
+    }
+
+    /** Run deletes are hard deletes: a Task run takes its conflicts with it, a revision run only its references. */
+    @Test
+    void deletingRuns_cascadesTheirConflicts_andNullsTheReferencesToThem() {
+        Story story = newStory("run-deletes");
+        WorkflowRun revision = newRun(story.getId(), WorkflowRunStatus.completed);
+        WorkflowRun endedTaskRun = newRun(null, WorkflowRunStatus.cancelled);
+        WorkflowRun survivingTaskRun = newRun(null, WorkflowRunStatus.running);
+        // The Analyze execution belongs to a third run, so only task_run_id can take the conflict away.
+        WorkflowRun analyzeHolder = newRun(null, WorkflowRunStatus.running);
+        StorySpecVersion approved = version(story.getId(), 1);
+        approved.setRunId(revision.getId());
+        versionRepo.saveAndFlush(approved);
+        StoryConflict cascaded = conflict(story, analyzeHolder, 1);
+        cascaded.setTaskRunId(endedTaskRun.getId());
+        cascaded.setRevisionRunId(revision.getId());
+        conflictRepo.saveAndFlush(cascaded);
+        StoryConflict kept = conflict(story, survivingTaskRun, 1);
+        kept.setRevisionRunId(revision.getId());
+        kept = conflictRepo.saveAndFlush(kept);
+
+        jdbc.update("DELETE FROM workflow_run WHERE id = ?", endedTaskRun.getId());
+
+        assertThat(conflictIds(story.getId())).containsExactly(kept.getId());
+
+        jdbc.update("DELETE FROM workflow_run WHERE id = ?", revision.getId());
+
+        assertThat(jdbc.queryForObject(
+                        "SELECT revision_run_id FROM story_conflict WHERE id = ?", UUID.class, kept.getId()))
+                .isNull();
+        assertThat(jdbc.queryForObject(
+                        "SELECT run_id FROM story_spec_version WHERE id = ?", UUID.class, approved.getId()))
+                .isNull();
+        assertThat(count("story_spec_version", story.getId())).isEqualTo(1);
+    }
+
     @Test
     void conflicts_openOnesAreFoundAndReleasedOnesAreNot() {
         Story story = newStory("conflicts");
@@ -398,6 +454,10 @@ class StorySpecVersionRepositoryTest extends BaseTest {
         conflict.setRaisedAgainstVersion(raisedAgainst);
         conflict.setReport("report");
         return conflict;
+    }
+
+    private List<UUID> conflictIds(UUID storyId) {
+        return jdbc.queryForList("SELECT id FROM story_conflict WHERE story_id = ?", UUID.class, storyId);
     }
 
     private long count(String table, UUID storyId) {

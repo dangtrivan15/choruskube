@@ -17,7 +17,7 @@ import { uniqueName, TestApiClient, type Task } from "../helpers/api-client";
 // failure looks exactly like infrastructure flakiness in an unrelated file. There is no way to
 // close this from inside one spec file alone (there is no scope to filter by), so the
 // mitigations here are damage limitation, not elimination:
-//   - `test.describe.configure({ mode: "serial" })` keeps this file's own 3 tests on one worker
+//   - `test.describe.configure({ mode: "serial" })` keeps this file's own tests on one worker
 //     — Playwright's `fullyParallel: true` would otherwise schedule them onto different workers,
 //     which would race each other over the shared `maxParallel`/`engaged` state (this is a
 //     different problem from the scheduler one above: it's about THIS file racing itself, which

@@ -14,6 +14,7 @@ import com.choruskube.core.model.StoryConflict;
 import com.choruskube.core.model.StorySpecVersion;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
@@ -24,12 +25,14 @@ import com.choruskube.core.repository.WorkflowRunRepository;
 import jakarta.persistence.EntityManager;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.IntFunction;
 import java.util.stream.Collectors;
@@ -60,6 +63,7 @@ public class StoryDesignService {
     private final ArtifactService artifactService;
     private final TemplateGraphIdResolver graphIdResolver;
     private final RunEventPublisher eventPublisher;
+    private final EpicReadinessAssembler readinessAssembler;
     // The locking finder returns the instance already in this persistence context, carrying state
     // read before the lock was granted; the run must be composed from the locked state.
     private final EntityManager entityManager;
@@ -78,6 +82,7 @@ public class StoryDesignService {
             ArtifactService artifactService,
             TemplateGraphIdResolver graphIdResolver,
             RunEventPublisher eventPublisher,
+            EpicReadinessAssembler readinessAssembler,
             EntityManager entityManager) {
         this.storyRepo = storyRepo;
         this.epicRepo = epicRepo;
@@ -92,6 +97,7 @@ public class StoryDesignService {
         this.artifactService = artifactService;
         this.graphIdResolver = graphIdResolver;
         this.eventPublisher = eventPublisher;
+        this.readinessAssembler = readinessAssembler;
         this.entityManager = entityManager;
     }
 
@@ -99,14 +105,16 @@ public class StoryDesignService {
     public RunResponse startDesign(UUID storyId) {
         requireStory(storyId);
         authService.checkOrgAccess("story", storyId);
-        return start(storyId, null, null, runService::startRun).orElseThrow().run();
+        return start(storyId, null, null, runService::startRun, story -> {})
+                .orElseThrow()
+                .run();
     }
 
     @Transactional
     public RunResponse startDesignForAutopilot(UUID storyId, UUID autopilotId) {
         requireStory(storyId);
         authService.assertSameOrg("story", storyId, "autopilot", autopilotId);
-        return start(storyId, autopilotId, null, runService::startRun)
+        return start(storyId, autopilotId, null, runService::startRun, story -> requireDesignable(story, autopilotId))
                 .orElseThrow()
                 .run();
     }
@@ -121,7 +129,8 @@ public class StoryDesignService {
         authService.checkOrgAccess("story", storyId);
         Revision revision =
                 new Revision(version -> conflictRepo.findOpenRaisedAgainst(storyId, version), guidance, false);
-        Started started = start(storyId, null, revision, runService::startRun).orElseThrow();
+        Started started = start(storyId, null, revision, runService::startRun, story -> {})
+                .orElseThrow();
         List<UUID> ids = idsOf(started.conflicts());
         if (!ids.isEmpty()) {
             // Not count-checked: a conflict closed since the read is only answered needlessly, while
@@ -161,7 +170,7 @@ public class StoryDesignService {
         // Skips the concurrent-run cap: it counts the parked Task runs this revision unblocks, so at
         // the cap a checked start is refused on every pass until their gates time out.
         Optional<Started> started =
-                start(storyId, autopilotIdOrNull, revision, runService::startRunExemptFromConcurrentQuota);
+                start(storyId, autopilotIdOrNull, revision, runService::startRunExemptFromConcurrentQuota, story -> {});
         if (started.isEmpty()) {
             return Optional.empty();
         }
@@ -182,8 +191,13 @@ public class StoryDesignService {
 
     private record Started(RunResponse run, int specVersion, List<StoryConflict> conflicts) {}
 
+    /** {@code underLock} runs on the locked, refreshed Story once the open-run guards have passed. */
     private Optional<Started> start(
-            UUID storyId, UUID autopilotId, Revision revision, Function<CreateRunRequest, RunResponse> startRun) {
+            UUID storyId,
+            UUID autopilotId,
+            Revision revision,
+            Function<CreateRunRequest, RunResponse> startRun,
+            Consumer<Story> underLock) {
         // Every start serialises on the Story row, so two starters (a human and the Autopilot, or
         // the conflict reconciler) cannot both pass the open-run guard below.
         Story story = storyRepo
@@ -215,6 +229,7 @@ public class StoryDesignService {
                                     + " is approved but its spec version is not recorded yet"
                             : "Story already has an open design run: " + run.getId());
         }
+        underLock.accept(story);
 
         Epic epic = epicRepo.findById(story.getEpicId())
                 .orElseThrow(() -> new NotFoundException("Epic not found: " + story.getEpicId()));
@@ -261,6 +276,37 @@ public class StoryDesignService {
                 withAutopilotId(started, autopilotId),
                 current.map(StorySpecVersion::getVersion).orElse(0),
                 conflicts));
+    }
+
+    /**
+     * The frontier was swept before this lock was taken. Without this re-check, a blocker or a held
+     * design run added since then is ignored, and the Autopilot restarts a design a human cancelled.
+     */
+    private void requireDesignable(Story story, UUID autopilotId) {
+        EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(story.getEpicId());
+        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
+                candidates.candidateIds(),
+                candidates.statusById(),
+                candidates.parentOf(),
+                ReadinessAuthMode.AUTOPILOT,
+                autopilotId);
+        // A blocker in another Epic is no candidate; its approved spec is what satisfies it.
+        Set<UUID> versionIds = new HashSet<>(Set.of(story.getId()));
+        assembly.edges().stream()
+                .filter(edge -> edge.getBlockingItemType() == BlockableItemType.story)
+                .forEach(edge -> versionIds.add(edge.getBlockingItemId()));
+        Set<UUID> thisStory = Set.of(story.getId());
+        if (!StoryDesignEligibility.isDesignable(
+                story,
+                candidates,
+                assembly,
+                specService.currentVersions(versionIds),
+                specService.storiesWithOpenDesignRun(thisStory),
+                specService.latestDesignRuns(thisStory))) {
+            throw new ConflictException(
+                    "Story is no longer eligible for an Autopilot design: its blockers, design runs or Tasks changed"
+                            + " since the plan");
+        }
     }
 
     /**

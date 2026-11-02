@@ -12,6 +12,7 @@ import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
+import com.choruskube.core.dto.RunSummary;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
@@ -589,12 +590,11 @@ public class DefaultTaskServiceTest extends BaseTest {
         UUID runId = service.start(task.id()).latestRunId();
 
         assertThat(service.listRuns(task.id(), PageRequest.of(0, 20)).getContent())
-                .extracting(com.choruskube.core.dto.RunSummary::storySpecVersion)
+                .extracting(RunSummary::storySpecVersion)
                 .containsExactly(2);
         assertThat(runService.getRun(runId).storySpecVersion()).isEqualTo(2);
         assertThat(runService.listRuns(null, title, PageRequest.of(0, 20)).getContent())
-                .extracting(
-                        com.choruskube.core.dto.RunSummary::id, com.choruskube.core.dto.RunSummary::storySpecVersion)
+                .extracting(RunSummary::id, RunSummary::storySpecVersion)
                 .containsExactly(tuple(runId, 2));
     }
 
@@ -635,7 +635,7 @@ public class DefaultTaskServiceTest extends BaseTest {
 
         assertThat(afterRestart.latestRunId()).isNotEqualTo(afterFirstStart.latestRunId());
 
-        Page<com.choruskube.core.dto.RunSummary> history = service.listRuns(task.id(), PageRequest.of(0, 20));
+        Page<RunSummary> history = service.listRuns(task.id(), PageRequest.of(0, 20));
         assertThat(history.getContent()).hasSize(2);
         assertThat(history.getContent().get(0).id()).isEqualTo(afterRestart.latestRunId());
         assertThat(history.getContent().get(1).id()).isEqualTo(afterFirstStart.latestRunId());
@@ -1121,7 +1121,7 @@ public class DefaultTaskServiceTest extends BaseTest {
         StoryResponse story = makeStory(r.getId());
         TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
 
-        Page<com.choruskube.core.dto.RunSummary> history = service.listRuns(task.id(), PageRequest.of(0, 20));
+        Page<RunSummary> history = service.listRuns(task.id(), PageRequest.of(0, 20));
         assertThat(history.getContent()).isEmpty();
     }
 
