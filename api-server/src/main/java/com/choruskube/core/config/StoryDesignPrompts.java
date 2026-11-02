@@ -1,7 +1,6 @@
 package com.choruskube.core.config;
 
-// A prompt edit reaches a database only with a BaseStoryDesignSeeder.VERSION bump. Any {word}
-// placeholder the server does not supply fails the node, so JSON examples here open with {".
+// A prompt edit reaches a database only with a BaseStoryDesignSeeder.VERSION bump.
 final class StoryDesignPrompts {
 
     static final String DRAFT_STORY_SPEC_PROMPT = """
@@ -689,7 +688,8 @@ final class StoryDesignPrompts {
                  at the gate.
                - Each Realises line names headings that exist, exactly as written.
                  Every `###` heading under Architecture and Technical Decisions is
-                 realised by at least one Task.
+                 realised by at least one Task, and so are Testing Strategy and Manual
+                 Operations when they ask for anything.
                - Depends on forms no cycle, the entries are ordered by it, and it
                  matches the proposal's dependencies.
                - An existing Task the design does not need, or describes differently,

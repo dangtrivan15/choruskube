@@ -81,11 +81,11 @@ class BaseTaskDeliverySeederTest extends BaseTest {
         return nodeDefRepo.findById(node.getNodeDefinitionId()).orElseThrow();
     }
 
-    // What VERSION 1 seeds: its prompts (shared DeliveryPrompts text included), node configs,
+    // What VERSION 2 seeds: its prompts (shared DeliveryPrompts text included), node configs,
     // input specs and graph. A stored version is never re-seeded, so a change here without a bump
     // leaves existing databases on the old template: bump VERSION and update both pins together.
-    private static final int PINNED_VERSION = 1;
-    private static final String PINNED_SHA256 = "9c97ea57a025ac859b5304e4c13080a29f5b1c8ee2253092e314780f3f9631ff";
+    private static final int PINNED_VERSION = 2;
+    private static final String PINNED_SHA256 = "837298a7cd726db0f3c2c304e3ba0b34ec7766984eb893745105968b9f3edca8";
 
     @Test
     void versionTripwire() throws Exception {
@@ -97,6 +97,27 @@ class BaseTaskDeliverySeederTest extends BaseTest {
                 .isEqualTo(PINNED_VERSION);
         assertThat(templateRepo.findByGraphIdAndVersion("task-delivery", PINNED_VERSION))
                 .isPresent();
+    }
+
+    @Test
+    void noSlotMarkerSurvivesInAnySeededPrompt() {
+        Map<String, String> prompts = new HashMap<>();
+        nodesByLabel(template()).forEach((label, node) -> {
+            String prompt = definitionOf(node).getPromptTemplate();
+            if (prompt != null) {
+                prompts.put(label, prompt);
+            }
+        });
+        assertThat(prompts)
+                .containsKeys(
+                        TaskDeliveryGraph.ANALYZE,
+                        TaskDeliveryGraph.TASK_SPEC_REVIEW,
+                        TaskDeliveryGraph.IMPLEMENT,
+                        TaskDeliveryGraph.CODE_REVIEW);
+        prompts.forEach((label, prompt) -> assertThat(prompt)
+                .as("%s: a marker that is not a whole slot line is never replaced and reaches the agent", label)
+                .doesNotContain("<<")
+                .doesNotContain(">>"));
     }
 
     @Test
