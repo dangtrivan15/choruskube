@@ -255,7 +255,7 @@ class RunServiceStoryVersionRecheckTest {
         assertThat(payload.path("attachmentRefs").asText()).contains("human_guidance.md");
         String guidance = "The Story spec moved from v1 to v3 since this Task planned. Read the Revisions entries"
                 + " for v2 through v3 in /workspace/in/run_input/story_spec.md and check this change against them."
-                + "\n\n## Reviewer feedback\n\nship it";
+                + "\n\n## Reviewer's note with the approval\n\nship it";
         verify(uploadService)
                 .uploadGateText(
                         eq("acme"), eq(runId), eq(nodeExecId), any(UUID.class), eq("human_guidance.md"), eq(guidance));
@@ -288,7 +288,7 @@ class RunServiceStoryVersionRecheckTest {
                 nodeExecId,
                 new SignalRequest("approved", "check the retry path", "{\"notes.md\":\"k1\"}", null));
 
-        assertThat(uploadedGuidance()).endsWith("\n\n## Reviewer feedback\n\ncheck the retry path");
+        assertThat(uploadedGuidance()).endsWith("\n\n## Reviewer's note with the approval\n\ncheck the retry path");
         JsonNode refs = objectMapper.readTree(signalled().path("attachmentRefs").asText());
         assertThat(refs.path("human_guidance.md").asText()).isEqualTo("k");
         assertThat(refs.path("notes.md").asText()).isEqualTo("k1");
@@ -340,6 +340,34 @@ class RunServiceStoryVersionRecheckTest {
         verifyNoGuidanceUploaded();
         verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
         verify(runRepo, never()).setStorySpecVersion(any(), anyInt());
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {"not json", "[]", "\"x\"", "null", "{\"a.md\":1}", "{\"a.md\":null}", "{\"a.md\":{\"b\":\"c\"}}"
+            })
+    void attachmentRefsThatAreNotFileNamesToKeys_refusedOnAnyDecisionBeforeTheClaim(String refs) {
+        stubExec();
+        stubRun(PLAIN_GATE, taskId, 1);
+
+        assertThatThrownBy(() ->
+                        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "x", refs, null)))
+                .isInstanceOfSatisfying(ValidationException.class, e -> assertThat(e.getErrors())
+                        .containsExactly("attachmentRefs must be a JSON object of file names to object keys"));
+
+        verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
+        verifyNoInteractions(workflowStub);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "  ", "{}", "{\"a.md\":\"k\"}"})
+    void attachmentRefsThatAreBlankOrFileNamesToKeys_goThroughOnAPlainApproval(String refs) {
+        stubExec();
+        stubRun(PLAIN_GATE, taskId, 1);
+
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "x", refs, null));
+
+        assertThat(signalled().path("decision").asText()).isEqualTo("approved");
     }
 
     @Test

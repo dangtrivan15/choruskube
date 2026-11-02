@@ -531,8 +531,11 @@ public class RunService {
         UUID runId = run.getId();
         UUID nodeExecId = exec.getId();
 
+        // Every decision's refs are checked first, so a refusal leaves the gate as it was.
+        ObjectNode reviewerRefs = parseAttachmentRefs(request.attachmentRefs());
+
         // Ahead of the async hand-over and the claim, so a refusal leaves the gate as it was.
-        Optional<SignalResponse> rerouted = recheckStoryVersion(run, exec, request);
+        Optional<SignalResponse> rerouted = recheckStoryVersion(run, exec, request, reviewerRefs);
         if (rerouted.isPresent()) {
             return rerouted.get();
         }
@@ -611,7 +614,8 @@ public class RunService {
      * re-check route with the current spec and guidance naming the new Revisions entries, after
      * which a human approves again. Empty when the approval proceeds as it is.
      */
-    private Optional<SignalResponse> recheckStoryVersion(WorkflowRun run, NodeExecution exec, SignalRequest request) {
+    private Optional<SignalResponse> recheckStoryVersion(
+            WorkflowRun run, NodeExecution exec, SignalRequest request, ObjectNode reviewerRefs) {
         // A gate no longer awaiting is refused by the claim; writing first would replace the
         // guidance a reviewer's decision left at this execution.
         if (exec.getStatus() != NodeExecutionStatus.awaiting_human
@@ -630,10 +634,9 @@ public class RunService {
         UUID runId = run.getId();
         int planned = stale.get().planned();
         StorySpecVersion current = stale.get().current();
-        ObjectNode reviewerRefs = parseAttachmentRefs(request.attachmentRefs());
         String guidance = storyVersionGuidance(planned, current.getVersion());
         if (request.feedback() != null && !request.feedback().isBlank()) {
-            guidance += "\n\n## Reviewer feedback\n\n" + request.feedback();
+            guidance += "\n\n## Reviewer's note with the approval\n\n" + request.feedback();
         }
         uploadService.overwriteRunInput(runId, StorySpecLifecycleService.SPEC_FILE, current.getContent());
         // A fresh object per attempt: of two submissions at one gate the claim loser would
