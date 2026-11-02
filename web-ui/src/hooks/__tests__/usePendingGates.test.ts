@@ -160,6 +160,21 @@ describe("usePendingGates hooks", () => {
       expect(showMutationToast).toHaveBeenCalledWith("Finalizing your approval…", "success");
     });
 
+    it("toasts a warning with the reason when the approval was rerouted to a re-check", async () => {
+      mockApi.post.mockResolvedValueOnce({ outcome: "rerouted", reason: "The Story spec moved." });
+      const { wrapper } = createTestHookWrapper();
+
+      const { result } = renderHook(() => useSignalFromDashboard(), { wrapper });
+
+      result.current.mutate({ runId: "run-1", nodeExecId: "exec-1", decision: "approved", feedback: "" });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(showMutationToast).toHaveBeenCalledWith(
+        "Not approved yet: The Story spec moved. It goes back for a re-check first; approve again after.",
+        "warning",
+      );
+    });
+
     it("calls api.post for rejection with feedback", async () => {
       mockApi.post.mockResolvedValueOnce(undefined);
       const { wrapper } = createTestHookWrapper();

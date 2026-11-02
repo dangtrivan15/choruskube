@@ -13,6 +13,11 @@ export function decisionToastMessage(response: SignalResponse | undefined): stri
   return "Decision submitted";
 }
 
+/** A rerouted approval did not take effect, so it reads as a warning, not a success. */
+export function decisionToastVariant(response: SignalResponse | undefined): "success" | "warning" {
+  return response?.outcome === "rerouted" ? "warning" : "success";
+}
+
 /** The newest stamp for a gate, if any. Relies on the endpoint listing stamps oldest first. */
 export function latestStampFor(stamps: GateStampResponse[] | undefined, gateLabel: string): GateStampResponse | null {
   const forGate = (stamps ?? []).filter((s) => s.gateLabel === gateLabel);

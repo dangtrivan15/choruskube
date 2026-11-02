@@ -238,8 +238,22 @@ public class UploadService {
 
     /** Stores {@code content} as a gate attachment, keyed like {@link #uploadGateFiles}. */
     public String uploadGateText(String orgSlug, UUID runId, UUID nodeExecId, String filename, String content) {
+        return putGateText(orgSlug + "/runs/" + runId + "/gate-attachments/" + nodeExecId, filename, content);
+    }
+
+    /**
+     * Like the form above, with {@code attemptId} in the object key so concurrent submissions at
+     * one gate never write the same object. The returned ref still names the file {@code filename}.
+     */
+    public String uploadGateText(
+            String orgSlug, UUID runId, UUID nodeExecId, UUID attemptId, String filename, String content) {
+        return putGateText(
+                orgSlug + "/runs/" + runId + "/gate-attachments/" + nodeExecId + "/" + attemptId, filename, content);
+    }
+
+    private String putGateText(String keyPrefix, String filename, String content) {
         String safeName = sanitiseFilename(filename);
-        String objectKey = orgSlug + "/runs/" + runId + "/gate-attachments/" + nodeExecId + "/" + safeName;
+        String objectKey = keyPrefix + "/" + safeName;
         s3Client.putObject(
                 PutObjectRequest.builder()
                         .bucket(bucket)

@@ -54,10 +54,10 @@ public class RunService {
 
     static final int RUN_NAME_MAX_LENGTH = 30;
     static final String ASYNC_FINALIZE = "async";
+    static final String RUN_NAME_TRUNCATION_MARKER = "…";
 
     private static final String ATTACHMENT_REFS_NOT_AN_OBJECT =
             "attachmentRefs must be a JSON object of file names to object keys";
-    static final String RUN_NAME_TRUNCATION_MARKER = "…";
 
     private final WorkflowRunRepository runRepo;
     private final NodeExecutionRepository execRepo;
@@ -609,9 +609,7 @@ public class RunService {
      * A Task run's approval at a gate with {@code story_version_recheck}: refused while its Story's
      * spec is under revision; when the spec moved since the run planned, turned into the gate's
      * re-check route with the current spec and guidance naming the new Revisions entries, after
-     * which a human approves again. The reviewer's feedback and attachments travel with the
-     * re-check, and the {@code rerouted} response carries why. Empty when the approval proceeds as
-     * it is.
+     * which a human approves again. Empty when the approval proceeds as it is.
      */
     private Optional<SignalResponse> recheckStoryVersion(WorkflowRun run, NodeExecution exec, SignalRequest request) {
         // A gate no longer awaiting is refused by the claim; writing first would replace the
@@ -638,10 +636,13 @@ public class RunService {
             guidance += "\n\n## Reviewer feedback\n\n" + request.feedback();
         }
         uploadService.overwriteRunInput(runId, StorySpecLifecycleService.SPEC_FILE, current.getContent());
+        // A fresh object per attempt: of two submissions at one gate the claim loser would
+        // otherwise overwrite the winner's guidance with its own feedback.
         String guidanceRefs = uploadService.uploadGateText(
                 storagePrefixResolver.storagePrefixForRun(runId),
                 runId,
                 exec.getId(),
+                UUID.randomUUID(),
                 StorySpecLifecycleService.GUIDANCE_FILE,
                 guidance);
         decideGate(
@@ -676,10 +677,19 @@ public class RunService {
         } catch (JsonProcessingException e) {
             throw new ValidationException(List.of(ATTACHMENT_REFS_NOT_AN_OBJECT));
         }
-        if (refs instanceof ObjectNode object) {
+        if (refs instanceof ObjectNode object && allValuesAreText(object)) {
             return object;
         }
         throw new ValidationException(List.of(ATTACHMENT_REFS_NOT_AN_OBJECT));
+    }
+
+    private static boolean allValuesAreText(ObjectNode refs) {
+        for (JsonNode value : refs) {
+            if (!value.isTextual()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** The reviewer's attachments beside the guidance file; a reviewer file of that name never replaces it. */

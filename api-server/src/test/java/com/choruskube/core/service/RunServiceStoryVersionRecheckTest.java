@@ -27,6 +27,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -145,7 +147,8 @@ class RunServiceStoryVersionRecheckTest {
                 storySpecService);
 
         when(storagePrefixResolver.storagePrefixForRun(runId)).thenReturn("acme");
-        when(uploadService.uploadGateText(eq("acme"), eq(runId), eq(nodeExecId), eq("human_guidance.md"), anyString()))
+        when(uploadService.uploadGateText(
+                        eq("acme"), eq(runId), eq(nodeExecId), any(UUID.class), eq("human_guidance.md"), anyString()))
                 .thenReturn("{\"human_guidance.md\":\"k\"}");
         Task task = new Task();
         task.setId(taskId);
@@ -199,8 +202,19 @@ class RunServiceStoryVersionRecheckTest {
     private String uploadedGuidance() {
         ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
         verify(uploadService)
-                .uploadGateText(eq("acme"), eq(runId), eq(nodeExecId), eq("human_guidance.md"), content.capture());
+                .uploadGateText(
+                        eq("acme"),
+                        eq(runId),
+                        eq(nodeExecId),
+                        any(UUID.class),
+                        eq("human_guidance.md"),
+                        content.capture());
         return content.getValue();
+    }
+
+    private void verifyNoGuidanceUploaded() {
+        verify(uploadService, never()).uploadGateText(any(), any(), any(), any(), any());
+        verify(uploadService, never()).uploadGateText(any(), any(), any(), any(), any(), any());
     }
 
     private SignalResponse approve() {
@@ -242,7 +256,9 @@ class RunServiceStoryVersionRecheckTest {
         String guidance = "The Story spec moved from v1 to v3 since this Task planned. Read the Revisions entries"
                 + " for v2 through v3 in /workspace/in/run_input/story_spec.md and check this change against them."
                 + "\n\n## Reviewer feedback\n\nship it";
-        verify(uploadService).uploadGateText("acme", runId, nodeExecId, "human_guidance.md", guidance);
+        verify(uploadService)
+                .uploadGateText(
+                        eq("acme"), eq(runId), eq(nodeExecId), any(UUID.class), eq("human_guidance.md"), eq(guidance));
         assertThat(payload.path("feedback").asText()).contains(guidance);
         verify(uploadService).overwriteRunInput(runId, "story_spec.md", "# Story spec v3");
         verify(runRepo).setStorySpecVersion(runId, 3);
@@ -307,20 +323,40 @@ class RunServiceStoryVersionRecheckTest {
         assertThat(refs.path("a.md").asText()).isEqualTo("k2");
     }
 
-    @Test
-    void reroutedApproval_unreadableAttachmentRefs_refusedBeforeAnythingIsWritten() {
+    @ParameterizedTest
+    @ValueSource(
+            strings = {"not json", "[]", "\"x\"", "null", "{\"a.md\":1}", "{\"a.md\":null}", "{\"a.md\":{\"b\":\"c\"}}"
+            })
+    void reroutedApproval_attachmentRefsThatAreNotFileNamesToKeys_refusedBeforeAnythingIsWritten(String refs) {
         stubExec();
         stubRun(STORY_RECHECK_GATE, taskId, 1);
         currentVersion(2);
 
-        assertThatThrownBy(() -> service.signalHumanDecision(
-                        runId, nodeExecId, new SignalRequest("approved", "x", "not json", null)))
+        assertThatThrownBy(() ->
+                        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "x", refs, null)))
                 .isInstanceOf(ValidationException.class);
 
         verify(uploadService, never()).overwriteRunInput(any(), any(), any());
-        verify(uploadService, never()).uploadGateText(any(), any(), any(), any(), any());
+        verifyNoGuidanceUploaded();
         verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
         verify(runRepo, never()).setStorySpecVersion(any(), anyInt());
+    }
+
+    @Test
+    void twoRerouteAttemptsAtOneGate_writeTheGuidanceToDistinctObjects() {
+        stubExec();
+        stubRun(STORY_RECHECK_GATE, taskId, 1);
+        currentVersion(2);
+
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "first", null, null));
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "second", null, null));
+
+        ArgumentCaptor<UUID> attempt = ArgumentCaptor.forClass(UUID.class);
+        verify(uploadService, times(2))
+                .uploadGateText(
+                        eq("acme"), eq(runId), eq(nodeExecId), attempt.capture(), eq("human_guidance.md"), anyString());
+        assertThat(attempt.getAllValues()).doesNotHaveDuplicates();
+        verify(uploadService, never()).uploadGateText(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -364,7 +400,7 @@ class RunServiceStoryVersionRecheckTest {
 
         assertThat(signalled().path("decision").asText()).isEqualTo("approved");
         verify(uploadService, never()).overwriteRunInput(any(), any(), any());
-        verify(uploadService, never()).uploadGateText(any(), any(), any(), any(), any());
+        verifyNoGuidanceUploaded();
         verify(runRepo, never()).setStorySpecVersion(any(), anyInt());
     }
 
@@ -418,7 +454,7 @@ class RunServiceStoryVersionRecheckTest {
         assertThatThrownBy(this::approve).isInstanceOf(GateClaimConflictException.class);
 
         verify(uploadService, never()).overwriteRunInput(any(), any(), any());
-        verify(uploadService, never()).uploadGateText(any(), any(), any(), any(), any());
+        verifyNoGuidanceUploaded();
         verify(runRepo, never()).setStorySpecVersion(any(), anyInt());
         verify(workflowStub, never()).signal(anyString(), any());
     }

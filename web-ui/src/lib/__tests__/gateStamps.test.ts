@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decisionToastMessage, latestStampFor, pendingStamp } from "../gateStamps";
+import { decisionToastMessage, decisionToastVariant, latestStampFor, pendingStamp } from "../gateStamps";
 import type { GateStampResponse } from "@/lib/types";
 
 function makeStamp(overrides: Partial<GateStampResponse> = {}): GateStampResponse {
@@ -42,6 +42,18 @@ describe("decisionToastMessage", () => {
     expect(decisionToastMessage({ outcome: "rerouted", reason: null })).toBe(
       "Not approved yet. It goes back for a re-check first; approve again after.",
     );
+  });
+});
+
+describe("decisionToastVariant", () => {
+  it("is a success for a decision the server applied or is applying", () => {
+    expect(decisionToastVariant(undefined)).toBe("success");
+    expect(decisionToastVariant({ outcome: "signaled" })).toBe("success");
+    expect(decisionToastVariant({ outcome: "finalizing" })).toBe("success");
+  });
+
+  it("is a warning for an approval that was rerouted instead of applied", () => {
+    expect(decisionToastVariant({ outcome: "rerouted", reason: "R" })).toBe("warning");
   });
 });
 
