@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -30,6 +31,7 @@ import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.ConflictException;
+import com.choruskube.core.exception.QuotaExceededException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.StoryConflict;
@@ -54,11 +56,15 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.slf4j.LoggerFactory;
@@ -85,7 +91,7 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
     @Autowired
     private StorySpecService specService;
 
-    @Autowired
+    @MockitoSpyBean
     private StoryConflictRepository conflictRepo;
 
     @Autowired
@@ -412,6 +418,153 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
     }
 
     @Test
+    void processConflictsReadsStoryIdsOnly() {
+        UUID twice = makeStory("conflict-ids-twice");
+        approveSpec(twice, "# Spec v1");
+        parkedTaskRun(twice, 1);
+        parkedTaskRun(twice, 1);
+        UUID closed = makeStory("conflict-ids-closed");
+        approveSpec(closed, "# Spec v1");
+        conflictRepo.markReleased(parkedTaskRun(closed, 1).conflict().getId(), Instant.now());
+
+        assertThat(conflictRepo.findStoryIdsWithOpenConflicts())
+                .containsOnlyOnce(twice)
+                .doesNotContain(closed);
+        clearInvocations(conflictRepo);
+
+        lifecycle.processConflicts();
+
+        verify(conflictRepo).findStoryIdsWithOpenConflicts();
+        assertThat(specService.openDesignRun(twice)).isPresent();
+    }
+
+    /** Passes repeat every few seconds, so a trace is attached only where it can diagnose something. */
+    @ParameterizedTest
+    @MethodSource("startFailures")
+    void startFailure_warnsWithItsTraceUnlessAnExpectedRefusal(RuntimeException failure, boolean traced) {
+        UUID storyId = makeStory("conflict-start-failure-" + failure.getClass().getSimpleName());
+        approveSpec(storyId, "# Spec v1");
+        Parked parked = parkedTaskRun(storyId, 1);
+        doThrow(failure).when(storyDesignService).startRevisionForConflicts(eq(storyId), any(), any());
+
+        List<ILoggingEvent> warnings = captureWarnings(() -> lifecycle.processConflicts());
+
+        assertThat(warnings)
+                .filteredOn(e -> e.getFormattedMessage().contains(storyId.toString()))
+                .singleElement()
+                .satisfies(e -> {
+                    assertThat(e.getFormattedMessage())
+                            .contains(parked.conflict().getId().toString(), failure.getMessage());
+                    assertThat(e.getThrowableProxy() != null)
+                            .as("throwable attached")
+                            .isEqualTo(traced);
+                });
+    }
+
+    static Stream<Arguments> startFailures() {
+        return Stream.of(
+                Arguments.of(new IllegalStateException("Unexpected state"), true),
+                Arguments.of(new ConflictException("Story already has an open design run"), false),
+                Arguments.of(new QuotaExceededException("Run quota exceeded"), false));
+    }
+
+    @Test
+    void conflictFailure_unexpected_warnsWithItsTrace() {
+        UUID storyId = makeStory("conflict-release-fails");
+        approveSpec(storyId, "# Spec v1");
+        Parked parked = parkedTaskRun(storyId, 1);
+        approveSpec(storyId, "# Spec v2");
+        doThrow(new IllegalStateException("Gate state unexpected"))
+                .when(runService)
+                .decideGateAsSystem(any(), any(), any());
+
+        List<ILoggingEvent> warnings = captureWarnings(() -> lifecycle.processConflicts());
+
+        assertThat(warnings)
+                .filteredOn(e -> e.getFormattedMessage()
+                        .contains(parked.conflict().getId().toString()))
+                .singleElement()
+                .satisfies(e -> {
+                    assertThat(e.getThrowableProxy()).isNotNull();
+                    assertThat(e.getThrowableProxy().getClassName()).isEqualTo(IllegalStateException.class.getName());
+                });
+        assertThat(conflict(parked).getReleasedAt()).isNull();
+    }
+
+    @Test
+    void conflictFailure_expectedRefusal_warnsWithoutATrace() {
+        UUID storyId = makeStory("conflict-release-refused");
+        approveSpec(storyId, "# Spec v1");
+        Parked parked = parkedTaskRun(storyId, 1);
+        approveSpec(storyId, "# Spec v2");
+        doThrow(new ConflictException("Gate already decided")).when(runService).decideGateAsSystem(any(), any(), any());
+
+        List<ILoggingEvent> warnings = captureWarnings(() -> lifecycle.processConflicts());
+
+        assertThat(warnings)
+                .filteredOn(e -> e.getFormattedMessage()
+                        .contains(parked.conflict().getId().toString()))
+                .singleElement()
+                .satisfies(e -> {
+                    assertThat(e.getFormattedMessage()).contains("Gate already decided");
+                    assertThat(e.getThrowableProxy()).isNull();
+                });
+    }
+
+    @Test
+    void revisionStartsNothing_loggedAndLeftForTheNextPass() {
+        UUID storyId = makeStory("conflict-start-nothing");
+        approveSpec(storyId, "# Spec v1");
+        Parked parked = parkedTaskRun(storyId, 1);
+        doReturn(Optional.empty())
+                .doCallRealMethod()
+                .when(storyDesignService)
+                .startRevisionForConflicts(eq(storyId), any(), any());
+
+        List<ILoggingEvent> infos = captureEvents(Level.INFO, () -> lifecycle.processConflicts());
+
+        assertThat(infos)
+                .filteredOn(e -> e.getFormattedMessage().contains(storyId.toString()))
+                .singleElement()
+                .satisfies(e -> assertThat(e.getFormattedMessage())
+                        .startsWith("Started no revision")
+                        .contains(parked.conflict().getId().toString()));
+        assertThat(specService.openDesignRun(storyId)).isEmpty();
+        assertThat(conflict(parked).getRevisionRunId()).isNull();
+
+        lifecycle.processConflicts();
+
+        assertThat(conflict(parked).getRevisionRunId()).isNotNull();
+    }
+
+    @Test
+    void revisionForASubset_countsOnlyTheConflictsItTook() {
+        // Rolled back with the test: other classes' committed open conflicts would join this pass's count.
+        jdbc.update("UPDATE story_conflict SET released_at = now() WHERE released_at IS NULL");
+        UUID storyId = makeStory("conflict-subset-count");
+        approveSpec(storyId, "# Spec v1");
+        Parked kept = parkedTaskRun(storyId, 1);
+        Parked taken = parkedTaskRun(storyId, 1);
+        // Another pass or replica takes one between this pass's read and its revision start.
+        doAnswer(inv -> {
+                    conflictRepo.assignToRevision(
+                            List.of(taken.conflict().getId()),
+                            storyId,
+                            taken.run().getId());
+                    return inv.callRealMethod();
+                })
+                .when(storyDesignService)
+                .startRevisionForConflicts(eq(storyId), any(), any());
+
+        int processed = lifecycle.processConflicts();
+
+        assertThat(processed).isEqualTo(1);
+        UUID revisionId = specService.openDesignRun(storyId).orElseThrow().getId();
+        assertThat(conflict(kept).getRevisionRunId()).isEqualTo(revisionId);
+        assertThat(conflict(taken).getRevisionRunId()).isEqualTo(taken.run().getId());
+    }
+
+    @Test
     void taskRunEnded_conflictClosedWithoutRevision() {
         UUID storyId = makeStory("conflict-task-run-ended");
         approveSpec(storyId, "# Spec v1");
@@ -572,6 +725,10 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
     }
 
     private List<ILoggingEvent> captureWarnings(Runnable work) {
+        return captureEvents(Level.WARN, work);
+    }
+
+    private List<ILoggingEvent> captureEvents(Level level, Runnable work) {
         Logger logger = (Logger) LoggerFactory.getLogger(StorySpecLifecycleService.class);
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
         appender.start();
@@ -581,7 +738,7 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
         } finally {
             logger.detachAppender(appender);
         }
-        return appender.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+        return appender.list.stream().filter(e -> e.getLevel() == level).toList();
     }
 
     private UUID taskDeliveryTemplateId() {
