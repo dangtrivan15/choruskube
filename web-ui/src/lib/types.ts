@@ -1428,7 +1428,9 @@ export interface AttachmentRefsResponse {
 
 /** `POST /runs/{id}/nodes/{exec}/signal` response. */
 export interface SignalResponse {
-  outcome: "signaled" | "finalizing";
+  outcome: "signaled" | "finalizing" | "rerouted";
+  /** Why an approval was not applied; set when `outcome` is `rerouted`. */
+  reason?: string | null;
 }
 
 /** A gate approval: being finalized, held for a re-check, consumed or voided. */

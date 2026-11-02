@@ -9,6 +9,7 @@ import com.choruskube.core.dto.SignalRequest;
 import com.choruskube.core.dto.SignalResponse;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.GateClaimConflictException;
+import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.StorySpecVersion;
 import com.choruskube.core.model.Task;
@@ -195,6 +196,13 @@ class RunServiceStoryVersionRecheckTest {
         return objectMapper.valueToTree(payload.getValue());
     }
 
+    private String uploadedGuidance() {
+        ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
+        verify(uploadService)
+                .uploadGateText(eq("acme"), eq(runId), eq(nodeExecId), eq("human_guidance.md"), content.capture());
+        return content.getValue();
+    }
+
     private SignalResponse approve() {
         return service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "ship it", null, null));
     }
@@ -227,17 +235,92 @@ class RunServiceStoryVersionRecheckTest {
 
         SignalResponse response = approve();
 
-        assertThat(response.outcome()).isEqualTo(SignalResponse.SIGNALED);
+        assertThat(response.outcome()).isEqualTo(SignalResponse.REROUTED);
         JsonNode payload = signalled();
         assertThat(payload.path("decision").asText()).isEqualTo("rereview");
         assertThat(payload.path("attachmentRefs").asText()).contains("human_guidance.md");
         String guidance = "The Story spec moved from v1 to v3 since this Task planned. Read the Revisions entries"
-                + " for v2 through v3 in /workspace/in/run_input/story_spec.md and check this change against them.";
+                + " for v2 through v3 in /workspace/in/run_input/story_spec.md and check this change against them."
+                + "\n\n## Reviewer feedback\n\nship it";
         verify(uploadService).uploadGateText("acme", runId, nodeExecId, "human_guidance.md", guidance);
         assertThat(payload.path("feedback").asText()).contains(guidance);
         verify(uploadService).overwriteRunInput(runId, "story_spec.md", "# Story spec v3");
         verify(runRepo).setStorySpecVersion(runId, 3);
         verifyNoInteractions(gateFinalize);
+    }
+
+    @Test
+    void approvalAfterSpecMovedReturnsReroutedWithReason() {
+        stubExec();
+        stubRun(STORY_RECHECK_GATE, taskId, 1);
+        currentVersion(2);
+
+        SignalResponse response = approve();
+
+        assertThat(response.outcome()).isEqualTo(SignalResponse.REROUTED);
+        assertThat(response.reason()).isEqualTo("The Story spec moved from v1 to v2 since this Task planned.");
+    }
+
+    @Test
+    void reroutedApprovalKeepsReviewerFeedbackAndAttachments() throws Exception {
+        stubExec();
+        stubRun(STORY_RECHECK_GATE, taskId, 1);
+        currentVersion(2);
+
+        service.signalHumanDecision(
+                runId,
+                nodeExecId,
+                new SignalRequest("approved", "check the retry path", "{\"notes.md\":\"k1\"}", null));
+
+        assertThat(uploadedGuidance()).endsWith("\n\n## Reviewer feedback\n\ncheck the retry path");
+        JsonNode refs = objectMapper.readTree(signalled().path("attachmentRefs").asText());
+        assertThat(refs.path("human_guidance.md").asText()).isEqualTo("k");
+        assertThat(refs.path("notes.md").asText()).isEqualTo("k1");
+    }
+
+    @Test
+    void reroutedApproval_blankFeedbackAndNoAttachments_sendsOnlyTheStoryGuidance() throws Exception {
+        stubExec();
+        stubRun(STORY_RECHECK_GATE, taskId, 1);
+        currentVersion(2);
+
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "  ", " ", null));
+
+        assertThat(uploadedGuidance()).isEqualTo(RunService.storyVersionGuidance(1, 2));
+        assertThat(objectMapper.readTree(signalled().path("attachmentRefs").asText()))
+                .isEqualTo(objectMapper.readTree("{\"human_guidance.md\":\"k\"}"));
+    }
+
+    @Test
+    void reroutedApproval_reviewerAttachmentNamedLikeTheGuidance_neverReplacesIt() throws Exception {
+        stubExec();
+        stubRun(STORY_RECHECK_GATE, taskId, 1);
+        currentVersion(2);
+
+        service.signalHumanDecision(
+                runId,
+                nodeExecId,
+                new SignalRequest("approved", null, "{\"human_guidance.md\":\"theirs\",\"a.md\":\"k2\"}", null));
+
+        JsonNode refs = objectMapper.readTree(signalled().path("attachmentRefs").asText());
+        assertThat(refs.path("human_guidance.md").asText()).isEqualTo("k");
+        assertThat(refs.path("a.md").asText()).isEqualTo("k2");
+    }
+
+    @Test
+    void reroutedApproval_unreadableAttachmentRefs_refusedBeforeAnythingIsWritten() {
+        stubExec();
+        stubRun(STORY_RECHECK_GATE, taskId, 1);
+        currentVersion(2);
+
+        assertThatThrownBy(() -> service.signalHumanDecision(
+                        runId, nodeExecId, new SignalRequest("approved", "x", "not json", null)))
+                .isInstanceOf(ValidationException.class);
+
+        verify(uploadService, never()).overwriteRunInput(any(), any(), any());
+        verify(uploadService, never()).uploadGateText(any(), any(), any(), any(), any());
+        verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
+        verify(runRepo, never()).setStorySpecVersion(any(), anyInt());
     }
 
     @Test

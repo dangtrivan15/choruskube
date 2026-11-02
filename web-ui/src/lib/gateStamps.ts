@@ -1,8 +1,15 @@
 import type { GateStampResponse, SignalResponse } from "@/lib/types";
 
-/** The toast for a submitted decision: `finalizing` means the workflow is still doing the gate's work. */
+/**
+ * The toast for a submitted decision: `finalizing` means the workflow is still doing the gate's
+ * work, `rerouted` that the approval was not applied and became a re-check.
+ */
 export function decisionToastMessage(response: SignalResponse | undefined): string {
   if (response?.outcome === "finalizing") return "Finalizing your approval…";
+  if (response?.outcome === "rerouted") {
+    const why = response.reason ? `: ${response.reason}` : ".";
+    return `Not approved yet${why} It goes back for a re-check first; approve again after.`;
+  }
   return "Decision submitted";
 }
 

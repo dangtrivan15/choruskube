@@ -31,6 +31,18 @@ describe("decisionToastMessage", () => {
   it("says the approval is being finalized when the server accepted it for finalizing", () => {
     expect(decisionToastMessage({ outcome: "finalizing" })).toBe("Finalizing your approval…");
   });
+
+  it("says the approval became a re-review, with the server's reason, when it was rerouted", () => {
+    expect(decisionToastMessage({ outcome: "rerouted", reason: "R" })).toBe(
+      "Not approved yet: R It goes back for a re-check first; approve again after.",
+    );
+  });
+
+  it("still says the approval was rerouted when the server gave no reason", () => {
+    expect(decisionToastMessage({ outcome: "rerouted", reason: null })).toBe(
+      "Not approved yet. It goes back for a re-check first; approve again after.",
+    );
+  });
 });
 
 describe("latestStampFor", () => {
