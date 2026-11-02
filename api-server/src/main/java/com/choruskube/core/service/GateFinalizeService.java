@@ -230,7 +230,10 @@ public class GateFinalizeService {
                         .map(RunService.StoryVersionStale::reason));
         if (reason.isPresent()) {
             gateRecheck.voidStamp(held.get().getId(), reason.get(), gateExecId);
-            publish(runId, gateExecId, NodeExecutionStatus.awaiting_human);
+            // A reviewer who claimed the gate meanwhile has published finalizing; this would overwrite it.
+            if (awaitingHuman(gateExecId)) {
+                publish(runId, gateExecId, NodeExecutionStatus.awaiting_human);
+            }
             return new HeldClaim(null);
         }
         UUID claimed = tx.execute(status -> {
@@ -858,6 +861,12 @@ public class GateFinalizeService {
                     e.getMessage(),
                     e);
         }
+    }
+
+    private boolean awaitingHuman(UUID gateExecId) {
+        return execRepo.findById(gateExecId)
+                .map(gate -> gate.getStatus() == NodeExecutionStatus.awaiting_human)
+                .orElse(false);
     }
 
     private void publish(UUID runId, UUID gateExecId, NodeExecutionStatus status) {

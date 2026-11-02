@@ -75,6 +75,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
@@ -385,6 +387,30 @@ class GateFinalizeServiceTest {
         assertThat(claim.approvalId()).isNull();
         verify(gateRecheck).voidStamp(held.getId(), "escalated meanwhile", gateExecId);
         verify(claims, never()).compareAndSetStatus(any(), any(), any());
+    }
+
+    /** The reviewer's click publishes finalizing; an awaiting_human sent after it would show a stale gate. */
+    @ParameterizedTest
+    @ValueSource(strings = {"drift", "story"})
+    void claimHeld_reviewerClaimsTheGateWhileTheHeldApprovalIsVoided_publishesNothing(String cause) {
+        GateStamp held = stubHeldAtOpenGate();
+        if (cause.equals("drift")) {
+            when(gateRecheck.reasonNotToReapply(eq(held), any())).thenReturn(Optional.of("escalated meanwhile"));
+        } else {
+            when(runService.storyVersionStale(eq(run), eq(templateNodeId), any()))
+                    .thenReturn(Optional.of(storyMoved(1, 2)));
+        }
+        doAnswer(inv -> {
+                    gate.setStatus(NodeExecutionStatus.finalizing);
+                    return null;
+                })
+                .when(gateRecheck)
+                .voidStamp(eq(held.getId()), anyString(), eq(gateExecId));
+
+        HeldClaim claim = service.claimHeld(runId, gateExecId);
+
+        assertThat(claim.approvalId()).isNull();
+        verify(events, never()).publishNodeStatusChanged(runId, gateExecId, "awaiting_human");
     }
 
     @Test
