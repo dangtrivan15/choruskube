@@ -1184,8 +1184,10 @@ class AutopilotServiceTest {
         AutopilotStatusResponse status = newService().getStatus();
 
         assertThat(status.nextUp())
-                .extracting(AutopilotTaskRef::taskId, AutopilotTaskRef::kind)
-                .containsExactly(tuple(ready.getId(), "task"), tuple(null, "design_story"));
+                .extracting(AutopilotTaskRef::taskId, AutopilotTaskRef::storyId, AutopilotTaskRef::kind)
+                .containsExactly(
+                        tuple(ready.getId(), designed.story().getId(), "task"),
+                        tuple(null, undesigned.story().getId(), "design_story"));
     }
 
     @Test
@@ -1206,6 +1208,26 @@ class AutopilotServiceTest {
         assertThat(status.nextUp())
                 .extracting(AutopilotTaskRef::storyId)
                 .containsExactly(y.story().getId(), z.story().getId());
+    }
+
+    @Test
+    void frontier_storyWhoseOnlyDesignRunFailed_doesNotStartItsEpic() {
+        // The failed Story is held for a human, not in progress: E2 is newer, so if the failed run
+        // counted, Y's design would jump ahead of E1's Z.
+        EpicFixture e1 = epic("E1");
+        StoryFixture z = undesignedStory(e1);
+        EpicFixture e2 = epic("E2");
+        StoryFixture failed = undesignedStory(e2);
+        StoryFixture y = undesignedStory(e2);
+        ReflectionTestUtils.setField(e1.epic(), "createdAt", Instant.parse("2026-01-01T00:00:00Z"));
+        ReflectionTestUtils.setField(e2.epic(), "createdAt", Instant.parse("2026-02-01T00:00:00Z"));
+        pastDesignRun(failed, WorkflowRunStatus.failed, Instant.parse("2026-02-02T00:00:00Z"));
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.nextUp())
+                .extracting(AutopilotTaskRef::storyId)
+                .containsExactly(z.story().getId(), y.story().getId());
     }
 
     // -----------------------------------------------------------------------------------

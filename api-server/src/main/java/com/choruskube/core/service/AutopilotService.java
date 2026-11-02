@@ -776,8 +776,7 @@ public class AutopilotService {
     /**
      * The Story half of the frontier: designs to start, and Stories a finished design run holds.
      *
-     * @param started the swept Stories with an approved spec or an open design run, and their
-     *     Epics; the ordering ranks them as started although none of their Tasks has moved
+     * @param started the swept Stories with an approved spec or an open design run, and their Epics
      */
     private record DesignSweep(List<AutopilotFrontierItem> designable, List<HeldStory> held, Set<UUID> started) {
 

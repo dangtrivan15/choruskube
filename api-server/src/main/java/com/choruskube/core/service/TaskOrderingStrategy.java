@@ -51,8 +51,9 @@ public final class TaskOrderingStrategy {
     private TaskOrderingStrategy() {}
 
     /**
-     * @param startedIds the Epics and Stories with a Task past {@code backlog}, an approved spec or
-     *     an open design run; the two id spaces never collide, so one set serves both levels
+     * @param startedIds the Epics and Stories that are started: a Task past {@code backlog}, or (for
+     *     an Epic, one of its Stories) an approved spec or an open design run; the two id spaces
+     *     never collide, so one set serves both levels
      */
     public static Comparator<Task> comparator(
             Map<UUID, Epic> epicsById, Map<UUID, Story> storiesById, Set<UUID> startedIds) {
