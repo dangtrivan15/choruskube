@@ -7,15 +7,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 class DeliveryPromptsTest {
 
-    // Feature Development's Implement and Code Review text at version 53, when it moved here. Text
-    // the variants share bumps every template that uses it: CURRENT_VERSION with these hashes, and
-    // Task Delivery's VERSION with the tripwire in BaseTaskDeliverySeederTest.
+    // Text the variants share bumps every template that uses it: CURRENT_VERSION with these hashes,
+    // and Task Delivery's VERSION with the tripwire in BaseTaskDeliverySeederTest.
     static final String IMPLEMENT_SHA256 = "580e1b0918c84a3dcfb0b7e2c9f46f6886bb78f7987822aa1f95a24451f11ecf";
     static final String CODE_REVIEW_SHA256 = "c6bb741fc5ee421513af587560b3f4b7cd3fd9acd591cc1d13f0d006c490afe9";
+
+    /** A slot marker anywhere in the text, including an inline or indented one the slot filler never replaces. */
+    static final Pattern SLOT_MARKER = Pattern.compile("<<[A-Z0-9_]+>>");
 
     private static String sha256(String text) throws Exception {
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
@@ -98,6 +101,61 @@ class DeliveryPromptsTest {
         assertThat(prompt.replaceAll("\\s+", " "))
                 .as("the scope is stated once, where the proposal is written")
                 .doesNotContain("never propose them again");
+    }
+
+    @Test
+    void taskDeliveryNamesTheTaskSpecWhereverItRoutesFutureWorkCaveats() {
+        String implement = DeliveryPrompts.implement(TASK_DELIVERY).replaceAll("\\s+", " ");
+        String codeReview = DeliveryPrompts.codeReview(TASK_DELIVERY).replaceAll("\\s+", " ");
+        assertThat(implement)
+                .as("without a task_spec.md, an unqualified caveat reads as the story spec's, which this run never"
+                        + " proposes")
+                .contains("- The Task spec's Future-work caveats -> the roadmap proposal")
+                .doesNotContain("- Caveats tagged \"Future work\" ->");
+        assertThat(codeReview)
+                .contains("Implement turns the Task spec's Future-work caveats into a roadmap proposal")
+                .doesNotContain("Implement turns the spec's Future-work caveats");
+    }
+
+    @Test
+    void taskDeliveryCodeReviewRemovesAReProposedStoryCaveat() {
+        String prompt = DeliveryPrompts.codeReview(TASK_DELIVERY);
+        int start = prompt.indexOf("Fix what you find:");
+        int end = prompt.indexOf("Install the result", start);
+        assertThat(start).isGreaterThanOrEqualTo(0);
+        assertThat(end).isGreaterThan(start);
+        assertThat(prompt.substring(start, end).replaceAll("\\s+", " "))
+                .as("a story caveat in the PR body passes the Origin check, so the fix list must not keep it")
+                .contains("- An entry approved with the spec: keep it when its caveat is one of `task_spec.md`'s,")
+                .doesNotContain("keep it, unless the change already did it")
+                .contains("- An entry that proposes one of the story spec's Future-work caveats again, whatever its"
+                        + " Origin line says: remove it.")
+                .as("the PR body must not keep claiming a removed entry was proposed")
+                .contains("set the cell back to the caveat's own Disposition, `Future work`, with `gh pr edit`");
+        assertThat(prompt.replaceAll("\\s+", " "))
+                .as("a second rule outside the fix list contradicts it")
+                .doesNotContain("Check every new Task against the story spec's Future-work caveats too");
+    }
+
+    @Test
+    void slotMarkerPatternMatchesOnlyTheSlotSyntax() {
+        assertThat("sequenceDiagram\n  A->>B: call\ncat <<EOF\nok\nEOF\necho done >> log.txt\n")
+                .as("mermaid arrows, heredocs and appends are prompt text, not slot markers")
+                .doesNotContainPattern(SLOT_MARKER);
+        for (String marker : new String[] {"<<SPEC_INPUTS>>\n", "an inline <<OPENING>> marker", "  <<STEP_2>>"}) {
+            assertThat(marker).containsPattern(SLOT_MARKER);
+        }
+    }
+
+    @Test
+    void taskDeliveryCodeReviewClosesEscalationWithItsOwnReviewTarget() {
+        String collapsed = DeliveryPrompts.codeReview(TASK_DELIVERY).replaceAll("\\s+", " ");
+        assertThat(collapsed)
+                .as("the closing rule must allow every escalation the review target allows")
+                .doesNotContain("do not re-litigate its design choices outside the merged-run case above")
+                .contains("unless the plan no longer holds: it contradicts the story spec, or the merged-run case"
+                        + " above applies")
+                .contains("Do not push speculative commits when you escalate.");
     }
 
     @Test

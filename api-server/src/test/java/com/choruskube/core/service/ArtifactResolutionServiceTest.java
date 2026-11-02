@@ -799,6 +799,57 @@ class ArtifactResolutionServiceTest {
     }
 
     @Test
+    void newestOf_laterCompletionOutranksHigherIterationAndEarlierDeclaration() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        Instant t1 = Instant.parse("2026-11-01T10:00:00Z");
+        NodeExecution analyze = f.producer("analyze", 3, t1, "runs/r/analyze-3/out/", "plan.md");
+        NodeExecution review = f.producer("task_spec_review", 1, t1.plusSeconds(60), "runs/r/review-1/out/", "plan.md");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(analyze.getIteration()).isGreaterThan(review.getIteration());
+        assertThat(manifest.artifacts()).containsEntry("plan/plan.md", "runs/r/review-1/out/plan.md");
+    }
+
+    @Test
+    void newestOf_newestProducerWithoutOutput_doesNotShadowAnOlderPlan() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        Instant t1 = Instant.parse("2026-11-01T10:00:00Z");
+        NodeExecution analyze = f.producer("analyze", 1, t1, "runs/r/analyze-1/out/", "plan.md");
+        f.producerWithoutOutput("task_spec_review", 1, t1.plusSeconds(60));
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts())
+                .containsEntry("plan/plan.md", "runs/r/analyze-1/out/plan.md")
+                .doesNotContainKey("plan/task_spec.md");
+        assertThat(manifest.required()).containsExactly("plan/plan.md");
+        assertThat(service.resolveRequiredArtifacts(f.targetNodeId, f.runId))
+                .singleElement()
+                .extracting(ResolvedArtifactGroup::nodeExecutionId)
+                .isEqualTo(analyze.getId());
+    }
+
+    @Test
+    void newestOf_noProducerRecordedOutput_requiredEntryStaysSoThePodFailsLoudly() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        f.producerWithoutOutput("analyze", 1, Instant.parse("2026-11-01T10:00:00Z"));
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts())
+                .as("no object path exists, and the pod's download of an empty one fails")
+                .containsExactly(Map.entry("plan/plan.md", ""));
+        assertThat(manifest.required()).containsExactly("plan/plan.md");
+    }
+
+    @Test
     void newestOf_requiredEntryTheProducerDidNotWrite_staysSoThePodFailsLoudly() {
         ManifestFixture f = new ManifestFixture();
         f.declare(PLAN_GROUP);
@@ -972,6 +1023,19 @@ class ArtifactResolutionServiceTest {
          * exactly {@code written} as far as the object store listing is concerned.
          */
         NodeExecution producer(String label, int iteration, Instant completedAt, String prefix, String... written) {
+            NodeExecution exec = completedExecution(label, iteration, completedAt, "{\"output\":\"" + prefix + "\"}");
+            Mockito.when(artifactService.listArtifactNamesInternal(exec.getArtifactRefs()))
+                    .thenReturn(List.of(written));
+            return exec;
+        }
+
+        /** A completed execution of the node labelled {@code label} that recorded no output prefix. */
+        NodeExecution producerWithoutOutput(String label, int iteration, Instant completedAt) {
+            return completedExecution(label, iteration, completedAt, "{}");
+        }
+
+        private NodeExecution completedExecution(
+                String label, int iteration, Instant completedAt, String artifactRefs) {
             TemplateNode node = producerNodes.computeIfAbsent(label, l -> {
                 TemplateNode tn = new TemplateNode();
                 tn.setId(UUID.randomUUID());
@@ -988,10 +1052,8 @@ class ArtifactResolutionServiceTest {
             exec.setIteration(iteration);
             exec.setLabel(label);
             exec.setCompletedAt(completedAt);
-            exec.setArtifactRefs("{\"output\":\"" + prefix + "\"}");
+            exec.setArtifactRefs(artifactRefs);
             completed.add(exec);
-            Mockito.when(artifactService.listArtifactNamesInternal(exec.getArtifactRefs()))
-                    .thenReturn(List.of(written));
             return exec;
         }
 
