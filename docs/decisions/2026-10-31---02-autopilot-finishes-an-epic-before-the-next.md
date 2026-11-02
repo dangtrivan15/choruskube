@@ -1,6 +1,6 @@
 # The Autopilot finishes an Epic before it starts the next one of equal rank
 
-**Status:** current
+**Status:** current; its definition of started is superseded by [2026-11-02---01](2026-11-02---01-design-work-counts-as-started.md)
 
 ## Context
 

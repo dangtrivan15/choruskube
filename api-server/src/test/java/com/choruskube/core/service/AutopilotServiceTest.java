@@ -1150,20 +1150,84 @@ class AutopilotServiceTest {
     @Test
     void tick_amongEqualPriorityEpics_continuesTheStartedOneWithNothingInFlight() {
         // The started Epic is the newer one and has no live run, so neither creation order nor
-        // what is in flight can explain the pick — only the Epic's own progress can.
+        // what is in flight can explain the pick — only the Epic's own progress can. Neither
+        // Story has a spec, so a delivered Task is the only started signal in play.
         EpicFixture untouched = epic("Untouched", Priority.high);
         EpicFixture started = epic("Started", Priority.high);
         ReflectionTestUtils.setField(untouched.epic(), "createdAt", Instant.parse("2026-01-01T00:00:00Z"));
         ReflectionTestUtils.setField(started.epic(), "createdAt", Instant.parse("2026-02-01T00:00:00Z"));
-        Task fromUntouched = task(story(untouched), "Untouched", WorkItemStatus.backlog, Readiness.READY);
-        StoryFixture startedStory = story(started);
+        StoryFixture untouchedStory = undesignedStory(untouched);
+        task(untouchedStory, "Untouched", WorkItemStatus.backlog, Readiness.READY);
+        StoryFixture startedStory = undesignedStory(started);
         task(startedStory, "Delivered", WorkItemStatus.done, Readiness.READY);
-        Task fromStarted = task(startedStory, "Next in the started Epic", WorkItemStatus.backlog, Readiness.READY);
+        task(startedStory, "Next in the started Epic", WorkItemStatus.backlog, Readiness.READY);
 
         newService().tick();
 
-        verify(taskService).startForAutopilot(fromStarted.getId(), autopilotId);
-        verify(taskService, never()).startForAutopilot(eq(fromUntouched.getId()), any());
+        verify(storyDesignService).startDesignForAutopilot(startedStory.story().getId(), autopilotId);
+        verify(storyDesignService, never())
+                .startDesignForAutopilot(eq(untouchedStory.story().getId()), any());
+    }
+
+    @Test
+    void frontier_storyWithAnApprovedSpecRanksAsStarted_whileAllItsTasksAreStillBacklog() {
+        // Ties on priority and target date, so only "started" can put the newer, designed Story
+        // ahead of the older Story whose design is still to run.
+        EpicFixture e = epic("E");
+        StoryFixture undesigned = undesignedStory(e);
+        task(undesigned, "Waits on the design", WorkItemStatus.backlog, Readiness.READY);
+        StoryFixture designed = story(e);
+        Task ready = task(designed, "Ready", WorkItemStatus.backlog, Readiness.READY);
+        ReflectionTestUtils.setField(undesigned.story(), "createdAt", Instant.parse("2026-01-01T00:00:00Z"));
+        ReflectionTestUtils.setField(designed.story(), "createdAt", Instant.parse("2026-02-01T00:00:00Z"));
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.nextUp())
+                .extracting(AutopilotTaskRef::taskId, AutopilotTaskRef::storyId, AutopilotTaskRef::kind)
+                .containsExactly(
+                        tuple(ready.getId(), designed.story().getId(), "task"),
+                        tuple(null, undesigned.story().getId(), "design_story"));
+    }
+
+    @Test
+    void frontier_storyWithAnOpenDesignRunStartsItsEpic() {
+        // A Story under design yields no item, so the Epic level is where it shows: E2 is newer, and
+        // only the design run in flight under it can put Y's design ahead of E1's Z.
+        EpicFixture e1 = epic("E1");
+        StoryFixture z = undesignedStory(e1);
+        EpicFixture e2 = epic("E2");
+        StoryFixture x = story(e2);
+        designInFlight(x);
+        StoryFixture y = undesignedStory(e2);
+        ReflectionTestUtils.setField(e1.epic(), "createdAt", Instant.parse("2026-01-01T00:00:00Z"));
+        ReflectionTestUtils.setField(e2.epic(), "createdAt", Instant.parse("2026-02-01T00:00:00Z"));
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.nextUp())
+                .extracting(AutopilotTaskRef::storyId)
+                .containsExactly(y.story().getId(), z.story().getId());
+    }
+
+    @Test
+    void frontier_storyWhoseOnlyDesignRunFailed_doesNotStartItsEpic() {
+        // The failed Story is held for a human, not in progress: E2 is newer, so if the failed run
+        // counted, Y's design would jump ahead of E1's Z.
+        EpicFixture e1 = epic("E1");
+        StoryFixture z = undesignedStory(e1);
+        EpicFixture e2 = epic("E2");
+        StoryFixture failed = undesignedStory(e2);
+        StoryFixture y = undesignedStory(e2);
+        ReflectionTestUtils.setField(e1.epic(), "createdAt", Instant.parse("2026-01-01T00:00:00Z"));
+        ReflectionTestUtils.setField(e2.epic(), "createdAt", Instant.parse("2026-02-01T00:00:00Z"));
+        pastDesignRun(failed, WorkflowRunStatus.failed, Instant.parse("2026-02-02T00:00:00Z"));
+
+        AutopilotStatusResponse status = newService().getStatus();
+
+        assertThat(status.nextUp())
+                .extracting(AutopilotTaskRef::storyId)
+                .containsExactly(z.story().getId(), y.story().getId());
     }
 
     // -----------------------------------------------------------------------------------

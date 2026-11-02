@@ -173,9 +173,13 @@ Epic before it starts the next one of equal rank.
 - `Priority` is declared `low, medium, high`, so every priority comparison is explicitly
   reversed; a null priority ranks as `medium`. Undated work is not urgent work
   (`LocalDate.MAX`).
-- **Started** means one of the Epic's or Story's Tasks is past `backlog`. It is computed
-  from the frontier sweep's own Task rows, so it needs no run lookup, and it survives a
-  run parking on a human gate.
+- **Started** means one of the Epic's or Story's Tasks is past `backlog`, or the Story has
+  an approved spec or an open design run (a completed run whose spec is not yet recorded
+  included), and an Epic is started when any of its Stories is. The Task rows come from
+  the frontier sweep, the spec and design-run facts from the design sweep, which reads
+  them anyway to find designable Stories. It survives a run parking on a human gate. A
+  Story whose only design run failed or was cancelled is held, not started. See
+  [2026-11-02---01](../decisions/2026-11-02---01-design-work-counts-as-started.md).
 - **A target date ranks above started.** The date is the user's explicit signal; started
   is only inferred from progress.
 - **Each level ends on its own `id`, not on a Task key.** With three priority levels a

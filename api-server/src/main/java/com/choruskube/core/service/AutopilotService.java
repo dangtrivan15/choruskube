@@ -773,10 +773,14 @@ public class AutopilotService {
         static final Frontier EMPTY = new Frontier(List.of(), 0, 0, 0, List.of(), List.of(), List.of(), Map.of());
     }
 
-    /** The Story half of the frontier: designs to start, and Stories a finished design run holds. */
-    private record DesignSweep(List<AutopilotFrontierItem> designable, List<HeldStory> held) {
+    /**
+     * The Story half of the frontier: designs to start, and Stories a finished design run holds.
+     *
+     * @param started the swept Stories with an approved spec or an open design run, and their Epics
+     */
+    private record DesignSweep(List<AutopilotFrontierItem> designable, List<HeldStory> held, Set<UUID> started) {
 
-        static final DesignSweep NONE = new DesignSweep(List.of(), List.of());
+        static final DesignSweep NONE = new DesignSweep(List.of(), List.of(), Set.of());
     }
 
     /**
@@ -881,6 +885,7 @@ public class AutopilotService {
         }
         DesignSweep design = sweepStoryDesign(swept, edges);
         items.addAll(design.designable());
+        startedIds.addAll(design.started());
 
         items.sort(TaskOrderingStrategy.itemComparator(epicsById, storiesById, startedIds));
         return new Frontier(
@@ -919,8 +924,13 @@ public class AutopilotService {
 
         List<AutopilotFrontierItem> designable = new ArrayList<>();
         List<HeldStory> held = new ArrayList<>();
+        Set<UUID> started = new HashSet<>();
         for (SweptEpic epic : swept) {
             for (Story story : epic.candidates().stories()) {
+                if (versions.containsKey(story.getId()) || openDesign.contains(story.getId())) {
+                    started.add(story.getId());
+                    started.add(story.getEpicId());
+                }
                 StoryDesignEligibility.holdingRun(story, epic.candidates(), versions, openDesign, latestRuns)
                         .ifPresent(run -> held.add(new HeldStory(story, run)));
                 if (StoryDesignEligibility.isDesignable(
@@ -929,7 +939,7 @@ public class AutopilotService {
                 }
             }
         }
-        return new DesignSweep(designable, List.copyOf(held));
+        return new DesignSweep(designable, List.copyOf(held), Set.copyOf(started));
     }
 
     /**

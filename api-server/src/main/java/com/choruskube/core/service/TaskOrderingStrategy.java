@@ -23,7 +23,8 @@ import java.util.function.Function;
  * <ol>
  *   <li>priority, descending
  *   <li>target date, ascending, null last
- *   <li>started first — any of its Tasks is past {@code backlog}
+ *   <li>started first — any of its Tasks is past {@code backlog}, or it (for an Epic, one of its
+ *       Stories) has an approved spec or an open design run
  *   <li>{@code created_at}, then id
  * </ol>
  *
@@ -50,7 +51,8 @@ public final class TaskOrderingStrategy {
     private TaskOrderingStrategy() {}
 
     /**
-     * @param startedIds the Epics and Stories with a Task past {@code backlog}; the two id spaces
+     * @param startedIds the Epics and Stories that are started: a Task past {@code backlog}, or (for
+     *     an Epic, one of its Stories) an approved spec or an open design run; the two id spaces
      *     never collide, so one set serves both levels
      */
     public static Comparator<Task> comparator(
