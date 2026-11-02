@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiErrorMessage } from "@/lib/api";
 import { showMutationToast } from "@/lib/toast-messages";
-import { decisionToastMessage } from "@/lib/gateStamps";
+import { decisionToastMessage, decisionToastVariant } from "@/lib/gateStamps";
 import { useActivityFeed } from "./useActivityFeed";
 import type {
   PendingGateResponse,
@@ -68,7 +68,7 @@ export function useSignalFromDashboard() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["pending-gates"] });
-      addEntry(showMutationToast(decisionToastMessage(data), "success"));
+      addEntry(showMutationToast(decisionToastMessage(data), decisionToastVariant(data)));
     },
     onError: (error) => {
       addEntry(showMutationToast(apiErrorMessage(error, "Failed to submit decision"), "error"));

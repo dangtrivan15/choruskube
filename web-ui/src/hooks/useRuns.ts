@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { api, apiErrorMessage, ApiError } from "@/lib/api";
 import { showMutationToast } from "@/lib/toast-messages";
-import { decisionToastMessage } from "@/lib/gateStamps";
+import { decisionToastMessage, decisionToastVariant } from "@/lib/gateStamps";
 import { useActivityFeed } from "./useActivityFeed";
 import type {
   RunResponse,
@@ -194,7 +194,7 @@ export function useSignalNode(runId: string) {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["runs", runId] });
       queryClient.invalidateQueries({ queryKey: ["pending-gates"] });
-      addEntry(showMutationToast(decisionToastMessage(data), "success"));
+      addEntry(showMutationToast(decisionToastMessage(data), decisionToastVariant(data)));
     },
     onError: (error) => {
       addEntry(showMutationToast(apiErrorMessage(error, "Failed to submit decision"), "error"));
