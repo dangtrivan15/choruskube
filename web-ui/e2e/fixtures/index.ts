@@ -7,6 +7,7 @@
  */
 import { test as base } from "@playwright/test";
 import { TestApiClient, type GitRepo, type RepoGroupSummary } from "../helpers/api-client";
+import { installToastClickThrough } from "../helpers/toast";
 import { NavigationPage } from "../pages/navigation.page";
 import { RunListPage } from "../pages/run-list.page";
 import { RunMonitorPage } from "../pages/run-monitor.page";
@@ -72,14 +73,8 @@ export interface WorkerFixtures {
 }
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
-  // Without this, other workers' toasts stacking bottom-right intercept clicks, take hover from
-  // what lies under them, and stop dismissing while the cursor rests on them (e2e/PARALLELISM.md).
   context: async ({ context }, use) => {
-    await context.addInitScript(() => {
-      const sheet = new CSSStyleSheet();
-      sheet.replaceSync("[data-sonner-toaster], [data-sonner-toaster] * { pointer-events: none !important; }");
-      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
-    });
+    await installToastClickThrough(context);
     await use(context);
   },
 

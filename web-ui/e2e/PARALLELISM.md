@@ -98,14 +98,16 @@ test timeout. Scrolling can't help, because the stack is `position: fixed`.
 
 ## What the suite does about it
 
-**Click-through toasts.** The shared fixture (`fixtures/index.ts`) overrides `context` with an
-init script that adopts one stylesheet into every document before any app script runs:
+**Click-through toasts.** The shared fixture (`fixtures/index.ts`) overrides `context` with
+`installToastClickThrough` (`helpers/toast.ts`), an init script that adopts one stylesheet into
+every document before any app script runs:
 `pointer-events: none` on the Sonner stack (`[data-sonner-toaster]` and everything inside it).
 Toasts still render, so specs assert them by text, but nothing can hit them. They never
 intercept a click, never take the hover from what lies under them, and never pause their own
 dismissal. Init scripts on the context run for every page it opens and on every reload; an
 SPA navigation keeps the same document, and so the same sheet. This closes failure mode 4
-outright, and failure mode 3's toast half.
+outright, and failure mode 3's toast half. A context a spec creates itself, with
+`browser.newContext()`, skips the fixture, so it calls `installToastClickThrough` right after.
 
 **Per-worker software project.** The `workerRepo` fixture (`fixtures/index.ts`) mints one
 GitRepo + RepoGroup per worker, fetch-or-create, keyed on `workerInfo.parallelIndex`.
@@ -162,7 +164,8 @@ happened to materialize its fixture first. Specs needing the seeded set specific
 - Open the Timeline with `gotoPinned()` before hovering a marker for its preview, unless the
   spec asserts live updates. Retrying alone can't outlast other workers' traffic.
 - Import `test` from `fixtures/index.ts`, never from `@playwright/test`, so every page the spec
-  opens gets click-through toasts. Assert a toast by its text. No spec clicks inside one; one
+  opens gets click-through toasts; call `installToastClickThrough` on any `browser.newContext()`
+  the spec creates. Assert a toast by its text. No spec clicks inside one; one
   that must (a close or action button) needs an opt-out added to that fixture first.
 
 ## Why not serialize instead
