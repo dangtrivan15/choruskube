@@ -143,6 +143,29 @@ class GraphTemplateServiceTest {
         verify(repo).findAll(any(Specification.class));
     }
 
+    @SuppressWarnings("unchecked")
+    @Test
+    void list_marksTemplatesOnlyAStoryOrATaskStarts() {
+        when(repo.findAll(any(Specification.class)))
+                .thenReturn(List.of(
+                        makeTemplate("Feature Development", "feature-development", 53),
+                        makeTemplate("Story Design", "story-design", 2),
+                        makeTemplate("Task Delivery", "task-delivery", 2),
+                        makeTemplate("E2E Story Design", "e2e-story-design", 1),
+                        makeTemplate("E2E Task Delivery", "e2e-task-delivery", 1)));
+
+        List<GraphTemplateResponse> result = service.list(true);
+
+        assertThat(result)
+                .extracting(GraphTemplateResponse::graphId, GraphTemplateResponse::standaloneStartRefusal)
+                .containsExactly(
+                        tuple("feature-development", null),
+                        tuple("story-design", "Starts from a Story: use Design Story on the Story's page."),
+                        tuple("task-delivery", "Starts from a Task: use Start on the Task's page."),
+                        tuple("e2e-story-design", "Starts from a Story: use Design Story on the Story's page."),
+                        tuple("e2e-task-delivery", "Starts from a Task: use Start on the Task's page."));
+    }
+
     // --- update ---
 
     @Test

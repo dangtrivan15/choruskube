@@ -184,7 +184,8 @@ public class GraphTemplateService {
                 schemaNode,
                 gt.isSystem(),
                 gt.getCreatedAt(),
-                gt.getUpdatedAt());
+                gt.getUpdatedAt(),
+                RoadmapOnlyTemplates.standaloneStartRefusal(gt.getGraphId()).orElse(null));
     }
 
     private JsonNode parseJsonField(String json, String fallback) {

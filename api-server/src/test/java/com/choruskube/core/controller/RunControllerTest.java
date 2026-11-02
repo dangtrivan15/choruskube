@@ -152,10 +152,10 @@ public class RunControllerTest extends BaseTest {
 
     @ParameterizedTest
     @CsvSource({
-        "story-design, Story Design runs start from a Story",
-        "e2e-story-design, Story Design runs start from a Story",
-        "task-delivery, Task Delivery runs start from a Task",
-        "e2e-task-delivery, Task Delivery runs start from a Task"
+        "story-design, Starts from a Story",
+        "e2e-story-design, Starts from a Story",
+        "task-delivery, Starts from a Task",
+        "e2e-task-delivery, Starts from a Task"
     })
     void startRun_roadmapStartedTemplate_isRefused(String graphId, String reason) throws Exception {
         GraphTemplate template = graphTemplateRepo

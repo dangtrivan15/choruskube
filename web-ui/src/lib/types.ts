@@ -226,6 +226,8 @@ export interface GraphTemplateResponse {
   system: boolean;
   createdAt: string;
   updatedAt: string;
+  /** Set when only a Story or a Task can start this template: why, and where to start it instead. */
+  standaloneStartRefusal?: string | null;
 }
 
 export interface RunEvent {

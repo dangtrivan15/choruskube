@@ -80,16 +80,16 @@ describe("StartRunDialog", () => {
     expect(mockUseTemplates).toHaveBeenCalledWith(true, undefined, { size: 100 });
   });
 
-  it("hides the templates only a Story or a Task can start", async () => {
+  it("lists the templates only a Story or a Task can start as disabled, with where to start them", async () => {
+    const storyHint = "Starts from a Story: use Design Story on the Story's page.";
+    const taskHint = "Starts from a Task: use Start on the Task's page.";
     const templates = [
-      { id: "tpl-fd", graphId: "feature-development", name: "Feature Development", version: 53, inputSchema: [] },
-      { id: "tpl-sd", graphId: "story-design", name: "Story Design", version: 1, inputSchema: [] },
-      { id: "tpl-td", graphId: "task-delivery", name: "Task Delivery", version: 1, inputSchema: [] },
-      { id: "tpl-esd", graphId: "e2e-story-design", name: "E2E Story Design", version: 1, inputSchema: [] },
-      { id: "tpl-etd", graphId: "e2e-task-delivery", name: "E2E Task Delivery", version: 1, inputSchema: [] },
+      { id: "tpl-fd", graphId: "feature-development", name: "Feature Development", version: 53, inputSchema: [], standaloneStartRefusal: null },
+      { id: "tpl-sd", graphId: "story-design", name: "Story Design", version: 2, inputSchema: [], standaloneStartRefusal: storyHint },
+      { id: "tpl-td", graphId: "task-delivery", name: "Task Delivery", version: 2, inputSchema: [], standaloneStartRefusal: taskHint },
     ];
     mockUseTemplates.mockReturnValue({
-      data: { content: templates, totalElements: 5, totalPages: 1, number: 0, size: 100, first: true, last: true, empty: false },
+      data: { content: templates, totalElements: 3, totalPages: 1, number: 0, size: 100, first: true, last: true, empty: false },
       isLoading: false,
     });
 
@@ -98,10 +98,17 @@ describe("StartRunDialog", () => {
     await user.click(screen.getByText("Start Run"));
     await user.click(screen.getByText("Select a template..."));
 
-    expect(screen.getByRole("option", { name: /Feature Development/ })).toBeInTheDocument();
-    for (const hidden of ["Story Design", "Task Delivery", "E2E Story Design", "E2E Task Delivery"]) {
-      expect(screen.queryByRole("option", { name: new RegExp(`^${hidden} v`) })).not.toBeInTheDocument();
-    }
+    expect(screen.getByRole("option", { name: /^Feature Development v53$/ })).not.toHaveAttribute("aria-disabled", "true");
+    const storyDesign = screen.getByRole("option", { name: /^Story Design v2/ });
+    expect(storyDesign).toHaveAttribute("aria-disabled", "true");
+    expect(storyDesign).toHaveTextContent(storyHint);
+    const taskDelivery = screen.getByRole("option", { name: /^Task Delivery v2/ });
+    expect(taskDelivery).toHaveAttribute("aria-disabled", "true");
+    expect(taskDelivery).toHaveTextContent(taskHint);
+
+    await user.click(storyDesign);
+    expect(screen.getByTestId("start-run-template-select")).toHaveTextContent("Select a template...");
+    expect(screen.getByRole("button", { name: /^Start$/ })).toBeDisabled();
   });
 
   it("renders a textarea for fields with type 'textarea'", async () => {
