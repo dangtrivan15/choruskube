@@ -651,13 +651,8 @@ public class AutopilotService {
                 log.info("Autopilot tick stopped early on a quota: {}", e.getMessage());
                 break;
             } catch (ConflictException e) {
-                // Every ConflictException out of either start says the same thing: this item is no
-                // longer what the frontier was swept for — a Task left backlog or gained a blocker,
-                // a Story got a spec or a design run. Someone clicked Start or Design, or an
-                // instance that overran its lease got here first. That is the roadmap changing under
-                // a plan, not the platform failing, so it must not reach the breaker — three lost
-                // races would otherwise disengage the Autopilot for no reason at all. The next item
-                // is unaffected, so the pass goes on.
+                // A lost race is the roadmap changing under the plan, not the platform failing: it must
+                // not reach the breaker, or three of them disengage the Autopilot.
                 String described = describe(item);
                 notes.add(Character.toUpperCase(described.charAt(0)) + described.substring(1)
                         + " was no longer startable: " + e.getMessage());

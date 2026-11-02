@@ -112,10 +112,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     { scope: "worker" },
   ],
 
-  // A RepoGroup over the seeded e2e-test/mock-repo, which the e2e agent image can clone
-  // (agent-images/claude-code-e2e/Dockerfile): runs on it get past their first node, where a run
-  // on workerRepo fails at the clone. A Story must be on it to be designed (api.approveStorySpec),
-  // and a Task to start. Worker-scoped and fetch-or-create, with a per-slot name, for the reasons
+  // A RepoGroup over e2e-test/mock-repo, which the e2e agent image can clone: runs on workerRepo
+  // fail at the clone. Worker-scoped and fetch-or-create, with a per-slot name, for the reasons
   // workerRepo gives above.
   cloneableProject: [
     async ({}, use, workerInfo) => {
