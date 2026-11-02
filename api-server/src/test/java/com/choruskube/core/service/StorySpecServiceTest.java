@@ -5,17 +5,27 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.config.GraphIds;
+import com.choruskube.core.config.TaskDeliveryGraph;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
+import com.choruskube.core.dto.StoryConflictResponse;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
+import com.choruskube.core.dto.TaskRequest;
+import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.NodeExecution;
+import com.choruskube.core.model.StoryConflict;
 import com.choruskube.core.model.StorySpecVersion;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.NodeExecutionStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
+import com.choruskube.core.repository.NodeExecutionRepository;
+import com.choruskube.core.repository.StoryConflictRepository;
+import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import jakarta.persistence.EntityManager;
@@ -24,6 +34,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -42,6 +54,9 @@ class StorySpecServiceTest extends BaseTest {
     private StoryService storyService;
 
     @Autowired
+    private TaskService taskService;
+
+    @Autowired
     private GitRepoRepository gitRepoRepo;
 
     @Autowired
@@ -49,6 +64,15 @@ class StorySpecServiceTest extends BaseTest {
 
     @Autowired
     private GraphTemplateRepository templateRepo;
+
+    @Autowired
+    private TemplateNodeRepository templateNodeRepo;
+
+    @Autowired
+    private NodeExecutionRepository execRepo;
+
+    @Autowired
+    private StoryConflictRepository conflictRepo;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -208,6 +232,28 @@ class StorySpecServiceTest extends BaseTest {
         assertThat(service.latestDesignRuns(List.of())).isEmpty();
     }
 
+    @Test
+    void openConflictsCarryRevisionRunStatus() {
+        StoryResponse story = makeStory("spec-conflict-revision-status");
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("Wire the payment form", "D"));
+        service.recordApproved(story.id(), designRun(story.id(), WorkflowRunStatus.completed), "v1");
+        UUID cancelled = designRun(story.id(), WorkflowRunStatus.cancelled);
+        UUID taskRun = taskRun(task.id());
+        StoryConflict stranded = conflict(story.id(), taskRun, 1, cancelled);
+        StoryConflict waiting = conflict(story.id(), taskRun, 2, null);
+        entityManager.clear();
+
+        Map<UUID, StoryConflictResponse> open = service.openConflicts(story.id()).stream()
+                .collect(Collectors.toMap(StoryConflictResponse::id, Function.identity()));
+
+        assertThat(open).containsOnlyKeys(stranded.getId(), waiting.getId());
+        assertThat(open.get(stranded.getId()).revisionRunId()).isEqualTo(cancelled);
+        assertThat(open.get(stranded.getId()).revisionRunStatus()).isEqualTo("cancelled");
+        assertThat(open.get(waiting.getId()).revisionRunId()).isNull();
+        assertThat(open.get(waiting.getId()).revisionRunStatus()).isNull();
+        assertThat(open.values()).extracting(StoryConflictResponse::taskTitle).containsOnly("Wire the payment form");
+    }
+
     /** Backdates a run by whole hours, so "newest" does not hang on two inserts' clock ticks. */
     private void age(UUID runId, int hours) {
         jdbc.update(
@@ -223,6 +269,40 @@ class StorySpecServiceTest extends BaseTest {
         run.setStatus(status);
         run.setStoryId(storyId);
         return runRepo.saveAndFlush(run).getId();
+    }
+
+    private UUID taskRun(UUID taskId) {
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.TASK_DELIVERY)
+                .orElseThrow()
+                .getId());
+        run.setStatus(WorkflowRunStatus.awaiting_human);
+        run.setTaskId(taskId);
+        return runRepo.saveAndFlush(run).getId();
+    }
+
+    /** {@code iteration} keeps each conflict's Analyze execution distinct, as the schema requires. */
+    private StoryConflict conflict(UUID storyId, UUID taskRunId, int iteration, UUID revisionRunId) {
+        WorkflowRun run = runRepo.findById(taskRunId).orElseThrow();
+        NodeExecution analyze = new NodeExecution();
+        analyze.setWorkflowRunId(taskRunId);
+        analyze.setTemplateNodeId(templateNodeRepo.findByGraphTemplateId(run.getGraphTemplateId()).stream()
+                .findFirst()
+                .orElseThrow()
+                .getId());
+        analyze.setLabel(TaskDeliveryGraph.ANALYZE);
+        analyze.setStatus(NodeExecutionStatus.completed);
+        analyze.setIteration(iteration);
+        analyze = execRepo.saveAndFlush(analyze);
+        StoryConflict c = new StoryConflict();
+        c.setStoryId(storyId);
+        c.setTaskRunId(taskRunId);
+        c.setAnalyzeNodeExecutionId(analyze.getId());
+        c.setRaisedAgainstVersion(1);
+        c.setReport("The spec is wrong about X.");
+        c.setRevisionRunId(revisionRunId);
+        return conflictRepo.saveAndFlush(c);
     }
 
     private StoryResponse makeStory(String slug) {

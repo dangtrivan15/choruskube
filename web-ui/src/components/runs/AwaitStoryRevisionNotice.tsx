@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import StatusCallout from "@/components/ui/StatusCallout";
 import { useStoryConflicts } from "@/hooks/useStorySpec";
 import { useStorySubscription } from "@/hooks/useStorySubscription";
+import { revisionEndedWithoutVersion } from "@/lib/storyConflicts";
 
 interface AwaitStoryRevisionNoticeProps {
   /** The parked Task run, matched against each conflict's `taskRunId`. */
@@ -19,7 +20,9 @@ export default function AwaitStoryRevisionNotice({ runId, storyId, epicId }: Awa
   // The Run page mounts no roadmap subscription, and the revision run is assigned after the
   // conflict is recorded: without this the notice never learns which run took it up.
   useStorySubscription(storyId);
-  const revisionRunId = conflicts?.find((c) => c.taskRunId === runId)?.revisionRunId ?? null;
+  const conflict = conflicts?.find((c) => c.taskRunId === runId);
+  const revisionRunId = conflict?.revisionRunId ?? null;
+  const revisionEnded = conflict != null && revisionEndedWithoutVersion(conflict);
 
   return (
     <StatusCallout tone="info" data-testid="await-story-revision-notice" title="Waiting on a Story revision">
@@ -29,7 +32,13 @@ export default function AwaitStoryRevisionNotice({ runId, storyId, epicId }: Awa
       </p>
       {storyId && (
         <p className="mt-1">
-          {revisionRunId ? (
+          {revisionEnded ? (
+            <>
+              The <Link to={`/runs/${revisionRunId}`} className="underline">revision run</Link> that took up
+              this conflict ended without a new version, and none restarts on its own. A Revise of the Story
+              answers this conflict.
+            </>
+          ) : revisionRunId ? (
             <>
               The <Link to={`/runs/${revisionRunId}`} className="underline">revision run</Link> is answering
               this conflict.

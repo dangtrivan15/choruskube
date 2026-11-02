@@ -11,4 +11,5 @@ public record StoryConflictResponse(
         @Nullable String taskTitle,
         int raisedAgainstVersion,
         @Nullable UUID revisionRunId,
+        @Nullable String revisionRunStatus,
         Instant createdAt) {}
