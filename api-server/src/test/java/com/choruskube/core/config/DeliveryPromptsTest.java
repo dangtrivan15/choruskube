@@ -114,6 +114,20 @@ class DeliveryPromptsTest {
     }
 
     @Test
+    void taskDeliveryCodeReviewRemovesAReProposedStoryCaveat() {
+        String prompt = DeliveryPrompts.codeReview(TASK_DELIVERY);
+        int start = prompt.indexOf("## Roadmap proposal");
+        int end = prompt.indexOf("## Review checklist", start);
+        assertThat(start).isGreaterThanOrEqualTo(0);
+        assertThat(end).isGreaterThan(start);
+        assertThat(prompt.substring(start, end).replaceAll("\\s+", " "))
+                .as("a story caveat in the PR body passes the Origin check, so only this check catches its re-proposal")
+                .contains("Check every new Task against the story spec's Future-work caveats too.")
+                .contains("an entry that proposes one again is a duplicate, even when its Origin line matches a"
+                        + " caveat in the PR body: remove it.");
+    }
+
+    @Test
     void taskDeliveryCodeReviewClosesEscalationWithItsOwnReviewTarget() {
         String collapsed = DeliveryPrompts.codeReview(TASK_DELIVERY).replaceAll("\\s+", " ");
         assertThat(collapsed)

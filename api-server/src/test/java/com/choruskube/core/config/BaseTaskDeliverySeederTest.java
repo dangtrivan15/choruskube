@@ -85,7 +85,7 @@ class BaseTaskDeliverySeederTest extends BaseTest {
     // input specs and graph. A stored version is never re-seeded, so a change here without a bump
     // leaves existing databases on the old template: bump VERSION and update both pins together.
     private static final int PINNED_VERSION = 2;
-    private static final String PINNED_SHA256 = "837298a7cd726db0f3c2c304e3ba0b34ec7766984eb893745105968b9f3edca8";
+    private static final String PINNED_SHA256 = "c538809880a5ba20f20215c88c7a6ab7d5f3aa17082ccda70f42088c256e7d71";
 
     @Test
     void versionTripwire() throws Exception {

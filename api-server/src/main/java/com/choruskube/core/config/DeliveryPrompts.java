@@ -1010,6 +1010,11 @@ final class DeliveryPrompts {
                     you review it and own the copy Final Approval reads. Skip this section when
                     `/workspace/in/implement/roadmap_candidates.json` is absent and you have
                     nothing to add.
+
+                    Check every new Task against the story spec's Future-work caveats too. They
+                    were proposed when the Story spec was approved, so an entry that proposes one
+                    again is a duplicate, even when its Origin line matches a caveat in the PR
+                    body: remove it.
                     """),
             entry("ESCALATION_SCOPE", """
                     Do not push speculative commits when you escalate. The plan and the spec are
