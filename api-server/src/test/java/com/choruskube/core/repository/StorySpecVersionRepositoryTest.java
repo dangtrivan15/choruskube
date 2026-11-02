@@ -223,23 +223,108 @@ class StorySpecVersionRepositoryTest extends BaseTest {
         Story story = newStory("conflicts");
         WorkflowRun taskRun = newRun(null, WorkflowRunStatus.running);
         StoryConflict open = conflictRepo.saveAndFlush(conflict(story, taskRun, 1));
+        conflictRepo.saveAndFlush(conflict(story, taskRun, 1));
         StoryConflict released = conflict(story, taskRun, 1);
         released.setReleasedAt(Instant.now());
         released = conflictRepo.saveAndFlush(released);
+        Story allReleased = newStory("conflicts-all-released");
+        StoryConflict releasedOnly = conflict(allReleased, taskRun, 1);
+        releasedOnly.setReleasedAt(Instant.now());
+        conflictRepo.saveAndFlush(releasedOnly);
 
-        assertThat(conflictRepo.findByReleasedAtIsNull())
-                .extracting(StoryConflict::getId)
-                .contains(open.getId());
-        assertThat(conflictRepo.findByReleasedAtIsNull())
-                .extracting(StoryConflict::getId)
-                .doesNotContain(released.getId());
+        assertThat(conflictRepo.findStoryIdsWithOpenConflicts()).containsOnlyOnce(story.getId());
+        assertThat(conflictRepo.findStoryIdsWithOpenConflicts()).doesNotContain(allReleased.getId());
         assertThat(conflictRepo.findByStoryIdAndReleasedAtIsNullOrderByCreatedAtAsc(story.getId()))
                 .extracting(StoryConflict::getId)
-                .containsExactly(open.getId());
+                .contains(open.getId())
+                .doesNotContain(released.getId());
         assertThat(conflictRepo.existsByAnalyzeNodeExecutionId(open.getAnalyzeNodeExecutionId()))
                 .isTrue();
         assertThat(conflictRepo.existsByAnalyzeNodeExecutionId(UUID.randomUUID()))
                 .isFalse();
+    }
+
+    @Test
+    void openRaisedAgainst_takesOnlyTheVersionsUnreleasedConflictsOldestFirst() {
+        Story story = newStory("open-raised-against");
+        WorkflowRun taskRun = newRun(null, WorkflowRunStatus.running);
+        WorkflowRun endedRevision = newRun(story.getId(), WorkflowRunStatus.cancelled);
+        StoryConflict older = conflict(story, taskRun, 2);
+        older.setCreatedAt(Instant.parse("2026-01-01T00:00:00Z"));
+        older = conflictRepo.saveAndFlush(older);
+        StoryConflict assigned = conflict(story, taskRun, 2);
+        assigned.setCreatedAt(Instant.parse("2026-01-02T00:00:00Z"));
+        assigned.setRevisionRunId(endedRevision.getId());
+        assigned = conflictRepo.saveAndFlush(assigned);
+        StoryConflict previousVersion = conflictRepo.saveAndFlush(conflict(story, taskRun, 1));
+        StoryConflict released = conflict(story, taskRun, 2);
+        released.setReleasedAt(Instant.now());
+        released = conflictRepo.saveAndFlush(released);
+
+        assertThat(conflictRepo.findOpenRaisedAgainst(story.getId(), 2))
+                .extracting(StoryConflict::getId)
+                .containsExactly(older.getId(), assigned.getId())
+                .doesNotContain(previousVersion.getId(), released.getId());
+    }
+
+    @Test
+    void lockOpenUnassignedRaisedAgainst_selectsOnlyRequestedOpenUnassignedConflictsOfTheVersion() {
+        Story story = newStory("lock-open-unassigned");
+        Story other = newStory("lock-open-unassigned-other");
+        WorkflowRun taskRun = newRun(null, WorkflowRunStatus.running);
+        WorkflowRun revision = newRun(story.getId(), WorkflowRunStatus.cancelled);
+        StoryConflict open = conflictRepo.saveAndFlush(conflict(story, taskRun, 2));
+        StoryConflict assigned = conflict(story, taskRun, 2);
+        assigned.setRevisionRunId(revision.getId());
+        assigned = conflictRepo.saveAndFlush(assigned);
+        StoryConflict released = conflict(story, taskRun, 2);
+        released.setReleasedAt(Instant.now());
+        released = conflictRepo.saveAndFlush(released);
+        StoryConflict previousVersion = conflictRepo.saveAndFlush(conflict(story, taskRun, 1));
+        StoryConflict otherStory = conflictRepo.saveAndFlush(conflict(other, taskRun, 2));
+        StoryConflict notRequested = conflictRepo.saveAndFlush(conflict(story, taskRun, 2));
+
+        List<StoryConflict> locked = conflictRepo.lockOpenUnassignedRaisedAgainst(
+                story.getId(),
+                2,
+                List.of(open.getId(), assigned.getId(), released.getId(), previousVersion.getId(), otherStory.getId()));
+
+        assertThat(locked).extracting(StoryConflict::getId).containsExactly(open.getId());
+        assertThat(conflictRepo.countByIdInAndRevisionRunId(
+                        List.of(open.getId(), assigned.getId(), notRequested.getId()), revision.getId()))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void reassignToRevision_takesAssignedConflictsButNeverReleasedOrOtherVersionOnes() {
+        Story story = newStory("reassign");
+        WorkflowRun taskRun = newRun(null, WorkflowRunStatus.running);
+        WorkflowRun endedRevision = newRun(story.getId(), WorkflowRunStatus.failed);
+        WorkflowRun revision = newRun(story.getId(), WorkflowRunStatus.running);
+        StoryConflict waiting = conflictRepo.saveAndFlush(conflict(story, taskRun, 2));
+        StoryConflict stranded = conflict(story, taskRun, 2);
+        stranded.setRevisionRunId(endedRevision.getId());
+        stranded = conflictRepo.saveAndFlush(stranded);
+        StoryConflict previousVersion = conflictRepo.saveAndFlush(conflict(story, taskRun, 1));
+        StoryConflict released = conflict(story, taskRun, 2);
+        released.setReleasedAt(Instant.now());
+        released = conflictRepo.saveAndFlush(released);
+
+        int reassigned = conflictRepo.reassignToRevision(
+                List.of(waiting.getId(), stranded.getId(), previousVersion.getId(), released.getId()),
+                story.getId(),
+                2,
+                revision.getId());
+
+        assertThat(reassigned).isEqualTo(2);
+        assertThat(conflictRepo.findById(waiting.getId()).orElseThrow().getRevisionRunId())
+                .isEqualTo(revision.getId());
+        assertThat(conflictRepo.findById(stranded.getId()).orElseThrow().getRevisionRunId())
+                .isEqualTo(revision.getId());
+        assertThat(conflictRepo.findById(previousVersion.getId()).orElseThrow().getRevisionRunId())
+                .isNull();
+        assertThat(conflictRepo.findById(released.getId()).orElseThrow().getRevisionRunId())
+                .isNull();
     }
 
     @Test
