@@ -207,7 +207,7 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
         Parked parked = parkedTaskRun(storyId, 1);
         approveSpec(storyId, "# Spec v2");
         UUID runId = parked.run().getId();
-        // Another org's prefix would write this run's guidance into someone else's storage.
+        // A prefix resolved for another run would write this run's guidance into someone else's storage.
         doReturn("run-prefix").when(storagePrefixResolver).storagePrefixForRun(runId);
 
         lifecycle.processConflicts();
