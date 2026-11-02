@@ -105,9 +105,7 @@ public class StoryDesignService {
     public RunResponse startDesign(UUID storyId) {
         requireStory(storyId);
         authService.checkOrgAccess("story", storyId);
-        return start(storyId, null, null, runService::startRun, story -> {})
-                .orElseThrow()
-                .run();
+        return start(storyId, null, null, runService::startRun).orElseThrow().run();
     }
 
     @Transactional
@@ -129,8 +127,7 @@ public class StoryDesignService {
         authService.checkOrgAccess("story", storyId);
         Revision revision =
                 new Revision(version -> conflictRepo.findOpenRaisedAgainst(storyId, version), guidance, false);
-        Started started = start(storyId, null, revision, runService::startRun, story -> {})
-                .orElseThrow();
+        Started started = start(storyId, null, revision, runService::startRun).orElseThrow();
         List<UUID> ids = idsOf(started.conflicts());
         if (!ids.isEmpty()) {
             // Not count-checked: a conflict closed since the read is only answered needlessly, while
@@ -170,7 +167,7 @@ public class StoryDesignService {
         // Skips the concurrent-run cap: it counts the parked Task runs this revision unblocks, so at
         // the cap a checked start is refused on every pass until their gates time out.
         Optional<Started> started =
-                start(storyId, autopilotIdOrNull, revision, runService::startRunExemptFromConcurrentQuota, story -> {});
+                start(storyId, autopilotIdOrNull, revision, runService::startRunExemptFromConcurrentQuota);
         if (started.isEmpty()) {
             return Optional.empty();
         }
@@ -190,6 +187,18 @@ public class StoryDesignService {
     private record Revision(IntFunction<List<StoryConflict>> conflictsAt, String guidance, boolean conflictsRequired) {}
 
     private record Started(RunResponse run, int specVersion, List<StoryConflict> conflicts) {}
+
+    private static ConflictException openRunConflict(WorkflowRun run) {
+        return new ConflictException(
+                run.getStatus() == WorkflowRunStatus.completed
+                        ? "Story's design run " + run.getId() + " is approved but its spec version is not recorded yet"
+                        : "Story already has an open design run: " + run.getId());
+    }
+
+    private Optional<Started> start(
+            UUID storyId, UUID autopilotId, Revision revision, Function<CreateRunRequest, RunResponse> startRun) {
+        return start(storyId, autopilotId, revision, startRun, story -> {});
+    }
 
     /** {@code underLock} runs on the locked, refreshed Story once the open-run guards have passed. */
     private Optional<Started> start(
@@ -211,6 +220,9 @@ public class StoryDesignService {
                     + current.get().getVersion() + "); revise it instead of designing it again");
         }
         if (revision != null && current.isEmpty()) {
+            specService.openDesignRun(storyId).ifPresent(run -> {
+                throw openRunConflict(run);
+            });
             throw new ConflictException("Story has no approved spec to revise; design it first");
         }
         List<StoryConflict> conflicts = List.of();
@@ -222,12 +234,7 @@ public class StoryDesignService {
         }
         Optional<WorkflowRun> open = specService.openDesignRun(storyId);
         if (open.isPresent()) {
-            WorkflowRun run = open.get();
-            throw new ConflictException(
-                    run.getStatus() == WorkflowRunStatus.completed
-                            ? "Story's design run " + run.getId()
-                                    + " is approved but its spec version is not recorded yet"
-                            : "Story already has an open design run: " + run.getId());
+            throw openRunConflict(open.get());
         }
         underLock.accept(story);
 

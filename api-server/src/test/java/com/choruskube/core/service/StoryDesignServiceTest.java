@@ -429,6 +429,30 @@ class StoryDesignServiceTest extends BaseTest {
     }
 
     @Test
+    void startRevision_duringACompletedButUnrecordedFirstDesign_saysTheSpecIsNotRecordedYet() {
+        StoryResponse story = makeStory("story-revision-first-design-unrecorded", "Story");
+        RunResponse approved = service.startDesign(story.id());
+        setStatus(approved.id(), WorkflowRunStatus.completed);
+
+        assertThatThrownBy(() -> service.startRevision(story.id(), "Guidance"))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining(approved.id().toString())
+                .hasMessageContaining("not recorded yet");
+        assertThat(designRunsOf(story.id())).hasSize(1);
+    }
+
+    @Test
+    void startRevision_duringAFirstDesign_pointsAtThatRun() {
+        StoryResponse story = makeStory("story-revision-first-design-open", "Story");
+        RunResponse first = service.startDesign(story.id());
+
+        assertThatThrownBy(() -> service.startRevision(story.id(), "Guidance"))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("open design run: " + first.id());
+        assertThat(designRunsOf(story.id())).hasSize(1);
+    }
+
+    @Test
     void startRevision_whileRevisionOpen_conflicts() {
         StoryResponse story = makeStory("story-revision-open", "Story");
         approveSpec(story.id());
