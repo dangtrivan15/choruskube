@@ -2432,9 +2432,7 @@ class AutopilotServiceTest {
             when(epicRepo.findById(fixture.epic.getId())).thenReturn(Optional.of(fixture.epic));
             when(readinessAssembler.loadEpicCandidates(fixture.epic.getId())).thenReturn(fixture.candidates());
             when(readinessAssembler.assemble(
-                            argThat(ids -> ids != null && ids.contains(fixture.epic.getId())),
-                            any(),
-                            any(),
+                            argThat(c -> c != null && c.candidateIds().contains(fixture.epic.getId())),
                             eq(ReadinessAuthMode.AUTOPILOT),
                             any()))
                     // The readiness map and the edge list are shared across Epics on purpose: the

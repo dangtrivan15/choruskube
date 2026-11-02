@@ -86,8 +86,7 @@ public class DefaultRoadmapGraphService implements RoadmapGraphService {
      */
     private RoadmapGraphSnapshot assemble(EpicResponse epic, UUID epicId, ReadinessAuthMode mode, UUID contextId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
-        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
+        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(candidates, mode, contextId);
 
         Map<UUID, StorySpecService.DesignState> designStates = specService.designStates(
                 candidates.stories().stream().map(Story::getId).toList());

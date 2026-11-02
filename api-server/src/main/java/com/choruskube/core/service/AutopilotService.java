@@ -12,7 +12,6 @@ import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.WorkflowRun;
-import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
@@ -833,12 +832,8 @@ public class AutopilotService {
             }
             epicsById.put(epicId, epic);
             EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
-            EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                    candidates.candidateIds(),
-                    candidates.statusById(),
-                    candidates.parentOf(),
-                    ReadinessAuthMode.AUTOPILOT,
-                    autopilotId);
+            EpicReadinessAssembler.Assembly assembly =
+                    readinessAssembler.assemble(candidates, ReadinessAuthMode.AUTOPILOT, autopilotId);
             readinessById.putAll(assembly.readinessById());
             edges.addAll(assembly.edges());
             swept.add(new SweptEpic(candidates, assembly));
@@ -905,11 +900,7 @@ public class AutopilotService {
         if (storyIds.isEmpty()) {
             return DesignSweep.NONE;
         }
-        Set<UUID> versionIds = new HashSet<>(storyIds);
-        edges.stream()
-                .filter(edge -> edge.getBlockingItemType() == BlockableItemType.story)
-                .forEach(edge -> versionIds.add(edge.getBlockingItemId()));
-        Map<UUID, Integer> versions = specService.currentVersions(versionIds);
+        Map<UUID, Integer> versions = specService.currentVersions(StoryDesignEligibility.versionIds(storyIds, edges));
         Set<UUID> undesigned =
                 storyIds.stream().filter(id -> !versions.containsKey(id)).collect(Collectors.toSet());
         Set<UUID> openDesign = undesigned.isEmpty() ? Set.of() : specService.storiesWithOpenDesignRun(undesigned);

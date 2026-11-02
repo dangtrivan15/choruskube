@@ -238,8 +238,7 @@ public class DefaultTaskService implements TaskService {
      */
     private List<TaskResponse> listWithReadiness(Story story, ReadinessAuthMode mode, UUID contextId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(story.getEpicId());
-        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
+        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(candidates, mode, contextId);
         List<Task> ownTasks = candidates.tasksByStoryId().getOrDefault(story.getId(), List.of());
         return ownTasks.stream()
                 .map(t -> toResponse(t, assembly.readinessById().get(t.getId())))
@@ -478,8 +477,7 @@ public class DefaultTaskService implements TaskService {
                 .findById(task.getStoryId())
                 .orElseThrow(() -> new NotFoundException("Story not found: " + task.getStoryId()));
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(story.getEpicId());
-        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
+        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(candidates, mode, contextId);
         if (assembly.readinessById().get(task.getId()) == Readiness.BLOCKED) {
             throw new ConflictException(
                     "Cannot start a blocked Task. Waiting on: " + describeBlockers(task, story, candidates, assembly));

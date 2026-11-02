@@ -30,7 +30,9 @@ import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
@@ -113,12 +115,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         TaskResponse task = makeTask(story.id(), "Task");
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
-        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
 
         assertThat(assembly.readinessById().get(task.id())).isEqualTo(Readiness.READY);
         assertThat(assembly.readinessById().get(story.id())).isEqualTo(Readiness.READY);
@@ -135,12 +132,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         dependencyService.create(new CreateDependencyRequest("task", blocking.id(), "task", blocked.id()));
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
-        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
 
         assertThat(assembly.readinessById().get(blocked.id())).isEqualTo(Readiness.BLOCKED);
         assertThat(assembly.readinessById().get(blocking.id())).isEqualTo(Readiness.READY);
@@ -163,12 +155,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         // root is deliberately left undone.
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
-        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
 
         assertThat(assembly.readinessById().get(tail.id())).isEqualTo(Readiness.BLOCKED);
     }
@@ -195,12 +182,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         // upstreamOfExternalBlocker is deliberately left undone.
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epicA.id());
-        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
 
         assertThat(assembly.readinessById().get(blockedInA.id())).isEqualTo(Readiness.READY);
         assertThat(assembly.externalBlockers()).hasSize(1);
@@ -222,12 +204,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         dependencyService.create(new CreateDependencyRequest("task", externalBlocker.id(), "task", blockedInA.id()));
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epicA.id());
-        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
 
         assertThat(assembly.readinessById().get(blockedInA.id())).isEqualTo(Readiness.BLOCKED);
     }
@@ -262,12 +239,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         dependencyService.create(new CreateDependencyRequest("story", blockingStory.id(), "story", blockedStory.id()));
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
-        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
 
         assertThat(assembly.readinessById().get(blockedStory.id())).isEqualTo(Readiness.BLOCKED);
         assertThat(assembly.readinessById().get(taskUnderBlocked.id())).isEqualTo(Readiness.BLOCKED);
@@ -285,12 +257,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         dependencyService.create(new CreateDependencyRequest("epic", blockingEpic.id(), "epic", blockedEpic.id()));
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(blockedEpic.id());
-        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
 
         assertThat(assembly.readinessById().get(blockedEpic.id())).isEqualTo(Readiness.BLOCKED);
         assertThat(assembly.readinessById().get(story.id())).isEqualTo(Readiness.BLOCKED);
@@ -304,12 +271,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         TaskResponse task = makeTask(story.id(), "Task");
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
-        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
 
         assertThat(assembly.readinessById().get(epic.id())).isEqualTo(Readiness.READY);
         assertThat(assembly.readinessById().get(story.id())).isEqualTo(Readiness.READY);
@@ -329,12 +291,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         dependencyService.create(new CreateDependencyRequest("epic", blockingEpic.id(), "epic", blockedEpic.id()));
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(blockedEpic.id());
-        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
 
         assertThat(assembly.readinessById().get(blockedEpic.id())).isEqualTo(Readiness.READY);
         assertThat(assembly.readinessById().get(task.id())).isEqualTo(Readiness.READY);
@@ -356,12 +313,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         dependencyService.create(new CreateDependencyRequest("epic", blockingEpic.id(), "epic", blockedEpic.id()));
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(blockedEpic.id());
-        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
 
         assertThat(assembly.readinessById().get(blockedEpic.id())).isEqualTo(Readiness.READY);
         assertThat(assembly.readinessById().get(task.id())).isEqualTo(Readiness.READY);
@@ -382,12 +334,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         dependencyService.create(new CreateDependencyRequest("story", blockingStory.id(), "story", blockedStory.id()));
 
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epic.id());
-        EpicReadinessAssembler.Assembly assembly = assembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        EpicReadinessAssembler.Assembly assembly = assembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
 
         assertThat(assembly.readinessById().get(blockedStory.id())).isEqualTo(Readiness.READY);
         assertThat(assembly.readinessById().get(task.id())).isEqualTo(Readiness.READY);
@@ -560,14 +507,28 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         assertThat(assembly.notDesignedReasonByStoryId()).containsEntry(empty.id(), StoryDesignReadiness.NOT_APPROVED);
     }
 
+    @Test
+    void assemble_storyAbsentFromParentOf_isStillJudgedByItsDesign() {
+        EpicResponse epic = makeEpic("https://github.com/test/assembler-story-not-in-parent-map.git");
+        StoryResponse undesigned = makeUndesignedStory(epic.id(), "Undesigned");
+        makeTask(undesigned.id(), "Waiting on design");
+        EpicReadinessAssembler.EpicCandidates loaded = assembler.loadEpicCandidates(epic.id());
+        Map<UUID, UUID> parentOf = new HashMap<>(loaded.parentOf());
+        parentOf.remove(undesigned.id());
+
+        EpicReadinessAssembler.EpicCandidates withoutTheStoryEntry = new EpicReadinessAssembler.EpicCandidates(
+                loaded.stories(), loaded.tasksByStoryId(), loaded.candidateIds(), loaded.statusById(), parentOf);
+
+        EpicReadinessAssembler.Assembly assembly =
+                assembler.assemble(withoutTheStoryEntry, ReadinessAuthMode.PUBLIC, null);
+
+        assertThat(assembly.notDesignedReasonByStoryId())
+                .containsEntry(undesigned.id(), StoryDesignReadiness.NOT_APPROVED);
+    }
+
     private EpicReadinessAssembler.Assembly assembleFor(UUID epicId) {
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epicId);
-        return assembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        return assembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
     }
 
     private Task entity(UUID taskId) {
@@ -593,7 +554,7 @@ public class EpicReadinessAssemblerTest extends BaseTest {
         EpicReadinessAssembler probe = new EpicReadinessAssembler(
                 storyRepo, taskRepo, epicRepo, dependencyRepo, probeAuthService, specService);
         EpicReadinessAssembler.EpicCandidates candidates = probe.loadEpicCandidates(f.epicId());
-        probe.assemble(candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
+        probe.assemble(candidates, mode, contextId);
     }
 
     private void markInProgress(UUID taskId) {

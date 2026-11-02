@@ -14,7 +14,6 @@ import com.choruskube.core.model.StoryConflict;
 import com.choruskube.core.model.StorySpecVersion;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkflowRun;
-import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
@@ -25,7 +24,6 @@ import com.choruskube.core.repository.WorkflowRunRepository;
 import jakarta.persistence.EntityManager;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -291,23 +289,14 @@ public class StoryDesignService {
      */
     private void requireDesignable(Story story, UUID autopilotId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(story.getEpicId());
-        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.AUTOPILOT,
-                autopilotId);
-        // A blocker in another Epic is no candidate; its approved spec is what satisfies it.
-        Set<UUID> versionIds = new HashSet<>(Set.of(story.getId()));
-        assembly.edges().stream()
-                .filter(edge -> edge.getBlockingItemType() == BlockableItemType.story)
-                .forEach(edge -> versionIds.add(edge.getBlockingItemId()));
+        EpicReadinessAssembler.Assembly assembly =
+                readinessAssembler.assemble(candidates, ReadinessAuthMode.AUTOPILOT, autopilotId);
         Set<UUID> thisStory = Set.of(story.getId());
         if (!StoryDesignEligibility.isDesignable(
                 story,
                 candidates,
                 assembly,
-                specService.currentVersions(versionIds),
+                specService.currentVersions(StoryDesignEligibility.versionIds(thisStory, assembly.edges())),
                 specService.storiesWithOpenDesignRun(thisStory),
                 specService.latestDesignRuns(thisStory))) {
             throw new ConflictException(
