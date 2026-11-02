@@ -321,16 +321,20 @@ export class TestApiClient {
   // ── Health ───────────────────────────────────────────────────────
 
   async waitForHealthy(timeoutMs = 30_000): Promise<void> {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      try {
-        const res = await fetch(`${this.baseUrl}/actuator/health`);
-        if (res.ok) return;
-      } catch {
-        // Server not yet up — retry
-      }
-      await sleep(1000);
-    }
+    const healthy = await pollUntil(
+      async () => {
+        try {
+          const res = await fetch(`${this.baseUrl}/actuator/health`);
+          return res.ok ? true : undefined;
+        } catch {
+          // Server not yet up — retry
+          return undefined;
+        }
+      },
+      timeoutMs,
+      1000,
+    );
+    if (healthy) return;
     throw new Error(`API server not healthy after ${timeoutMs}ms`);
   }
 
@@ -641,26 +645,27 @@ export class TestApiClient {
    * A run that dead-ends first fails here, rather than as a timeout that hides why.
    */
   async approveDesignRun(runId: string, timeoutMs = 180_000, pollIntervalMs = 2_000): Promise<void> {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      const run = await this.getRun(runId);
-      if (run.status === "completed") return;
-      if (["failed", "cancelled", "awaiting_retry"].includes(run.status)) {
-        throw new Error(
-          `Story Design run ${runId} is ${run.status} before its approval gate. A Story on a project ` +
-            "the agent cannot clone (workerRepo) fails at its first node — use cloneableProject.",
+    const outcome = await pollUntil<NodeExecution | "completed">(
+      async () => {
+        const run = await this.getRun(runId);
+        if (run.status === "completed") return "completed";
+        if (["failed", "cancelled", "awaiting_retry"].includes(run.status)) {
+          throw new Error(
+            `Story Design run ${runId} is ${run.status} before its approval gate. A Story on a project ` +
+              "the agent cannot clone (workerRepo) fails at its first node — use cloneableProject.",
+          );
+        }
+        return run.nodeExecutions.find(
+          (ne) => ne.label === "approve_story_spec" && ne.status === "awaiting_human",
         );
-      }
-      const gate = run.nodeExecutions.find(
-        (ne) => ne.label === "approve_story_spec" && ne.status === "awaiting_human",
-      );
-      if (gate) {
-        await this.signalNode(runId, gate.id, { decision: "approved" });
-        return;
-      }
-      await sleep(pollIntervalMs);
+      },
+      timeoutMs,
+      pollIntervalMs,
+    );
+    if (outcome === undefined) {
+      throw new Error(`Story Design run ${runId} did not reach approve_story_spec within ${timeoutMs}ms`);
     }
-    throw new Error(`Story Design run ${runId} did not reach approve_story_spec within ${timeoutMs}ms`);
+    if (outcome !== "completed") await this.signalNode(runId, outcome.id, { decision: "approved" });
   }
 
   /**
@@ -673,12 +678,15 @@ export class TestApiClient {
     timeoutMs = 60_000,
     pollIntervalMs = 2_000,
   ): Promise<StorySpecResponse> {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      const spec = await this.getStorySpec(storyId);
-      if (spec && spec.version >= version) return spec;
-      await sleep(pollIntervalMs);
-    }
+    const spec = await pollUntil(
+      async () => {
+        const current = await this.getStorySpec(storyId);
+        return current && current.version >= version ? current : undefined;
+      },
+      timeoutMs,
+      pollIntervalMs,
+    );
+    if (spec) return spec;
     throw new Error(`Story ${storyId}'s spec did not reach v${version} within ${timeoutMs}ms`);
   }
 
