@@ -28,6 +28,7 @@ import {
   useStorySpecVersions,
 } from "@/hooks/useStorySpec";
 import { apiErrorMessage } from "@/lib/api";
+import { revisionEndedWithoutVersion } from "@/lib/storyConflicts";
 import type { StoryConflictResponse, StoryResponse, StorySpecResponse } from "@/lib/types";
 
 /** Matches `StoryReviseRequest`'s server-side `@Size(max = 20000)`. */
@@ -62,6 +63,9 @@ export default function StorySpecPanel({ story }: StorySpecPanelProps) {
 
   const answered = (conflicts ?? []).filter(
     (c) => c.revisionRunId != null && c.revisionRunId === story.openDesignRunId
+  );
+  const stranded = (conflicts ?? []).filter(
+    (c) => c.revisionRunId !== story.openDesignRunId && revisionEndedWithoutVersion(c)
   );
   const waiting = (conflicts ?? []).filter((c) => c.revisionRunId == null);
 
@@ -152,6 +156,23 @@ export default function StorySpecPanel({ story }: StorySpecPanelProps) {
         </StatusCallout>
       )}
 
+      {stranded.length > 0 && (
+        <StatusCallout
+          tone="warning"
+          data-testid="story-spec-stranded-conflicts"
+          title="Revision ended without a new version"
+        >
+          <p>
+            These Task runs are still waiting: the revision run that took up their conflict ended without a
+            new version.{" "}
+            {story.specUnderRevision
+              ? "The open revision was not asked about them; they resume on the version it records."
+              : "None restarts on its own. Revise the spec to answer them."}
+          </p>
+          <ConflictList conflicts={stranded} showRevisionRun />
+        </StatusCallout>
+      )}
+
       {waiting.length > 0 && (
         <StatusCallout tone="info" data-testid="story-spec-pending-conflicts" title="Waiting on a revision">
           <p>These Task runs found the spec wrong for them and are waiting for it to be revised:</p>
@@ -202,7 +223,13 @@ function versionLabel(version: number, currentVersion: number) {
 }
 
 /** Each entry links the Task run that raised it, which is where its conflict report lives. */
-function ConflictList({ conflicts }: { conflicts: StoryConflictResponse[] }) {
+function ConflictList({
+  conflicts,
+  showRevisionRun = false,
+}: {
+  conflicts: StoryConflictResponse[];
+  showRevisionRun?: boolean;
+}) {
   return (
     <ul className="mt-1 list-disc pl-4">
       {conflicts.map((c) => (
@@ -211,6 +238,15 @@ function ConflictList({ conflicts }: { conflicts: StoryConflictResponse[] }) {
             {c.taskTitle ?? "A Task run"}
           </Link>{" "}
           <span className="text-muted-foreground">(against v{c.raisedAgainstVersion})</span>
+          {showRevisionRun && c.revisionRunId && (
+            <>
+              {" · "}
+              <Link to={`/runs/${c.revisionRunId}`} className="underline">
+                revision run
+              </Link>
+              {c.revisionRunStatus && <span className="text-muted-foreground"> {c.revisionRunStatus}</span>}
+            </>
+          )}
         </li>
       ))}
     </ul>
