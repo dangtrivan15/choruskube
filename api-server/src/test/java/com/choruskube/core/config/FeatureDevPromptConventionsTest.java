@@ -2,6 +2,7 @@ package com.choruskube.core.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.choruskube.core.config.DeliveryPrompts.SpecSource;
 import com.choruskube.core.service.GateDriftCheckService;
 import java.lang.reflect.Field;
 import org.junit.jupiter.api.Test;
@@ -13,9 +14,15 @@ import org.junit.jupiter.api.Test;
 class FeatureDevPromptConventionsTest {
 
     private static String promptField(String name) throws Exception {
-        Field f = BaseFeatureDevSeeder.class.getDeclaredField(name);
-        f.setAccessible(true);
-        return (String) f.get(null);
+        return switch (name) {
+            case "IMPLEMENT_PROMPT" -> DeliveryPrompts.implement(SpecSource.FEATURE_DEVELOPMENT);
+            case "CODE_REVIEW_PROMPT" -> DeliveryPrompts.codeReview(SpecSource.FEATURE_DEVELOPMENT);
+            default -> {
+                Field f = BaseFeatureDevSeeder.class.getDeclaredField(name);
+                f.setAccessible(true);
+                yield (String) f.get(null);
+            }
+        };
     }
 
     @Test

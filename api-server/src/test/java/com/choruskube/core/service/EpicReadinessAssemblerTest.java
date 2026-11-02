@@ -3,6 +3,8 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.StorySpecFixtures;
+import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -12,21 +14,29 @@ import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.model.Task;
+import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
+import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -69,6 +79,21 @@ public class EpicReadinessAssemblerTest extends BaseTest {
 
     @Autowired
     private WorkItemDependencyRepository dependencyRepo;
+
+    @Autowired
+    private StorySpecService specService;
+
+    @Autowired
+    private WorkflowRunRepository runRepo;
+
+    @Autowired
+    private GraphTemplateRepository templateRepo;
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     private final AuthorizationService probeAuthService = Mockito.mock(AuthorizationService.class);
 
@@ -457,6 +482,84 @@ public class EpicReadinessAssemblerTest extends BaseTest {
                 .isFalse();
     }
 
+    // ── Story design: a Task starts only once its Story's spec is approved ───────
+
+    @Test
+    void isStartable_falseWhenStoryHasNoSpec() {
+        EpicResponse epic = makeEpic("https://github.com/test/assembler-no-spec.git");
+        StoryResponse story = makeUndesignedStory(epic.id(), "Undesigned");
+        TaskResponse task = makeTask(story.id(), "Task");
+
+        EpicReadinessAssembler.Assembly assembly = assembleFor(epic.id());
+
+        assertThat(EpicReadinessAssembler.isStartable(entity(task.id()), assembly))
+                .isFalse();
+        assertThat(EpicReadinessAssembler.notStartableReason(entity(task.id()), assembly))
+                .contains(StoryDesignReadiness.NOT_APPROVED);
+        // The displayed readiness stays a statement about dependencies alone.
+        assertThat(assembly.readinessById().get(task.id())).isEqualTo(Readiness.READY);
+    }
+
+    @Test
+    void isStartable_falseWhenRevisionOpen() {
+        EpicResponse epic = makeEpic("https://github.com/test/assembler-revision-open.git");
+        StoryResponse revised = makeStory(epic.id(), "Under revision");
+        TaskResponse revisedTask = makeTask(revised.id(), "Task on a revised Story");
+        designRun(revised.id(), WorkflowRunStatus.running);
+        StoryResponse firstDesign = makeUndesignedStory(epic.id(), "First design in flight");
+        TaskResponse firstDesignTask = makeTask(firstDesign.id(), "Task on an undesigned Story");
+        designRun(firstDesign.id(), WorkflowRunStatus.awaiting_human);
+
+        EpicReadinessAssembler.Assembly assembly = assembleFor(epic.id());
+
+        assertThat(EpicReadinessAssembler.isStartable(entity(revisedTask.id()), assembly))
+                .isFalse();
+        assertThat(EpicReadinessAssembler.notStartableReason(entity(revisedTask.id()), assembly))
+                .contains(StoryDesignReadiness.UNDER_REVISION);
+        // With no approved version there is nothing to revise, whatever run is open.
+        assertThat(EpicReadinessAssembler.notStartableReason(entity(firstDesignTask.id()), assembly))
+                .contains(StoryDesignReadiness.NOT_APPROVED);
+        assertThat(assembly.notDesignedReasonByStoryId())
+                .containsEntry(revised.id(), StoryDesignReadiness.UNDER_REVISION)
+                .containsEntry(firstDesign.id(), StoryDesignReadiness.NOT_APPROVED);
+    }
+
+    @Test
+    void isStartable_trueWithApprovedSpec() {
+        EpicResponse epic = makeEpic("https://github.com/test/assembler-approved-spec.git");
+        StoryResponse story = makeStory(epic.id(), "Designed");
+        TaskResponse task = makeTask(story.id(), "Task");
+        // A finished design run is no revision in flight.
+        designRun(story.id(), WorkflowRunStatus.failed);
+
+        EpicReadinessAssembler.Assembly assembly = assembleFor(epic.id());
+
+        assertThat(EpicReadinessAssembler.isStartable(entity(task.id()), assembly))
+                .isTrue();
+        assertThat(EpicReadinessAssembler.notStartableReason(entity(task.id()), assembly))
+                .isEmpty();
+        assertThat(assembly.notDesignedReasonByStoryId()).doesNotContainKey(story.id());
+    }
+
+    @Test
+    void startableCount_excludesUndesigned() {
+        EpicResponse epic = makeEpic("https://github.com/test/assembler-count-undesigned.git");
+        StoryResponse designed = makeStory(epic.id(), "Designed");
+        TaskResponse first = makeTask(designed.id(), "First");
+        TaskResponse second = makeTask(designed.id(), "Second");
+        StoryResponse undesigned = makeUndesignedStory(epic.id(), "Undesigned");
+        TaskResponse waiting = makeTask(undesigned.id(), "Waiting on design");
+        StoryResponse empty = makeUndesignedStory(epic.id(), "No Tasks yet");
+
+        EpicReadinessAssembler.Assembly assembly = assembleFor(epic.id());
+
+        assertThat(EpicReadinessAssembler.startableCount(
+                        List.of(entity(first.id()), entity(second.id()), entity(waiting.id())), assembly))
+                .isEqualTo(2);
+        // Every Story in the Epic is judged, including one with no Tasks yet.
+        assertThat(assembly.notDesignedReasonByStoryId()).containsEntry(empty.id(), StoryDesignReadiness.NOT_APPROVED);
+    }
+
     private EpicReadinessAssembler.Assembly assembleFor(UUID epicId) {
         EpicReadinessAssembler.EpicCandidates candidates = assembler.loadEpicCandidates(epicId);
         return assembler.assemble(
@@ -487,8 +590,8 @@ public class EpicReadinessAssemblerTest extends BaseTest {
     }
 
     private void assembleWith(CrossEpicFixture f, ReadinessAuthMode mode, UUID contextId) {
-        EpicReadinessAssembler probe =
-                new EpicReadinessAssembler(storyRepo, taskRepo, epicRepo, dependencyRepo, probeAuthService);
+        EpicReadinessAssembler probe = new EpicReadinessAssembler(
+                storyRepo, taskRepo, epicRepo, dependencyRepo, probeAuthService, specService);
         EpicReadinessAssembler.EpicCandidates candidates = probe.loadEpicCandidates(f.epicId());
         probe.assemble(candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
     }
@@ -514,7 +617,25 @@ public class EpicReadinessAssemblerTest extends BaseTest {
     }
 
     private StoryResponse makeStory(UUID epicId, String title) {
+        StoryResponse story = makeUndesignedStory(epicId, title);
+        entityManager.flush();
+        StorySpecFixtures.approve(jdbc, story.id());
+        return story;
+    }
+
+    private StoryResponse makeUndesignedStory(UUID epicId, String title) {
         return storyService.create(epicId, new StoryRequest(title, "Desc for " + title));
+    }
+
+    private void designRun(UUID storyId, WorkflowRunStatus status) {
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.STORY_DESIGN)
+                .orElseThrow()
+                .getId());
+        run.setStatus(status);
+        run.setStoryId(storyId);
+        runRepo.saveAndFlush(run);
     }
 
     private TaskResponse makeTask(UUID storyId, String title) {

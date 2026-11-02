@@ -157,6 +157,9 @@ function makeSnapshot(overrides: Partial<RoadmapGraphSnapshot> = {}): RoadmapGra
         progress: { totalTasks: 2, doneTasks: 0, startedTasks: 0 },
         createdAt: "2026-04-01T00:00:00Z",
         updatedAt: "2026-04-01T00:00:00Z",
+        specVersion: null,
+        specUnderRevision: false,
+        openDesignRunId: null,
       },
       {
         id: "story-2",
@@ -171,6 +174,9 @@ function makeSnapshot(overrides: Partial<RoadmapGraphSnapshot> = {}): RoadmapGra
         progress: { totalTasks: 0, doneTasks: 0, startedTasks: 0 },
         createdAt: "2026-04-01T00:00:00Z",
         updatedAt: "2026-04-01T00:00:00Z",
+        specVersion: null,
+        specUnderRevision: false,
+        openDesignRunId: null,
       },
     ],
     tasks: [

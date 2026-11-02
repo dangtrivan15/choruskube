@@ -6,11 +6,12 @@
 
 1. Navigate to **Roadmap**, open the Epic and Story that contain the Task you want to implement,
    and open that Task's detail view.
-2. Click **Start** on the Task.
-3. In the **Start Run** dialog, select a **Workflow Template** — the target **Git Repository** (or
-   Repository Group) comes from the Task's Epic.
+2. Click **Start** on the Task. It is disabled with a reason until the Task's Story has an approved
+   spec — click **Design** on the Story first.
+3. Confirm in the **Start Task Delivery** dialog — the workflow is Task Delivery and the target
+   **Git Repository** (or Repository Group) comes from the Task's Epic.
 4. The run is automatically linked to the Task that started it, and appears in that Task's run
-   history. Click **Start**.
+   history.
 
 ### From the Runs Page
 

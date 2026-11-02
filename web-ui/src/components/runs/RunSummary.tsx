@@ -51,7 +51,21 @@ function taskStatusChip(status: "backlog" | "in_progress" | "done") {
 }
 
 function hasRunMetadata(run: RunResponse): boolean {
-  return !!run.promptText || !!run.softwareProject || !!run.task || (run.pullRequests?.length ?? 0) > 0;
+  return (
+    !!run.promptText ||
+    !!run.softwareProject ||
+    !!run.task ||
+    run.storySpecVersion != null ||
+    (run.pullRequests?.length ?? 0) > 0
+  );
+}
+
+function SpecVersionNote({ version, className }: { version: number; className?: string }) {
+  return (
+    <span data-testid="run-summary-spec-version" className={cn("text-xs text-muted-foreground", className)}>
+      Planned against spec v{version}
+    </span>
+  );
 }
 
 function attentionButtonLabel(attentionNode: AttentionNodeRef): string {
@@ -109,6 +123,7 @@ export function RunSummaryStrip({ run, attentionNode, onSelectNode, heldApproval
             <span data-testid="run-summary-task-status">{taskStatusChip(run.task.status)}</span>
           </div>
         )}
+        {run.storySpecVersion != null && <SpecVersionNote version={run.storySpecVersion} />}
         <PullRequestLinks pullRequests={run.pullRequests} variant="inline" />
         {heldApproval && <HeldApprovalChip stamp={heldApproval} />}
         {hasAttentionButton && (
@@ -271,6 +286,7 @@ export function RunSummaryDetails({ run }: RunSummaryDetailsProps) {
           </div>
         </div>
       )}
+      {run.storySpecVersion != null && <SpecVersionNote version={run.storySpecVersion} className="block text-sm" />}
       {(run.pullRequests?.length ?? 0) > 0 && <PullRequestLinks pullRequests={run.pullRequests} />}
     </div>
   );

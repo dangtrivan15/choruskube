@@ -30,7 +30,7 @@ function escapeRegex(s: string): string {
 
 test.describe("Task issue close", () => {
   test("completing a Task closes its linked GitHub issue from the Worker only", async ({ page, api }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(420_000);
 
     const reposPage = await api.listGitRepos();
     const mockRepo = seededRepos(reposPage.content).find((r) => r.url.endsWith("/mock-repo"));
@@ -86,6 +86,7 @@ test.describe("Task issue close", () => {
     const graph = await api.getGraph(newEpic!.id);
     const task = graph.tasks.find((t) => t.title === "Mock New Initiative Task");
     expect(task).toBeTruthy();
+    await api.approveStorySpec(task!.storyId);
 
     const ownerRepo = ownerRepoOf(mockRepo.url);
     // Any issue number, not the filing stub's 4242, so a change to that stub keeps this passing.

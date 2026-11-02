@@ -86,6 +86,12 @@ public final class CommittedFixtureCleaner {
                             + ") OR blocked_item_id IN (" + tasksUnderEpics + ")",
                     concat(epics, epics));
             jdbc.update("DELETE FROM workflow_run WHERE task_id IN (" + tasksUnderEpics + ")", epics);
+            // workflow_run.story_id is ON DELETE SET NULL, so the Epic cascade would orphan a Story
+            // Design run rather than remove it.
+            jdbc.update(
+                    "DELETE FROM workflow_run WHERE story_id IN (SELECT id FROM story WHERE epic_id IN ("
+                            + placeholders(epicIds) + "))",
+                    epics);
             jdbc.update("DELETE FROM epic WHERE id IN (" + placeholders(epicIds) + ")", epics);
         }
         if (!autopilotIds.isEmpty()) {

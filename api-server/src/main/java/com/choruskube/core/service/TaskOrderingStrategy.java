@@ -15,7 +15,8 @@ import java.util.function.Function;
 /**
  * Orders the Autopilot's READY frontier by choosing an Epic, then a Story inside it, then a Task
  * inside that — so every Task of the chosen Epic sorts ahead of any other Epic's, and the Autopilot
- * finishes one Epic before it moves to the next.
+ * finishes one Epic before it moves to the next. A Story's design sorts at its Story, before the
+ * Story's Tasks.
  *
  * <p>An Epic, and a Story within its Epic, is ranked by:
  *
@@ -54,20 +55,46 @@ public final class TaskOrderingStrategy {
      */
     public static Comparator<Task> comparator(
             Map<UUID, Epic> epicsById, Map<UUID, Story> storiesById, Set<UUID> startedIds) {
-        Function<Task, Story> storyOf = t -> storiesById.get(t.getStoryId());
-        Function<Task, Epic> epicOf = t -> {
-            Story s = storyOf.apply(t);
+        return Comparator.comparing(
+                AutopilotFrontierItem.TaskItem::new, itemComparator(epicsById, storiesById, startedIds));
+    }
+
+    /**
+     * The same Epic and Story ranking for every kind of item, so a Story's design sorts at that
+     * Story's position — ahead of its own Tasks, which cannot start until it is approved.
+     */
+    static Comparator<AutopilotFrontierItem> itemComparator(
+            Map<UUID, Epic> epicsById, Map<UUID, Story> storiesById, Set<UUID> startedIds) {
+        Function<AutopilotFrontierItem, Story> storyOf = item -> switch (item) {
+            case AutopilotFrontierItem.DesignStoryItem design -> design.story();
+            case AutopilotFrontierItem.TaskItem task -> storiesById.get(task.storyId());
+        };
+        Function<AutopilotFrontierItem, Epic> epicOf = item -> {
+            Story s = storyOf.apply(item);
             return s == null ? null : epicsById.get(s.getEpicId());
         };
         Comparator<Epic> epicOrder =
                 level(startedIds, Epic::getPriority, Epic::getTargetDate, Epic::getCreatedAt, Epic::getId);
         Comparator<Story> storyOrder =
                 level(startedIds, Story::getPriority, Story::getTargetDate, Story::getCreatedAt, Story::getId);
-        return Comparator.comparing(epicOf, Comparator.nullsLast(epicOrder))
-                .thenComparing(storyOf, Comparator.nullsLast(storyOrder))
-                .thenComparing(t -> priorityRank(t.getPriority()))
+        Comparator<Task> taskOrder = Comparator.<Task, Integer>comparing(t -> priorityRank(t.getPriority()))
                 .thenComparing(Task::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(Task::getId);
+        return Comparator.comparing(epicOf, Comparator.nullsLast(epicOrder))
+                .thenComparing(storyOf, Comparator.nullsLast(storyOrder))
+                .thenComparingInt(TaskOrderingStrategy::kindRank)
+                .thenComparing(TaskOrderingStrategy::taskOf, Comparator.nullsFirst(taskOrder));
+    }
+
+    private static int kindRank(AutopilotFrontierItem item) {
+        return switch (item) {
+            case AutopilotFrontierItem.DesignStoryItem design -> 0;
+            case AutopilotFrontierItem.TaskItem task -> 1;
+        };
+    }
+
+    private static Task taskOf(AutopilotFrontierItem item) {
+        return item instanceof AutopilotFrontierItem.TaskItem taskItem ? taskItem.task() : null;
     }
 
     private static <C> Comparator<C> level(

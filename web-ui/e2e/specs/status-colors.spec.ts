@@ -97,12 +97,13 @@ test.describe("Roadmap Graph status colors and legend fidelity", () => {
   test("Task nodes render distinct colors for backlog / in_progress / done, in both themes", async ({
     roadmapGraphPage,
     api,
-    workerRepo,
+    cloneableProject,
   }) => {
+    test.setTimeout(300_000);
     const epic = await api.createEpic({
       title: uniqueName("E2E Status Colors Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const story = await api.createStory(epic.id, { title: "Status Colors Story", description: "desc" });
     const backlogTask = await api.createTask(story.id, {
@@ -115,6 +116,7 @@ test.describe("Roadmap Graph status colors and legend fidelity", () => {
     });
     const doneTask = await api.createTask(story.id, { title: uniqueName("Done Task"), description: "desc" });
 
+    await api.approveStorySpec(story.id);
     await api.startTask(inProgressTask.id);
 
     // Get doneTask to "done" without depending on its Task-triggered run

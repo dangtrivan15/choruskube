@@ -194,12 +194,13 @@ test.describe("Roadmap Graph View", () => {
   test("a 3-task chain stays BLOCKED at the tail after the middle task completes but the root has not", async ({
     roadmapGraphPage,
     api,
-    workerRepo,
+    cloneableProject,
   }) => {
+    test.setTimeout(300_000);
     const epic = await api.createEpic({
       title: uniqueName("E2E Graph Chain Epic"),
       description: "desc",
-      softwareProjectId: workerRepo.gitRepo.id,
+      softwareProjectId: cloneableProject.id,
     });
     const story = await api.createStory(epic.id, { title: "Chain Story", description: "desc" });
     const taskA = await api.createTask(story.id, {
@@ -215,11 +216,9 @@ test.describe("Roadmap Graph View", () => {
       description: "desc",
     });
 
-    // Get taskB to "done" without depending on its Task-triggered run (the
-    // real "Feature Development" template, unlike the trivial e2e-linear-pipeline
-    // used elsewhere in this suite) actually completing — that template requires
-    // cloning taskB's git repo, which is unrelated to what this test verifies and
-    // an unnecessary source of flakiness/slowness here. `completeTask` only
+    // Get taskB to "done" without depending on its Task-triggered run actually
+    // completing, which is unrelated to what this test verifies and an
+    // unnecessary source of slowness here. `completeTask` only
     // requires the Task's most recent linked run to be in a *terminal* state
     // (RunService#cancelRun sets that synchronously), not specifically
     // "completed" (mirrors run-lifecycle.spec.ts's "cancel button terminates a
@@ -230,6 +229,7 @@ test.describe("Roadmap Graph View", () => {
     // lands races it and can get silently clobbered back to "running" —
     // waiting first means cancel is the last write. taskA stays untouched in
     // backlog throughout.
+    await api.approveStorySpec(story.id);
     const started = await api.startTask(taskB.id);
     expect(started.latestRunId).not.toBeNull();
     await api.waitForRunStatus(started.latestRunId!, ["running"], 15_000);

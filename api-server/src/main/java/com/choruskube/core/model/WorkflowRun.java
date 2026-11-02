@@ -31,6 +31,16 @@ public class WorkflowRun {
     @Column(name = "task_id")
     private UUID taskId;
 
+    /**
+     * Set only on Story Design runs; Task runs carry {@code taskId}. The query for completed
+     * design runs with no recorded version treats any run with this set as one.
+     */
+    @Column(name = "story_id")
+    private UUID storyId;
+
+    @Column(name = "story_spec_version")
+    private Integer storySpecVersion;
+
     @Column(name = "autopilot_id")
     private UUID autopilotId;
 
@@ -107,6 +117,22 @@ public class WorkflowRun {
 
     public void setTaskId(UUID taskId) {
         this.taskId = taskId;
+    }
+
+    public UUID getStoryId() {
+        return storyId;
+    }
+
+    public void setStoryId(UUID storyId) {
+        this.storyId = storyId;
+    }
+
+    public Integer getStorySpecVersion() {
+        return storySpecVersion;
+    }
+
+    public void setStorySpecVersion(Integer storySpecVersion) {
+        this.storySpecVersion = storySpecVersion;
     }
 
     public UUID getAutopilotId() {

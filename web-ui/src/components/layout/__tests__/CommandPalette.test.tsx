@@ -231,6 +231,7 @@ describe("CommandPalette", () => {
             completedAt: null,
             createdAt: "2025-01-01",
             autopilotId: null,
+            storySpecVersion: null,
             softwareProject: null,
           },
         ]}

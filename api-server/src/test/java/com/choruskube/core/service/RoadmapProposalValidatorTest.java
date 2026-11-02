@@ -164,6 +164,13 @@ class RoadmapProposalValidatorTest extends BaseTest {
         return saveRun(projectP.getId(), null).getId();
     }
 
+    /** A Story Design run: it carries the Story it designs, never a Task. */
+    private UUID storyRunUnderP() {
+        WorkflowRun run = saveRun(projectP.getId(), null);
+        run.setStoryId(storyP.getId());
+        return runRepo.save(run).getId();
+    }
+
     private static CandidateEpicProposal newEpic(String key, List<CandidateStoryProposal> stories) {
         return new CandidateEpicProposal("New Epic", "d", "m", null, null, stories, key, null, null);
     }
@@ -529,6 +536,45 @@ class RoadmapProposalValidatorTest extends BaseTest {
         assertThat(errors)
                 .anyMatch(e ->
                         e.contains("existing epic " + epicQ.getId() + " not found in this run's software project"));
+    }
+
+    @Test
+    void storyRunProposal_validatesWithStoryEpicAsTriggeringEpic() {
+        UUID runId = storyRunUnderP();
+        // The run's own Story anchored under its Epic, new Tasks added there, and an edge to an
+        // item in another Epic of the project, which needs this run's Epic on the other side.
+        CandidateEpicProposal ownEpic = anchorEpic(
+                epicP.getId(), "own", List.of(anchorStory(storyP.getId(), "s", List.of(newTask("t1"), newTask("t2")))));
+        CandidateEpicProposal otherEpicChain = anchorEpic(
+                epicP2.getId(),
+                "fe",
+                List.of(anchorStory(storyP2.getId(), "fs", List.of(anchorTask(taskP2.getId(), "ft")))));
+
+        var errors = validator.validate(
+                runId,
+                doc(
+                        List.of(ownEpic, otherEpicChain),
+                        List.of(new CandidateDependency("t1", "t2"), new CandidateDependency("ft", "t1"))),
+                RoadmapMaterializeMode.roadmap_extension,
+                RoadmapProposalValidator.Strictness.AGENT);
+
+        assertThat(errors).isEmpty();
+    }
+
+    @Test
+    void storyRunProposal_rejectsChildrenUnderOtherEpicsExistingItems() {
+        UUID runId = storyRunUnderP();
+        CandidateEpicProposal otherEpic =
+                anchorEpic(epicP2.getId(), "fe", List.of(anchorStory(storyP2.getId(), "fs", List.of(newTask("t")))));
+
+        var errors = validator.validate(
+                runId,
+                doc(List.of(otherEpic), null),
+                RoadmapMaterializeMode.roadmap_extension,
+                RoadmapProposalValidator.Strictness.GATE);
+
+        assertThat(errors)
+                .containsExactly("epics[0]: new items may only be added under this run's epic " + epicP.getId());
     }
 
     @Test

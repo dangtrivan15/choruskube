@@ -13,6 +13,7 @@ import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>, JpaSpecificationExecutor<WorkflowRun> {
     List<WorkflowRun> findByStatus(WorkflowRunStatus status);
@@ -27,6 +28,35 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>,
      * first row per {@code taskId} and rely on it being the latest.
      */
     List<WorkflowRun> findByTaskIdInOrderByCreatedAtDesc(Collection<UUID> taskIds);
+
+    List<WorkflowRun> findByStoryIdInAndStatusInAndDeletedAtIsNull(
+            Collection<UUID> storyIds, Collection<WorkflowRunStatus> statuses);
+
+    /**
+     * A design run stays open past {@code completed} until its spec version is recorded: until
+     * then the Story shows no new version, and a start in that gap would revise a stale spec.
+     */
+    @Query("""
+            select r from WorkflowRun r
+            where r.storyId in :storyIds
+              and r.deletedAt is null
+              and (r.status in :active
+                   or (r.status = :completed
+                       and not exists (select 1 from StorySpecVersion v where v.runId = r.id)))
+            """)
+    List<WorkflowRun> findOpenDesignRuns(
+            @Param("storyIds") Collection<UUID> storyIds,
+            @Param("active") Collection<WorkflowRunStatus> active,
+            @Param("completed") WorkflowRunStatus completed);
+
+    @Query("""
+            select r from WorkflowRun r
+            where r.storyId is not null
+              and r.status = :#{T(com.choruskube.core.model.enums.WorkflowRunStatus).completed}
+              and r.deletedAt is null
+              and not exists (select 1 from StorySpecVersion v where v.runId = r.id)
+            """)
+    List<WorkflowRun> findCompletedDesignRunsWithoutVersion();
 
     /**
      * The Autopilot's live view of its own runs — the "awaiting you" / "needs attention" lists
@@ -213,4 +243,13 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>,
                     + "WHERE deleted_at IS NOT NULL LIMIT :batchSize",
             nativeQuery = true)
     List<TombstonedWorkflowRunRef> findTombstonedBatch(@Param("batchSize") int batchSize);
+
+    /**
+     * Column-targeted: written while the orchestrator updates the same run, a whole-entity save
+     * could write back a status it changed meanwhile.
+     */
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE WorkflowRun r SET r.storySpecVersion = :version WHERE r.id = :id")
+    int setStorySpecVersion(@Param("id") UUID id, @Param("version") int version);
 }

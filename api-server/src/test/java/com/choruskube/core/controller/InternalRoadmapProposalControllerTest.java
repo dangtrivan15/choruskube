@@ -8,21 +8,27 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.InternalAuthFilter;
+import com.choruskube.core.config.StoryDesignGraph;
+import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
 import com.choruskube.core.model.NodeExecution;
+import com.choruskube.core.model.Story;
 import com.choruskube.core.model.TemplateNode;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.ExecutorType;
+import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
+import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -69,6 +75,12 @@ class InternalRoadmapProposalControllerTest extends BaseTest {
 
     @Autowired
     private GitRepoRepository gitRepoRepo;
+
+    @Autowired
+    private EpicRepository epicRepo;
+
+    @Autowired
+    private StoryRepository storyRepo;
 
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
@@ -302,6 +314,76 @@ class InternalRoadmapProposalControllerTest extends BaseTest {
         NodeExecution exec = makeExec(run, implement, JOB_SECRET);
 
         assertAllSixWriteRoutesRefused(run, exec);
+    }
+
+    @Test
+    void validate_storyDesignRun_scopesNewItemsToTheStorysEpic() throws Exception {
+        GitRepo project = new GitRepo();
+        project.setUrl("https://github.com/acme/story-design-proposal.git");
+        project.setName("acme/story-design-proposal");
+        project.setSecrets("[]");
+        project = gitRepoRepo.save(project);
+        Epic epic = epicRepo.save(epic(project, "Story's Epic"));
+        Story story = storyRepo.save(story(epic, "Designed Story"));
+        Epic otherEpic = epicRepo.save(epic(project, "Other Epic"));
+        Story otherStory = storyRepo.save(story(otherEpic, "Other Story"));
+
+        GraphTemplate storyDesign = templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.STORY_DESIGN)
+                .orElseThrow();
+        TemplateNode draft = templateNodeRepo.findByGraphTemplateId(storyDesign.getId()).stream()
+                .filter(n -> StoryDesignGraph.DRAFT.equals(n.getLabel()))
+                .findFirst()
+                .orElseThrow();
+        WorkflowRun run = makeRun(storyDesign);
+        run.setStoryId(story.getId());
+        run.setInputs("{\"software_project_id\":\"" + project.getId() + "\"}");
+        run = runRepo.save(run);
+        NodeExecution exec = makeExec(run, draft, JOB_SECRET);
+        String route =
+                "/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/roadmap-proposal/validate";
+
+        mockMvc.perform(post(route)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(anchoredTasksDoc(epic.getId(), story.getId()))
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("roadmap_extension"))
+                .andExpect(jsonPath("$.gateLabel").value(StoryDesignGraph.APPROVE))
+                .andExpect(jsonPath("$.newTasks").value(2));
+
+        mockMvc.perform(post(route)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(anchoredTasksDoc(otherEpic.getId(), otherStory.getId()))
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath(
+                        "$.errors",
+                        hasItem("epics[0]: new items may only be added under this run's epic " + epic.getId())));
+    }
+
+    private static String anchoredTasksDoc(UUID epicId, UUID storyId) {
+        return """
+                {"epics":[{"existingId":"%s","key":"e","stories":[{"existingId":"%s","key":"s",
+                  "tasks":[{"title":"T1","description":"d","key":"t1"},{"title":"T2","description":"d","key":"t2"}]}]}],
+                 "dependencies":[{"blocking":"t1","blocked":"t2"}]}
+                """.formatted(epicId, storyId);
+    }
+
+    private static Epic epic(GitRepo project, String title) {
+        Epic e = new Epic();
+        e.setSoftwareProjectId(project.getId());
+        e.setTitle(title);
+        e.setDescription("d");
+        return e;
+    }
+
+    private static Story story(Epic epic, String title) {
+        Story s = new Story();
+        s.setEpicId(epic.getId());
+        s.setTitle(title);
+        s.setDescription("d");
+        return s;
     }
 
     @Test

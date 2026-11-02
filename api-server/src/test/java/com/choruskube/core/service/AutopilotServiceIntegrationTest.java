@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.tuple;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.dto.AutopilotStatusResponse;
 import com.choruskube.core.dto.AutopilotTaskRef;
 import com.choruskube.core.dto.CreateDependencyRequest;
@@ -53,6 +54,7 @@ import org.springframework.context.PayloadApplicationEvent;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import software.amazon.awssdk.services.s3.S3Client;
 
 /**
  * The tick against real Postgres, real readiness and a real start.
@@ -112,6 +114,9 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
+
+    @MockitoBean
+    private S3Client s3Client;
 
     /**
      * Registered per test rather than declared as a {@code @TestConfiguration} bean, and that
@@ -196,6 +201,44 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     }
 
     @Test
+    void tick_taskUnderAnUndesignedStory_isNeverStarted() {
+        StoryResponse story =
+                makeUndesignedStory(makeRepo("autopilot-undesigned").getId());
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("Waiting on design", "D"));
+        UUID autopilotId = engage();
+
+        autopilotService.tick();
+
+        assertThat(taskService.get(task.id()).status()).isEqualTo("backlog");
+        assertThat(runsFor(autopilotId)).noneMatch(run -> task.id().equals(run.getTaskId()));
+    }
+
+    @Test
+    void tick_startsStoryDesignRunStampedWithAutopilot() {
+        StoryResponse story = makeUndesignedStory(makeRepo("autopilot-design").getId());
+        TaskResponse task = taskService.create(story.id(), new TaskRequest("Waits on the design", "D"));
+        UUID autopilotId = engage();
+        // A free slot on the second tick, so only the open design run can keep it from designing again.
+        setMaxParallel(autopilotId, 2);
+
+        autopilotService.tick();
+
+        List<WorkflowRun> runs = runsFor(autopilotId);
+        assertThat(runs).hasSize(1);
+        WorkflowRun design = runs.getFirst();
+        assertThat(design.getStoryId()).isEqualTo(story.id());
+        assertThat(design.getTaskId()).isNull();
+        assertThat(design.getStatus()).isEqualTo(WorkflowRunStatus.pending);
+        assertThat(taskService.get(task.id()).status()).isEqualTo("backlog");
+
+        autopilotService.tick();
+
+        assertThat(runsFor(autopilotId))
+                .as("a Story with an open design run is not designed again")
+                .hasSize(1);
+    }
+
+    @Test
     void tick_blockedTask_isNeverStarted() {
         StoryResponse story = makeStory(makeRepo("autopilot-blocked").getId());
         TaskResponse blocker = taskService.create(story.id(), new TaskRequest("Blocker", "D"));
@@ -262,8 +305,8 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
 
         AutopilotStatusResponse status = autopilotService.getStatus();
         assertThat(status.heldTasks())
-                .extracting(AutopilotTaskRef::taskId, AutopilotTaskRef::status)
-                .containsExactly(tuple(task.id(), "cancelled"));
+                .extracting(AutopilotTaskRef::taskId, AutopilotTaskRef::status, AutopilotTaskRef::epicId)
+                .containsExactly(tuple(task.id(), "cancelled", story.epicId()));
         assertThat(status.whyIdle())
                 .as("naming the Task is the only thing that turns a silent stall into an action")
                 .anySatisfy(reason -> assertThat(reason).contains("'Stranded'"));
@@ -693,6 +736,12 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     }
 
     private StoryResponse makeStory(UUID softwareProjectId) {
+        StoryResponse story = makeUndesignedStory(softwareProjectId);
+        StorySpecFixtures.approve(jdbc, story.id());
+        return story;
+    }
+
+    private StoryResponse makeUndesignedStory(UUID softwareProjectId) {
         EpicResponse epic = epicService.create(new EpicRequest("Epic", "Epic desc", null, softwareProjectId), null);
         cleaner.trackEpic(epic.id());
         return storyService.create(epic.id(), new StoryRequest("Story", "Story desc"));

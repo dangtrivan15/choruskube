@@ -156,7 +156,9 @@ class RunServiceTest {
                 null, // roadmapProposalValidator - unused (approve-time validation not exercised)
                 null, // taskSettlement - unused (no terminal status transitions exercised)
                 org.mockito.Mockito.mock(GateRecheckService.class),
-                org.mockito.Mockito.mock(GateFinalizeService.class));
+                org.mockito.Mockito.mock(GateFinalizeService.class),
+                null // storySpecService
+                );
     }
 
     // -----------------------------------------------------------------------

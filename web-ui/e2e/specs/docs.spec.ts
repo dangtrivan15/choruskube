@@ -41,23 +41,19 @@ test.describe("Documentation", () => {
     await expect(second).not.toContainText("Client");
   });
 
-  // Regression: a sequenceDiagram participant alias that collides with a Mermaid
-  // reserved word (`actor`) renders as a real diagram, not the raw-source error
-  // fallback. Exercises the fix end-to-end against a real browser and mermaid.js,
-  // using the "Approval Flow" fixture diagram in the Features Overview doc.
+  // Regression: a sequenceDiagram alias that is a Mermaid reserved word (`actor`) must render.
+  // Features Overview has two diagrams; "Reviewer" picks Approval Flow, and a failed render
+  // emits no mermaid-diagram node (only a raw-source box), so it can never match this filter.
   test("renders a sequence diagram whose participant alias is a reserved word", async ({
     docsPage,
   }) => {
     await docsPage.goto();
     await docsPage.selectDoc("Features Overview");
 
-    await expect(docsPage.mermaidDiagrams).toHaveCount(1);
-    const diagram = docsPage.mermaidDiagrams.first();
+    const diagram = docsPage.mermaidDiagrams.filter({ hasText: "Reviewer" });
+    await expect(diagram).toHaveCount(1);
     await expect(diagram).toHaveAttribute("data-rendered", "true");
     await expect(diagram.locator("svg")).toBeVisible();
-
-    // The `as` label proves the diagram parsed and rendered rather than
-    // falling back to the bordered raw-source error box.
     await expect(diagram).toContainText("Reviewer");
   });
 

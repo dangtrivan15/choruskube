@@ -16,12 +16,17 @@ import java.util.UUID;
  * exactly.
  *
  * <p>{@code readyTaskCount} is how many of this Story's Tasks can be started right now — still
- * {@code backlog} and unblocked, per {@code EpicReadinessAssembler#isStartable}. It is the Story
+ * {@code backlog}, unblocked, and under an approved spec that is not being revised, per {@code
+ * EpicReadinessAssembler#isStartable}. It is the Story
  * tier's counterpart to {@code EpicResponse#readyItemCount} and exists because {@code readiness}
  * alone cannot answer "is there work to pick up here": READY is a statement about this Story's
  * *dependencies*, so a Story whose Tasks are all finished is still READY. It is populated on
  * exactly the paths {@code readiness} is, and is {@code null} on the single-item reads for the
  * same reason.
+ *
+ * <p>{@code specVersion} is the current approved Story spec version, null before the first
+ * approval. {@code specUnderRevision} is true only while a revision of an approved spec is open; an
+ * initial design in progress shows as a null {@code specVersion} with an {@code openDesignRunId}.
  */
 public record StoryResponse(
         UUID id,
@@ -35,4 +40,7 @@ public record StoryResponse(
         @Nullable Long readyTaskCount,
         EpicResponse.Progress progress,
         Instant createdAt,
-        Instant updatedAt) {}
+        Instant updatedAt,
+        @Nullable Integer specVersion,
+        boolean specUnderRevision,
+        @Nullable UUID openDesignRunId) {}

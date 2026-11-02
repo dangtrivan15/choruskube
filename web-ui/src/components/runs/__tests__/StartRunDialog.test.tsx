@@ -80,6 +80,30 @@ describe("StartRunDialog", () => {
     expect(mockUseTemplates).toHaveBeenCalledWith(true, undefined, { size: 100 });
   });
 
+  it("hides the templates only a Story or a Task can start", async () => {
+    const templates = [
+      { id: "tpl-fd", graphId: "feature-development", name: "Feature Development", version: 53, inputSchema: [] },
+      { id: "tpl-sd", graphId: "story-design", name: "Story Design", version: 1, inputSchema: [] },
+      { id: "tpl-td", graphId: "task-delivery", name: "Task Delivery", version: 1, inputSchema: [] },
+      { id: "tpl-esd", graphId: "e2e-story-design", name: "E2E Story Design", version: 1, inputSchema: [] },
+      { id: "tpl-etd", graphId: "e2e-task-delivery", name: "E2E Task Delivery", version: 1, inputSchema: [] },
+    ];
+    mockUseTemplates.mockReturnValue({
+      data: { content: templates, totalElements: 5, totalPages: 1, number: 0, size: 100, first: true, last: true, empty: false },
+      isLoading: false,
+    });
+
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderWithProviders(<StartRunDialog />);
+    await user.click(screen.getByText("Start Run"));
+    await user.click(screen.getByText("Select a template..."));
+
+    expect(screen.getByRole("option", { name: /Feature Development/ })).toBeInTheDocument();
+    for (const hidden of ["Story Design", "Task Delivery", "E2E Story Design", "E2E Task Delivery"]) {
+      expect(screen.queryByRole("option", { name: new RegExp(`^${hidden} v`) })).not.toBeInTheDocument();
+    }
+  });
+
   it("renders a textarea for fields with type 'textarea'", async () => {
     const templates = [
         {

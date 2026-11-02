@@ -438,6 +438,8 @@ export default function DetailPanel({ run, nodeId, onClose }: DetailPanelProps) 
                 ? { method: mergeMethod, pullRequests: run.pullRequests ?? [] }
                 : null
             }
+            storyId={run.task?.storyId ?? null}
+            epicId={run.task?.epicId ?? null}
           />
         )}
 

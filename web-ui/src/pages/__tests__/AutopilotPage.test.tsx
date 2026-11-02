@@ -34,6 +34,22 @@ function taskRef(overrides: Partial<AutopilotTaskRef> = {}): AutopilotTaskRef {
     title: "Wire up billing webhook",
     runId: null,
     status: "ready",
+    storyId: "story-1",
+    epicId: "epic-1",
+    kind: "task",
+    ...overrides,
+  };
+}
+
+function designRef(overrides: Partial<AutopilotTaskRef> = {}): AutopilotTaskRef {
+  return {
+    taskId: null,
+    title: "Checkout",
+    runId: null,
+    status: "design",
+    storyId: "story-7",
+    epicId: "epic-3",
+    kind: "design_story",
     ...overrides,
   };
 }
@@ -199,6 +215,81 @@ describe("AutopilotPage", () => {
     expect(held).toHaveTextContent("cancelled");
     // Deliberately the Task and not run-9: that run is over, and Restart lives on the Task.
     expect(within(held).getByRole("link")).toHaveAttribute("href", "/tasks/t-9");
+  });
+
+  it("links a design item that has no run yet to its Story", () => {
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({ nextUp: [designRef()] }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    const nextUp = screen.getByTestId("autopilot-next-up");
+    expect(nextUp).toHaveTextContent("Checkout");
+    expect(within(nextUp).getByRole("link")).toHaveAttribute("href", "/roadmap/epics/epic-3/stories/story-7");
+  });
+
+  it("links a design run waiting on you to the run", () => {
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({
+        awaitingYou: [designRef({ title: "Design: Checkout", runId: "run-5", status: "awaiting_human" })],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    const awaitingYou = screen.getByTestId("autopilot-awaiting-you");
+    expect(within(awaitingYou).getByRole("link")).toHaveAttribute("href", "/runs/run-5");
+  });
+
+  it("links a held Story to the Story, where it can be designed again, beside held Tasks", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({
+        heldTasks: [
+          taskRef({ taskId: "t-9", title: "Settle the palette", runId: "run-9", status: "cancelled" }),
+          designRef({ title: "Design: Checkout", runId: "run-10", status: "failed" }),
+          designRef({ title: "Design: Refunds", storyId: "story-8", runId: "run-11", status: "cancelled" }),
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    const hrefs = within(screen.getByTestId("autopilot-held-tasks"))
+      .getAllByRole("link")
+      .map((link) => link.getAttribute("href"));
+    expect(hrefs).toEqual([
+      "/tasks/t-9",
+      "/roadmap/epics/epic-3/stories/story-7",
+      "/roadmap/epics/epic-3/stories/story-8",
+    ]);
+    // Two refs with no taskId must not collide on their React key.
+    expect(errorSpy.mock.calls.flat().join(" ")).not.toMatch(/same key/);
+    errorSpy.mockRestore();
+  });
+
+  it("falls back to the run when a design ref's Epic is unknown", () => {
+    mockUseAutopilot.mockReturnValue({
+      data: makeStatus({
+        heldTasks: [designRef({ epicId: null, runId: "run-10", status: "failed" })],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithProviders(<AutopilotPage />);
+
+    expect(within(screen.getByTestId("autopilot-held-tasks")).getByRole("link")).toHaveAttribute(
+      "href",
+      "/runs/run-10"
+    );
   });
 
   it("says so when nothing is held", () => {

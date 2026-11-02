@@ -29,14 +29,28 @@ interface TaskRefListProps {
   refs: AutopilotTaskRef[];
   emptyLabel: string;
   /**
-   * Held Tasks link to the Task, not to the run they name: that run is already finished, and the
-   * Restart control that clears the hold lives on the Task.
+   * Held refs link to their work item — the Task, or for a design the Story — not to the run they
+   * name: that run is already finished, and the control that clears the hold (Restart, or Design
+   * again) lives on the work item.
    */
-  linkTo?: "run" | "task";
+  linkTo?: "run" | "item";
 }
 
-/** Shared renderer for the three `AutopilotTaskRef` lists (nextUp / awaitingYou / needsAttention).
- *  Links to the run when one exists (a task already started), else to the Task itself. */
+/**
+ * Where a Task or Story Design ref leads. The Story route needs the Epic, so a design ref whose
+ * Epic is unknown falls back to its run, and to no link at all without one.
+ */
+function refHref(ref: AutopilotTaskRef, linkTo: "run" | "item"): string | null {
+  if (linkTo === "run" && ref.runId) return `/runs/${ref.runId}`;
+  if (ref.kind === "design_story") {
+    if (ref.epicId && ref.storyId) return `/roadmap/epics/${ref.epicId}/stories/${ref.storyId}`;
+    return ref.runId ? `/runs/${ref.runId}` : null;
+  }
+  return ref.taskId ? `/tasks/${ref.taskId}` : null;
+}
+
+/** Shared renderer for the four `AutopilotTaskRef` lists (nextUp / awaitingYou / held / needsAttention).
+ *  Links to the run when one exists (work already started), else to the Task or Story itself. */
 function TaskRefList({ testId, refs, emptyLabel, linkTo = "run" }: TaskRefListProps) {
   if (refs.length === 0) {
     return (
@@ -47,27 +61,26 @@ function TaskRefList({ testId, refs, emptyLabel, linkTo = "run" }: TaskRefListPr
   }
   return (
     <ul data-testid={testId} className="flex flex-col gap-1.5">
-      {refs.map((ref) => (
-        <li
-          key={ref.taskId}
-          className="flex items-center justify-between gap-2 rounded-md border border-border px-2.5 py-1.5 text-sm"
-        >
-          <TruncatedText
-            className="min-w-0 flex-1 font-medium"
-            render={
-              <Link
-                to={linkTo === "task" || !ref.runId ? `/tasks/${ref.taskId}` : `/runs/${ref.runId}`}
-                className="hover:underline"
-              />
-            }
+      {refs.map((ref) => {
+        const href = refHref(ref, linkTo);
+        return (
+          <li
+            // A design ref has no taskId; its Story id stands in.
+            key={`${ref.kind}-${ref.taskId ?? ref.storyId}-${ref.runId}`}
+            className="flex items-center justify-between gap-2 rounded-md border border-border px-2.5 py-1.5 text-sm"
           >
-            {ref.title}
-          </TruncatedText>
-          <Badge variant="outline" className="shrink-0">
-            {ref.status}
-          </Badge>
-        </li>
-      ))}
+            <TruncatedText
+              className="min-w-0 flex-1 font-medium"
+              render={href ? <Link to={href} className="hover:underline" /> : undefined}
+            >
+              {ref.title}
+            </TruncatedText>
+            <Badge variant="outline" className="shrink-0">
+              {ref.status}
+            </Badge>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -318,7 +331,7 @@ export default function AutopilotPage() {
               testId="autopilot-held-tasks"
               refs={status.heldTasks}
               emptyLabel="No Tasks left in progress by a finished run."
-              linkTo="task"
+              linkTo="item"
             />
           </section>
 

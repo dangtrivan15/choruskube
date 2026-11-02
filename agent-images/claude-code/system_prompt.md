@@ -115,7 +115,7 @@ The following helper scripts are available on the PATH:
   --milestone-id` or `update-proposal --milestone-id`.
 
   In a workflow that reviews roadmap changes at a human gate (Feature Development,
-  Roadmap Provisioner), create-proposal, update-proposal, create-story, create-task,
+  Task Delivery, Story Design, Roadmap Provisioner), create-proposal, update-proposal, create-story, create-task,
   create-dependency and create-milestone are rejected with HTTP 403 — use
   `propose-roadmap` there. Never leave an Epic without a Story and a Task.
 - `get-roadmap-graph [--epic-id UUID]` — Fetch an Epic's full Story/Task tree in one call,

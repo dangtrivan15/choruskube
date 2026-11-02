@@ -1,13 +1,19 @@
 package com.choruskube.core.controller;
 
+import com.choruskube.core.dto.RunResponse;
+import com.choruskube.core.dto.StoryConflictResponse;
 import com.choruskube.core.dto.StoryPriorityUpdateRequest;
 import com.choruskube.core.dto.StoryRequest;
 import com.choruskube.core.dto.StoryResponse;
+import com.choruskube.core.dto.StoryReviseRequest;
+import com.choruskube.core.dto.StorySpecResponse;
+import com.choruskube.core.dto.StorySpecVersionSummary;
 import com.choruskube.core.dto.StoryStageUpdateRequest;
 import com.choruskube.core.dto.StoryTargetDateUpdateRequest;
 import com.choruskube.core.dto.StoryUpdateRequest;
 import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.service.StoryDesignService;
 import com.choruskube.core.service.StoryService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -33,9 +39,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class StoryController {
 
     private final StoryService service;
+    private final StoryDesignService designService;
 
-    public StoryController(StoryService service) {
+    public StoryController(StoryService service, StoryDesignService designService) {
         this.service = service;
+        this.designService = designService;
     }
 
     @PreAuthorize("@orgSecurity.canOperate()")
@@ -95,5 +103,41 @@ public class StoryController {
     public StoryResponse updateTargetDate(
             @PathVariable UUID id, @Valid @RequestBody StoryTargetDateUpdateRequest request) {
         return service.updateTargetDate(id, request.targetDate());
+    }
+
+    @PreAuthorize("@orgSecurity.canRead()")
+    @GetMapping("/api/v1/stories/{id}/spec")
+    public StorySpecResponse getSpec(@PathVariable UUID id) {
+        return service.getSpec(id);
+    }
+
+    @PreAuthorize("@orgSecurity.canRead()")
+    @GetMapping("/api/v1/stories/{id}/spec/versions")
+    public List<StorySpecVersionSummary> listSpecVersions(@PathVariable UUID id) {
+        return service.listSpecVersions(id);
+    }
+
+    @PreAuthorize("@orgSecurity.canRead()")
+    @GetMapping("/api/v1/stories/{id}/spec/versions/{version}")
+    public StorySpecResponse getSpecVersion(@PathVariable UUID id, @PathVariable int version) {
+        return service.getSpecVersion(id, version);
+    }
+
+    @PreAuthorize("@orgSecurity.canRead()")
+    @GetMapping("/api/v1/stories/{id}/conflicts")
+    public List<StoryConflictResponse> listOpenConflicts(@PathVariable UUID id) {
+        return service.listOpenConflicts(id);
+    }
+
+    @PreAuthorize("@orgSecurity.canOperate()")
+    @PostMapping("/api/v1/stories/{id}/design")
+    public ResponseEntity<RunResponse> design(@PathVariable UUID id) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(designService.startDesign(id));
+    }
+
+    @PreAuthorize("@orgSecurity.canOperate()")
+    @PostMapping("/api/v1/stories/{id}/revise")
+    public ResponseEntity<RunResponse> revise(@PathVariable UUID id, @Valid @RequestBody StoryReviseRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(designService.startRevision(id, request.guidance()));
     }
 }

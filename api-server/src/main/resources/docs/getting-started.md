@@ -37,15 +37,17 @@ Follow these steps to kick off your first automated workflow end-to-end.
 4. Open that Story, click **New Task**, and give it a title and description. Only a Task can be
    started as a workflow run — the Epic and Story around it are organizational containers.
 
-### Step 2 — Start a Workflow Run
+### Step 2 — Design the Story, Then Start the Task
 
-1. From the Task's detail view, click **Start**, _or_ navigate to **Runs** and click the **Start**
-   button.
-2. In the **Start Run** dialog, select a **Workflow Template** (e.g., "Code Review", "Feature
-   Implementation") — the target repository comes from the Task's Epic when started from the
-   Task detail view.
-3. Confirm and click **Start**. The run appears immediately on the **Runs** page with status
-   **Running**, and the Task itself moves to `in_progress`.
+1. Open the Story and click **Design**. A Story Design run drafts a spec for the Story and maps it
+   to its Tasks. Approve it at **Approve Story Spec** (see Step 4 for how approvals work). Until a
+   Story's spec is approved, its Tasks' **Start** buttons stay disabled with the reason.
+2. From the Task's detail view, click **Start** and confirm. This starts a Task Delivery run
+   against the repository from the Task's Epic. To run any other template on a repository, navigate
+   to **Runs**, click **Start**, and pick a **Workflow Template** there; that run is not linked to a
+   Task.
+3. The run appears immediately on the **Runs** page with status **Running**, and the Task itself
+   moves to `in_progress`.
 
 ### Step 3 — Monitor the Run
 
@@ -107,7 +109,7 @@ Once all nodes complete:
 | **Node** | A unit of work within a run (AI agent, script, human gate, parallel split/join) |
 | **Graph Template** | The reusable workflow definition — a directed acyclic graph of nodes and edges |
 | **Epic** | The top-level backlog item (title, description, motivation) that targets a Software Project and contains Stories |
-| **Story** | A grouping of related Tasks underneath an Epic |
+| **Story** | A grouping of related Tasks underneath an Epic, designed once as a versioned spec that its Tasks are delivered against |
 | **Task** | The leaf of the Roadmap hierarchy — the only unit of work that can be started as a workflow run, and the only one with a settable status |
 | **Human Gate** | A workflow node that pauses execution and waits for a human approval decision |
 | **Agent Node** | A node that spawns an AI agent pod (Claude Code) to perform work autonomously |

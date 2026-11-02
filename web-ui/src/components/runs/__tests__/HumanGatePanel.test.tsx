@@ -35,6 +35,12 @@ vi.mock("@/hooks/useArtifacts", () => ({
   useArtifactsForGroups: vi.fn(() => []),
 }));
 
+vi.mock("../AwaitStoryRevisionNotice", () => ({
+  default: ({ runId, storyId, epicId }: { runId: string; storyId: string | null; epicId: string | null }) => (
+    <div data-testid="await-story-revision-notice">{`${runId} ${storyId} ${epicId}`}</div>
+  ),
+}));
+
 vi.mock("../ArtifactList", () => ({
   default: ({ groups }: { runId: string; groups: unknown[] }) => (
     <div data-testid="artifact-list-mock">ArtifactList ({groups.length} groups)</div>
@@ -704,6 +710,28 @@ describe("HumanGatePanel", () => {
       );
 
       expect(screen.queryByTestId("merge-on-approval-notice")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("await story revision notice", () => {
+    it("explains the wait on the await_story_revision gate, naming the run's Story", () => {
+      renderWithProviders(
+        <HumanGatePanel
+          {...defaultProps}
+          nodeLabel="await_story_revision"
+          decisionOptions={["resume"]}
+          storyId="story-1"
+          epicId="epic-1"
+        />
+      );
+
+      expect(screen.getByTestId("await-story-revision-notice")).toHaveTextContent("run-1 story-1 epic-1");
+    });
+
+    it("is absent on any other gate", () => {
+      renderWithProviders(<HumanGatePanel {...defaultProps} storyId="story-1" epicId="epic-1" />);
+
+      expect(screen.queryByTestId("await-story-revision-notice")).not.toBeInTheDocument();
     });
   });
 

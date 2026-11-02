@@ -550,6 +550,20 @@ describe("useRuns hooks", () => {
       expect(Object.prototype.hasOwnProperty.call(body, "editedCandidates")).toBe(false);
     });
 
+    it("shows a refused approval's plain-text reason in the decision-failure toast", async () => {
+      const { wrapper } = createTestHookWrapper();
+      const { ApiError: MockApiError } = await import("@/lib/api");
+      const reason = "The Story spec is under revision (run run-9); approve after it completes.";
+      mockApi.post.mockRejectedValueOnce(new MockApiError(409, reason));
+
+      const { result } = renderHook(() => useSignalNode("run-1"), { wrapper });
+
+      result.current.mutate({ nodeExecId: "exec-1", decision: "approved", feedback: "" });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(showMutationToast).toHaveBeenCalledWith(reason, "error");
+    });
+
     it("shows the server's errors[] reasons in the decision-failure toast", async () => {
       const { wrapper } = createTestHookWrapper();
       const { ApiError: MockApiError } = await import("@/lib/api");

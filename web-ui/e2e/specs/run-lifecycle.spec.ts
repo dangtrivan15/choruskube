@@ -120,8 +120,9 @@ test.describe("Run Lifecycle", () => {
     test("shows Epic -> Story -> Task breadcrumb for a run started from a Task", async ({
       runMonitorPage,
       api,
-      workerRepo,
+      cloneableProject,
     }) => {
+      test.setTimeout(300_000);
       // Build a real Epic -> Story -> Task chain (same fixture-building pieces
       // already proven by roadmap.spec.ts / roadmap-graph.spec.ts), then start
       // the run from the Task rather than a manual/template run — this proves
@@ -131,7 +132,7 @@ test.describe("Run Lifecycle", () => {
       const epic = await api.createEpic({
         title: uniqueTitle,
         description: "Testing run breadcrumb",
-        softwareProjectId: workerRepo.gitRepo.id,
+        softwareProjectId: cloneableProject.id,
       });
       const storyTitle = uniqueName("Breadcrumb story");
       const story = await api.createStory(epic.id, {
@@ -143,6 +144,7 @@ test.describe("Run Lifecycle", () => {
         description: "desc",
       });
 
+      await api.approveStorySpec(story.id);
       const started = await api.startTask(task.id);
       expect(started.latestRunId).not.toBeNull();
 
@@ -168,8 +170,9 @@ test.describe("Run Lifecycle", () => {
     test("long Epic/Story titles keep the breadcrumb on one line, with the full title on hover", async ({
       runMonitorPage,
       api,
-      workerRepo,
+      cloneableProject,
     }) => {
+      test.setTimeout(300_000);
       // ~120 chars each — long enough that naive word-wrapping would push the
       // breadcrumb to multiple lines if truncation weren't working.
       const longEpicTitle = uniqueName(
@@ -181,7 +184,7 @@ test.describe("Run Lifecycle", () => {
       const epic = await api.createEpic({
         title: longEpicTitle,
         description: "Testing breadcrumb truncation",
-        softwareProjectId: workerRepo.gitRepo.id,
+        softwareProjectId: cloneableProject.id,
       });
       const story = await api.createStory(epic.id, {
         title: longStoryTitle,
@@ -192,6 +195,7 @@ test.describe("Run Lifecycle", () => {
         description: "desc",
       });
 
+      await api.approveStorySpec(story.id);
       const started = await api.startTask(task.id);
       expect(started.latestRunId).not.toBeNull();
 

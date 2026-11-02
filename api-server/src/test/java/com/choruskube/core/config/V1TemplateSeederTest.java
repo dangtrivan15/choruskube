@@ -3,6 +3,8 @@ package com.choruskube.core.config;
 import static org.assertj.core.api.Assertions.*;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.model.GraphTemplate;
+import com.choruskube.core.model.TemplateNode;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
@@ -13,6 +15,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -68,10 +73,24 @@ class V1TemplateSeederTest extends BaseTest {
         assertThat(templates).hasSize(1);
         // Exactly one set of NodeDefinitions for the current version — no duplicates
         // from the re-seed attempt.
-        assertThat(nodeDefRepo.findAll().stream()
-                        .filter(nd -> "Implement".equals(nd.getName()))
-                        .count())
-                .isEqualTo(1);
+        assertThat(featureDevNodeDefsNamed("Implement")).isEqualTo(1);
+    }
+
+    /**
+     * Rows with this name, minus those another template's nodes use: Task Delivery reuses Feature
+     * Development's node names. A row no template uses still counts, so a leaked re-seed is caught.
+     */
+    private long featureDevNodeDefsNamed(String name) {
+        Set<UUID> featureDevTemplateIds = templateRepo.findAllByGraphId(GraphIds.FEATURE_DEVELOPMENT).stream()
+                .map(GraphTemplate::getId)
+                .collect(Collectors.toSet());
+        Set<UUID> usedByOtherTemplates = templateNodeRepo.findAll().stream()
+                .filter(tn -> !featureDevTemplateIds.contains(tn.getGraphTemplateId()))
+                .map(TemplateNode::getNodeDefinitionId)
+                .collect(Collectors.toSet());
+        return nodeDefRepo.findAll().stream()
+                .filter(nd -> name.equals(nd.getName()) && !usedByOtherTemplates.contains(nd.getId()))
+                .count();
     }
 
     @Test
@@ -100,14 +119,8 @@ class V1TemplateSeederTest extends BaseTest {
         // per name. In databases that have been upgraded across versions, the
         // count would be N — one set per seeded version, each pinned by its own
         // TemplateNode references.
-        assertThat(nodeDefRepo.findAll().stream()
-                        .filter(nd -> "Draft Spec & Plan".equals(nd.getName()))
-                        .count())
-                .isEqualTo(1);
-        assertThat(nodeDefRepo.findAll().stream()
-                        .filter(nd -> "Spec Review".equals(nd.getName()))
-                        .count())
-                .isEqualTo(1);
+        assertThat(featureDevNodeDefsNamed("Draft Spec & Plan")).isEqualTo(1);
+        assertThat(featureDevNodeDefsNamed("Spec Review")).isEqualTo(1);
         // v35 retires the dedicated Push & Create PR node — Implement and
         // Code Review now own PR creation/refresh themselves.
         assertThat(nodeDefRepo.findAll().stream()

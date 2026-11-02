@@ -51,6 +51,14 @@ export default function TaskRunHistoryList({ runs, isLoading }: Props) {
                 </Link>
                 <div className="mt-1 text-xs text-muted-foreground">
                   {formatDistanceToNow(new Date(run.createdAt), { addSuffix: true })}
+                  {run.storySpecVersion != null && (
+                    <>
+                      {" · "}
+                      <span data-testid="task-run-history-spec-version">
+                        planned against spec v{run.storySpecVersion}
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
               <Badge variant="outline" data-testid="task-run-history-status">

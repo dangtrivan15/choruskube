@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -196,6 +197,26 @@ class TaskOrderingStrategyTest {
         List<Task> sorted = sort(List.of(b1, a1, b2), List.of(a, b), List.of(sa, sb));
 
         assertThat(sorted).containsExactly(a1, b1, b2);
+    }
+
+    @Test
+    void itemComparator_designPrecedesSameStoryTasks_andFollowsEarlierStory() {
+        Epic e = epic(Priority.medium, null, T0);
+        Story earlier = story(e, Priority.high, null, T0.plusSeconds(1));
+        Story later = story(e, Priority.medium, null, T0);
+        Task fromEarlier = task(earlier, Priority.low, T0.plusSeconds(9));
+        Task fromLater = task(later, Priority.high, T0);
+        AutopilotFrontierItem earlierTask = new AutopilotFrontierItem.TaskItem(fromEarlier);
+        AutopilotFrontierItem laterDesign = new AutopilotFrontierItem.DesignStoryItem(later);
+        AutopilotFrontierItem laterTask = new AutopilotFrontierItem.TaskItem(fromLater);
+        Map<UUID, Epic> epicsById = Map.of(e.getId(), e);
+        Map<UUID, Story> storiesById = Map.of(earlier.getId(), earlier, later.getId(), later);
+
+        List<AutopilotFrontierItem> sorted = Stream.of(laterTask, laterDesign, earlierTask)
+                .sorted(TaskOrderingStrategy.itemComparator(epicsById, storiesById, Set.of()))
+                .toList();
+
+        assertThat(sorted).containsExactly(earlierTask, laterDesign, laterTask);
     }
 
     private static List<Task> sort(List<Task> tasks, List<Epic> epics, List<Story> stories) {

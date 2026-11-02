@@ -7,8 +7,8 @@ import java.util.UUID;
 
 /**
  * @param readyItemCount How much of this Epic's work could be started right now: descendant
- *     Tasks that are still in {@code backlog} AND {@code Readiness.READY} (roadmap "ready to
- *     start" filter) — computed at read time from the same {@code
+ *     Tasks that are still in {@code backlog} AND {@code Readiness.READY} AND under a designed
+ *     Story (roadmap "ready to start" filter) — computed at read time from the same {@code
  *     EpicReadinessAssembler} walk the Story/Task list endpoints use, never persisted. Tasks
  *     only: Stories and the Epic itself are containers, so this is directly comparable with
  *     {@code progress.totalTasks} rather than counting a different tier. A finished Epic reports

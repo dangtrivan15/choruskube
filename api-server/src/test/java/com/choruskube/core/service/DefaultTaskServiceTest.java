@@ -2,8 +2,11 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.StorySpecFixtures;
+import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.DependencyEdgeResponse;
@@ -17,6 +20,7 @@ import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.RunPullRequest;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.TaskGithubIssue;
@@ -27,12 +31,14 @@ import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.AutopilotRepository;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
 import com.choruskube.core.repository.TaskGithubIssueRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
@@ -40,11 +46,14 @@ import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,14 +61,24 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.annotation.Transactional;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @Transactional
 public class DefaultTaskServiceTest extends BaseTest {
 
     @Autowired
     private TaskService service;
+
+    @Autowired
+    private RunService runService;
 
     @Autowired
     private StoryService storyService;
@@ -91,6 +110,12 @@ public class DefaultTaskServiceTest extends BaseTest {
     @Autowired
     private TaskGithubIssueRepository taskGithubIssueRepository;
 
+    @Autowired
+    private GraphTemplateRepository templateRepo;
+
+    @Autowired
+    private JdbcTemplate jdbc;
+
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
 
@@ -105,6 +130,12 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @MockitoBean
     private GitHubCredentialResolver gitHubCredentialResolver;
+
+    @MockitoBean
+    private S3Client s3Client;
+
+    @MockitoSpyBean
+    private StorySpecService specService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -262,7 +293,7 @@ public class DefaultTaskServiceTest extends BaseTest {
         GitRepo r = makeRepo("https://github.com/test/task-feature-request-enriched.git");
         EpicResponse epic = epicService.create(
                 new EpicRequest("Ship the widget", "Epic desc", "Because customers asked for it", r.getId()), null);
-        StoryResponse story = storyService.create(epic.id(), new StoryRequest("Widget backend", "Story desc"));
+        StoryResponse story = designedStory(epic.id(), "Widget backend", "Story desc");
         TaskResponse task = service.create(story.id(), new TaskRequest("Add health check", "Task desc"));
 
         TaskResponse started = service.start(task.id());
@@ -278,7 +309,7 @@ public class DefaultTaskServiceTest extends BaseTest {
         GitRepo r = makeRepo("https://github.com/test/task-feature-request-lead.git");
         EpicResponse epic =
                 epicService.create(new EpicRequest("Epic title", "Epic desc", "Motivation", r.getId()), null);
-        StoryResponse story = storyService.create(epic.id(), new StoryRequest("Story title", "Story desc"));
+        StoryResponse story = designedStory(epic.id(), "Story title", "Story desc");
         TaskResponse task = service.create(story.id(), new TaskRequest("Task title", "Task desc"));
 
         TaskResponse started = service.start(task.id());
@@ -293,7 +324,7 @@ public class DefaultTaskServiceTest extends BaseTest {
         // Epic motivation null, Story description blank — neither should surface as a literal
         // "null" or an empty header; the fields that ARE present must still come through.
         EpicResponse epic = epicService.create(new EpicRequest("Epic title", "Epic desc", null, r.getId()), null);
-        StoryResponse story = storyService.create(epic.id(), new StoryRequest("Story title", ""));
+        StoryResponse story = designedStory(epic.id(), "Story title", "");
         TaskResponse task = service.create(story.id(), new TaskRequest("Task title", "Task desc"));
 
         TaskResponse started = service.start(task.id());
@@ -311,7 +342,7 @@ public class DefaultTaskServiceTest extends BaseTest {
         GitRepo r = makeRepo("https://github.com/test/task-feature-request-autopilot.git");
         EpicResponse epic =
                 epicService.create(new EpicRequest("Epic title", "Epic desc", "Motivation", r.getId()), null);
-        StoryResponse story = storyService.create(epic.id(), new StoryRequest("Story title", "Story desc"));
+        StoryResponse story = designedStory(epic.id(), "Story title", "Story desc");
         TaskResponse task = service.create(story.id(), new TaskRequest("Task title", "Task desc"));
 
         TaskResponse started = service.startForAutopilot(task.id(), makeAutopilot());
@@ -377,7 +408,7 @@ public class DefaultTaskServiceTest extends BaseTest {
         EpicResponse epic = epicService.create(new EpicRequest("Epic", "Epic desc", null, r.getId()), null);
         StoryResponse otherStory = storyService.create(epic.id(), new StoryRequest("Other Story", "D"));
         TaskResponse storyBlocker = service.create(otherStory.id(), new TaskRequest("Fix the schema migration", "D"));
-        StoryResponse blockedStory = storyService.create(epic.id(), new StoryRequest("Blocked Story", "D"));
+        StoryResponse blockedStory = designedStory(epic.id(), "Blocked Story", "D");
         dependencyService.create(new CreateDependencyRequest("task", storyBlocker.id(), "story", blockedStory.id()));
         TaskResponse task = service.create(blockedStory.id(), new TaskRequest("Task under blocked story", "D"));
 
@@ -401,6 +432,184 @@ public class DefaultTaskServiceTest extends BaseTest {
 
         assertThat(started.status()).isEqualTo("in_progress");
         assertThat(started.latestRunId()).isNotNull();
+    }
+
+    // ── Story design gates the start ─────────────────────────────────────────
+
+    @Test
+    void start_storyWithoutSpec_conflictNamesReason() {
+        GitRepo r = makeRepo("https://github.com/test/task-start-undesigned.git");
+        StoryResponse story = makeUndesignedStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+
+        assertThatThrownBy(() -> service.start(task.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage("Cannot start this Task: Story spec not approved yet");
+
+        assertThat(service.get(task.id()).status()).isEqualTo("backlog");
+        assertThat(service.listRuns(task.id(), PageRequest.of(0, 20)).getContent())
+                .isEmpty();
+    }
+
+    @Test
+    void start_storyUnderRevision_conflictNamesReason() {
+        GitRepo r = makeRepo("https://github.com/test/task-start-under-revision.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        designRun(story.id(), WorkflowRunStatus.running);
+
+        assertThatThrownBy(() -> service.start(task.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage("Cannot start this Task: Story spec under revision");
+
+        assertThat(service.get(task.id()).status()).isEqualTo("backlog");
+    }
+
+    @Test
+    void start_retriggerWhileStoryUnderRevision_conflicts() {
+        GitRepo r = makeRepo("https://github.com/test/task-retrigger-under-revision.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        TaskResponse firstStart = service.start(task.id());
+        markRunTerminal(firstStart.latestRunId(), WorkflowRunStatus.failed);
+        designRun(story.id(), WorkflowRunStatus.awaiting_human);
+
+        assertThatThrownBy(() -> service.start(task.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage("Cannot start this Task: Story spec under revision");
+
+        assertThat(service.listRuns(task.id(), PageRequest.of(0, 20)).getContent())
+                .hasSize(1);
+    }
+
+    @Test
+    void start_revisionOpenedAfterTheReadinessCheck_isRefusedUnderTheLockBeforeStaging() {
+        GitRepo r = makeRepo("https://github.com/test/task-start-revision-after-readiness.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        designRun(story.id(), WorkflowRunStatus.running);
+        Mockito.doReturn(Set.of()).when(specService).storiesWithOpenDesignRun(ArgumentMatchers.any());
+
+        assertThatThrownBy(() -> service.start(task.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage("Cannot start this Task: Story spec under revision");
+
+        Mockito.verify(specService).storiesWithOpenDesignRun(ArgumentMatchers.any());
+        Mockito.verify(s3Client, Mockito.never())
+                .putObject(ArgumentMatchers.any(PutObjectRequest.class), ArgumentMatchers.any(RequestBody.class));
+        assertThat(service.listRuns(task.id(), PageRequest.of(0, 20)).getContent())
+                .isEmpty();
+        assertThat(service.get(task.id()).status()).isEqualTo("backlog");
+    }
+
+    @Test
+    void start_blockedTaskOnUndesignedStory_namesTheBlockerFirst() {
+        GitRepo r = makeRepo("https://github.com/test/task-start-blocked-undesigned.git");
+        StoryResponse story = makeUndesignedStory(r.getId());
+        TaskResponse blocker = service.create(story.id(), new TaskRequest("Set up the schema", "D"));
+        TaskResponse task = service.create(story.id(), new TaskRequest("Blocked task", "D"));
+        dependencyService.create(new CreateDependencyRequest("task", blocker.id(), "task", task.id()));
+
+        assertThatThrownBy(() -> service.start(task.id()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("Set up the schema");
+    }
+
+    @Test
+    void start_usesTaskDeliveryTemplate_andStagesStorySpec() throws Exception {
+        GitRepo r = makeRepo("https://github.com/test/task-start-task-delivery.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("Add health check", "D"));
+
+        TaskResponse started = service.start(task.id());
+
+        WorkflowRun run = runRepo.findById(started.latestRunId()).orElseThrow();
+        GraphTemplate template = templateRepo.findById(run.getGraphTemplateId()).orElseThrow();
+        assertThat(template.getGraphId()).isEqualTo(GraphIds.TASK_DELIVERY);
+        JsonNode refs = new ObjectMapper().readTree(run.getInputArtifactRefs());
+        assertThat(refs.get("story_spec.md").asText())
+                .isEqualTo("system/runs/" + run.getId() + "/inputs/story_spec.md");
+        assertThat(run.getStorySpecVersion()).isEqualTo(1);
+        assertThat(stagedText("story_spec.md")).isEqualTo("# Story spec (test fixture)");
+        assertThat(run.getStoryId()).isNull();
+        assertThat(featureRequestOf(started)).startsWith("## Add health check");
+    }
+
+    @Test
+    void start_refusedByStartRun_discardsTheStagedSpecAndRethrows() {
+        GitRepo r = makeRepo("https://github.com/test/task-start-refused-discards-staging.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        RuntimeException refusal = new RuntimeException("storage down");
+        Mockito.when(s3Client.copyObject(ArgumentMatchers.any(CopyObjectRequest.class)))
+                .thenThrow(refusal);
+
+        assertThatThrownBy(() -> service.start(task.id()))
+                .hasMessageContaining("Failed to move staged attachments into run scope")
+                .hasRootCause(refusal);
+
+        ArgumentCaptor<PutObjectRequest> staged = ArgumentCaptor.forClass(PutObjectRequest.class);
+        Mockito.verify(s3Client, Mockito.atLeastOnce())
+                .putObject(staged.capture(), ArgumentMatchers.any(RequestBody.class));
+        ArgumentCaptor<DeleteObjectRequest> deleted = ArgumentCaptor.forClass(DeleteObjectRequest.class);
+        Mockito.verify(s3Client, Mockito.atLeastOnce()).deleteObject(deleted.capture());
+        assertThat(deleted.getAllValues())
+                .extracting(DeleteObjectRequest::key)
+                .containsExactlyElementsOf(staged.getAllValues().stream()
+                        .map(PutObjectRequest::key)
+                        .toList());
+    }
+
+    @Test
+    void start_stagesTheStorysCurrentVersion() throws Exception {
+        GitRepo r = makeRepo("https://github.com/test/task-start-current-version.git");
+        StoryResponse story = makeStory(r.getId());
+        approve(story.id());
+        jdbc.update(
+                "UPDATE story_spec_version SET content = ? WHERE story_id = ? AND version = 2",
+                "# Story spec v2",
+                story.id());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+
+        TaskResponse started = service.start(task.id());
+
+        assertThat(runRepo.findById(started.latestRunId()).orElseThrow().getStorySpecVersion())
+                .isEqualTo(2);
+        assertThat(stagedText("story_spec.md")).isEqualTo("# Story spec v2");
+    }
+
+    @Test
+    void runDtos_carryTheStorySpecVersionTheRunPlannedAgainst() {
+        GitRepo r = makeRepo("https://github.com/test/task-run-dto-spec-version.git");
+        StoryResponse story = makeStory(r.getId());
+        approve(story.id());
+        String title = "Spec v2 " + UUID.randomUUID().toString().substring(0, 8);
+        TaskResponse task = service.create(story.id(), new TaskRequest(title, "D"));
+
+        UUID runId = service.start(task.id()).latestRunId();
+
+        assertThat(service.listRuns(task.id(), PageRequest.of(0, 20)).getContent())
+                .extracting(com.choruskube.core.dto.RunSummary::storySpecVersion)
+                .containsExactly(2);
+        assertThat(runService.getRun(runId).storySpecVersion()).isEqualTo(2);
+        assertThat(runService.listRuns(null, title, PageRequest.of(0, 20)).getContent())
+                .extracting(
+                        com.choruskube.core.dto.RunSummary::id, com.choruskube.core.dto.RunSummary::storySpecVersion)
+                .containsExactly(tuple(runId, 2));
+    }
+
+    @Test
+    void startForAutopilot_undesignedStory_conflicts() {
+        GitRepo r = makeRepo("https://github.com/test/task-autopilot-undesigned.git");
+        StoryResponse story = makeUndesignedStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        UUID autopilotId = makeAutopilot();
+
+        assertThatThrownBy(() -> service.startForAutopilot(task.id(), autopilotId))
+                .isInstanceOf(ConflictException.class)
+                .hasMessage("Cannot start this Task: Story spec not approved yet");
+
+        assertThat(service.get(task.id()).status()).isEqualTo("backlog");
     }
 
     @Test
@@ -932,8 +1141,54 @@ public class DefaultTaskServiceTest extends BaseTest {
     }
 
     private StoryResponse makeStory(UUID softwareProjectId) {
+        StoryResponse story = makeUndesignedStory(softwareProjectId);
+        approve(story.id());
+        return story;
+    }
+
+    private StoryResponse makeUndesignedStory(UUID softwareProjectId) {
         EpicResponse epic = epicService.create(new EpicRequest("Epic", "Epic desc", null, softwareProjectId), null);
         return storyService.create(epic.id(), new StoryRequest("Story", "Story desc"));
+    }
+
+    private StoryResponse designedStory(UUID epicId, String title, String description) {
+        StoryResponse story = storyService.create(epicId, new StoryRequest(title, description));
+        approve(story.id());
+        return story;
+    }
+
+    private void approve(UUID storyId) {
+        entityManager.flush();
+        StorySpecFixtures.approve(jdbc, storyId);
+    }
+
+    private void designRun(UUID storyId, WorkflowRunStatus status) {
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.STORY_DESIGN)
+                .orElseThrow()
+                .getId());
+        run.setStatus(status);
+        run.setStoryId(storyId);
+        runRepo.saveAndFlush(run);
+    }
+
+    private String stagedText(String fileName) throws Exception {
+        ArgumentCaptor<PutObjectRequest> requests = ArgumentCaptor.forClass(PutObjectRequest.class);
+        ArgumentCaptor<RequestBody> bodies = ArgumentCaptor.forClass(RequestBody.class);
+        Mockito.verify(s3Client, Mockito.atLeastOnce()).putObject(requests.capture(), bodies.capture());
+        for (int i = requests.getAllValues().size() - 1; i >= 0; i--) {
+            if (requests.getAllValues().get(i).key().endsWith("/" + fileName)) {
+                return new String(
+                        bodies.getAllValues()
+                                .get(i)
+                                .contentStreamProvider()
+                                .newStream()
+                                .readAllBytes(),
+                        StandardCharsets.UTF_8);
+            }
+        }
+        throw new AssertionError("Nothing staged as " + fileName);
     }
 
     private GitRepo makeRepo(String url) {

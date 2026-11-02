@@ -68,6 +68,7 @@ export function seededRepos<T extends { url: string }>(repos: T[]): T[] {
 
 export interface WorkerFixtures {
   workerRepo: WorkerRepoFixture;
+  cloneableProject: RepoGroupSummary;
 }
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
@@ -107,6 +108,32 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       }
 
       await use({ gitRepo, repoGroup });
+    },
+    { scope: "worker" },
+  ],
+
+  // A RepoGroup over the seeded e2e-test/mock-repo, which the e2e agent image can clone
+  // (agent-images/claude-code-e2e/Dockerfile): runs on it get past their first node, where a run
+  // on workerRepo fails at the clone. A Story must be on it to be designed (api.approveStorySpec),
+  // and a Task to start. Worker-scoped and fetch-or-create, with a per-slot name, for the reasons
+  // workerRepo gives above.
+  cloneableProject: [
+    async ({}, use, workerInfo) => {
+      const api = new TestApiClient();
+      const name = `e2e-cloneable-project-w${workerInfo.parallelIndex}`;
+
+      let group = (await api.listRepoGroups()).find((g) => g.name === name);
+      if (!group) {
+        const mockRepo = seededRepos((await api.listGitRepos()).content).find((r) =>
+          r.url.endsWith("/e2e-test/mock-repo"),
+        );
+        if (!mockRepo) {
+          throw new Error("E2eTestDataSeeder must seed e2e-test/mock-repo for cloneableProject");
+        }
+        group = await api.createRepoGroup({ name, memberRepoIds: [mockRepo.id] });
+      }
+
+      await use(group);
     },
     { scope: "worker" },
   ],

@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RepoGroup;
@@ -43,6 +44,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import software.amazon.awssdk.services.s3.S3Client;
 
 /**
  * Phase 2 backend integration coverage for the Epic -> Story -> Task -> run flow (renamed from
@@ -90,6 +92,9 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
+
+    @MockitoBean
+    private S3Client s3Client;
 
     @BeforeEach
     void setUp() {
@@ -307,10 +312,12 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isCreated())
                 .andReturn();
-        return UUID.fromString(objectMapper
+        UUID storyId = UUID.fromString(objectMapper
                 .readTree(result.getResponse().getContentAsString())
                 .get("id")
                 .asText());
+        StorySpecFixtures.approve(jdbc, storyId);
+        return storyId;
     }
 
     private UUID createTask(UUID storyId, String title, String description) throws Exception {

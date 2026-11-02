@@ -34,6 +34,7 @@ import TargetDateField from "@/components/roadmap/TargetDateField";
 import LevelBadge from "@/components/roadmap/LevelBadge";
 import StageBadge from "@/components/roadmap/StageBadge";
 import RollOutPrompt from "@/components/roadmap/RollOutPrompt";
+import StorySpecPanel from "@/components/roadmap/StorySpecPanel";
 import PageHeader from "@/components/layout/PageHeader";
 
 function statusBadge(status: string) {
@@ -178,6 +179,8 @@ export default function StoryDetailPage() {
           </Authorized>
         </div>
       )}
+
+      <StorySpecPanel story={story} />
 
       <div className="pt-4 border-t">
         <PageHeader title="Tasks">

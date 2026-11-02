@@ -153,7 +153,9 @@ class RunServiceAsyncGateTest {
                 roadmapProposalValidator,
                 null,
                 gateRecheck,
-                gateFinalize);
+                gateFinalize,
+                null // storySpecService
+                );
         lenient().when(workflowClients.clientFor(any())).thenReturn(workflowClient);
         lenient().when(workflowClient.newUntypedWorkflowStub("wf-1")).thenReturn(workflowStub);
 

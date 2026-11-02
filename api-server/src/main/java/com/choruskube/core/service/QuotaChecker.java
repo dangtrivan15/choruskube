@@ -5,7 +5,7 @@ import java.util.UUID;
 /**
  * OSS seam for tier-based quota enforcement.
  *
- * <p>This interface exposes only the three quota-check entry points that OSS-core callers
+ * <p>This interface exposes only the quota-check entry points that OSS-core callers
  * ({@code RunService}, {@code InternalRunService}, {@code GitRepoService}) depend on. The single
  * implementation is provided by a separate module (not part of OSS core), which also
  * carries the richer config/usage/K8s-quota surface not needed by core.
@@ -15,9 +15,10 @@ import java.util.UUID;
  * {@code Optional.empty()} means "no quota enforcement".
  *
  * <p>Transactional semantics live on the implementation, not here: {@code QuotaService}'s
- * {@code checkRunQuota} declares {@code @Transactional(propagation = MANDATORY)} so the per-org
- * advisory lock it acquires is held until the caller's surrounding transaction commits. Spring
- * honors that annotation on the proxied implementation regardless of this interface.
+ * {@code checkRunQuota} and {@code checkRunQuotaExceptConcurrency} declare
+ * {@code @Transactional(propagation = MANDATORY)} so the per-org advisory lock they acquire is held
+ * until the caller's surrounding transaction commits. Spring honors that annotation on the proxied
+ * implementation regardless of this interface.
  */
 public interface QuotaChecker {
 
@@ -28,6 +29,18 @@ public interface QuotaChecker {
      * in the request scope where the tenant is always established.
      */
     void checkRunQuota();
+
+    /**
+     * Enforces every run-start limit {@link #checkRunQuota()} does except the concurrent-run cap.
+     * Only for a start the system makes to unblock runs that already hold concurrent-run slots and
+     * wait on the new run, such as a Story revision answering parked Tasks' conflicts: the cap
+     * counts those waiting runs, so at the cap a checked start is refused until they time out.
+     *
+     * <p>Defaults to the full check, so an implementation grants no exemption until it opts in.
+     */
+    default void checkRunQuotaExceptConcurrency() {
+        checkRunQuota();
+    }
 
     /**
      * Enforces the per-org repo quota. Org-free at the seam: the single caller

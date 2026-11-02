@@ -36,6 +36,9 @@ function makeStory(overrides: Partial<StoryResponse> = {}): StoryResponse {
     progress: { totalTasks: 4, doneTasks: 1, startedTasks: 1 },
     createdAt: "2026-04-01T00:00:00Z",
     updatedAt: "2026-04-01T00:00:00Z",
+    specVersion: null,
+    specUnderRevision: false,
+    openDesignRunId: null,
     ...overrides,
   };
 }

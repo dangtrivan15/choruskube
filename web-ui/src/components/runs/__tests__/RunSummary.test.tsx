@@ -24,6 +24,7 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
     promptText: null,
     task: null,
     autopilotId: null,
+    storySpecVersion: null,
     softwareProject: null,
     ...overrides,
   };
@@ -109,6 +110,18 @@ describe("RunSummaryStrip", () => {
     expect(breadcrumb).toHaveTextContent("UI Overhaul");
     expect(breadcrumb).toHaveTextContent("Theming");
     expect(screen.getByTestId("run-summary-task-status")).toHaveTextContent("in progress");
+  });
+
+  it("names the Story spec version a Task Delivery run planned against", () => {
+    renderWithProviders(<RunSummaryStrip run={makeRun({ task: makeTask(), storySpecVersion: 3 })} />);
+
+    expect(screen.getByTestId("run-summary-spec-version")).toHaveTextContent("Planned against spec v3");
+  });
+
+  it("names no spec version for a run that planned against none", () => {
+    renderWithProviders(<RunSummaryStrip run={makeRun({ task: makeTask(), storySpecVersion: null })} />);
+
+    expect(screen.queryByTestId("run-summary-spec-version")).not.toBeInTheDocument();
   });
 
   it("degrades gracefully when a task has an Epic but no resolvable Story", () => {
@@ -322,6 +335,18 @@ describe("RunSummaryDetails", () => {
   it("shows the empty-state message when there is no metadata", () => {
     renderWithProviders(<RunSummaryDetails run={makeRun()} />);
     expect(screen.getByText("No run metadata available.")).toBeInTheDocument();
+  });
+
+  it("names the Story spec version a Task Delivery run planned against", () => {
+    renderWithProviders(<RunSummaryDetails run={makeRun({ task: makeTask(), storySpecVersion: 3 })} />);
+
+    expect(screen.getByTestId("run-summary-spec-version")).toHaveTextContent("Planned against spec v3");
+  });
+
+  it("names no spec version for a run that planned against none", () => {
+    renderWithProviders(<RunSummaryDetails run={makeRun({ task: makeTask() })} />);
+
+    expect(screen.queryByTestId("run-summary-spec-version")).not.toBeInTheDocument();
   });
 
   it("renders the full feature request", () => {
