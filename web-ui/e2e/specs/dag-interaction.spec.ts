@@ -114,14 +114,18 @@ test.describe("DAG Interaction", () => {
       name: "e2e-dag-parallel-test",
     });
 
-    await runMonitorPage.goto(run.id);
-    await expect(runMonitorPage.dagNodes.first()).toBeVisible({
-      timeout: 15_000,
-    });
+    try {
+      await runMonitorPage.goto(run.id);
+      await expect(runMonitorPage.dagNodes.first()).toBeVisible({
+        timeout: 15_000,
+      });
 
-    // Parallel fanout has 5 nodes: start, branch_a, branch_b, branch_c, merge
-    const nodeCount = await runMonitorPage.dagNodes.count();
-    expect(nodeCount).toBeGreaterThanOrEqual(5);
+      // Parallel fanout has 5 nodes: start, branch_a, branch_b, branch_c, merge
+      const nodeCount = await runMonitorPage.dagNodes.count();
+      expect(nodeCount).toBeGreaterThanOrEqual(5);
+    } finally {
+      await api.cancelRun(run.id).catch(() => {});
+    }
   });
 
   test("summary strip and node panel are visible together after selecting a node", async ({

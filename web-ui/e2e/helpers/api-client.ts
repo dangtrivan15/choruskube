@@ -886,14 +886,16 @@ export class TestApiClient {
     timeoutMs = 60_000,
     pollIntervalMs = 2_000,
   ): Promise<NodeExecution> {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
       const run = await this.getRun(runId);
       const exec = run.nodeExecutions.find(
         (ne) => ne.label === nodeLabel && targetStatuses.includes(ne.status),
       );
       if (exec) return exec;
-      await sleep(pollIntervalMs);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await sleep(Math.min(pollIntervalMs, remaining));
     }
     throw new Error(
       `Node "${nodeLabel}" in run ${runId} did not reach [${targetStatuses.join(", ")}] within ${timeoutMs}ms`,
