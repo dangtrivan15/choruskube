@@ -1,5 +1,6 @@
 import { type Page, type Locator, expect } from "@playwright/test";
 import { RoadmapViewControls } from "./roadmap-view-controls.page";
+import { dragBoardCard } from "../helpers/board-drag";
 
 export type TaskStatus = "backlog" | "in_progress" | "done";
 
@@ -54,47 +55,23 @@ export class TaskBoardPage {
   }
 
   /**
-   * Drags the Task card titled `title` into the `targetStatus` column.
-   *
-   * dnd-kit's `PointerSensor` only starts a drag after the pointer has moved
-   * past its activation-distance threshold, so this issues a raw
-   * mouse down → a few incremental moves → mouse up sequence rather than a
-   * single jump (which some DnD libraries miss because they see no
-   * intermediate `pointermove` events). Mirrors RoadmapBoardPage's
-   * `dragCardToColumn`.
+   * Drags the Task card titled `title` into the `targetStatus` column and waits for the server to
+   * accept the move, so a following reload reads the new status rather than racing the write.
    */
   async dragCardToColumn(title: string, targetStatus: TaskStatus) {
     const card = this.cardByTitle(title);
-    const targetColumn = this.column(targetStatus);
-
-    // Measured from a non-interactive part of the card, never the card box: `.click()`-style
-    // centre coordinates can land on the title, which is a `<Link>` deliberately excluded from the
-    // drag surface (it stops `pointerdown`), so a press there starts no drag at all.
-    const grip = card.getByTestId("task-board-card-status");
-    const sourceBox = await grip.boundingBox();
-    const targetBox = await targetColumn.boundingBox();
-    if (!sourceBox || !targetBox) {
-      throw new Error(`Could not measure drag source/target for "${title}" -> ${targetStatus}`);
-    }
-
-    const startX = sourceBox.x + sourceBox.width / 2;
-    const startY = sourceBox.y + sourceBox.height / 2;
-    const endX = targetBox.x + targetBox.width / 2;
-    const endY = targetBox.y + Math.min(40, targetBox.height / 2);
-
-    await this.page.mouse.move(startX, startY);
-    await this.page.mouse.down();
-    await this.page.mouse.move(
-      startX + (endX - startX) / 3,
-      startY + (endY - startY) / 3,
-      { steps: 5 },
-    );
-    await this.page.mouse.move(
-      startX + ((endX - startX) * 2) / 3,
-      startY + ((endY - startY) * 2) / 3,
-      { steps: 5 },
-    );
-    await this.page.mouse.move(endX, endY, { steps: 5 });
-    await this.page.mouse.up();
+    const taskId = await card.getAttribute("data-task-id");
+    expect(taskId, `data-task-id on "${title}"`).not.toBeNull();
+    const response = await dragBoardCard({
+      card,
+      grip: card.getByTestId("task-board-card-status"),
+      target: this.column(targetStatus),
+      isWrite: (r) =>
+        r.request().method() === "PATCH" && r.url().endsWith(`/api/v1/tasks/${taskId}/status`),
+    });
+    expect(
+      response.ok(),
+      `PATCH status of "${title}" -> ${targetStatus}: ${response.status()}`,
+    ).toBe(true);
   }
 }

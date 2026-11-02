@@ -49,11 +49,15 @@ is what fixes this.
 boundingBox() ─────────────────── mouse.down() → moves → mouse.up()
        ▲
   STOMP event → invalidate ["epics"] → list re-renders / re-orders HERE
-       └→ pointer sequence lands on a moved or replaced node → no drop → no PATCH
+       ├→ press lands on a gap or a title link → no drop → no PATCH
+       └→ press lands on a neighbour card → the neighbour is dropped → PATCH to another worker's item
 ```
 
 Playwright's auto-waiting covers individual locator actions. A hand-rolled pointer
 sequence opts out of it, so nothing re-checks the card between measuring and pressing.
+Columns sort newest-first, so any other worker's create pushes every card down one slot
+and puts the newcomer exactly where the press lands. The second branch fails this spec and
+silently moves another spec's fixture (on the Task board, it starts that Task's run).
 
 **3. A hover-triggered assertion interrupted by a re-render.**
 
@@ -89,9 +93,13 @@ software project. Any count or ID-set assertion goes through it. A materialized 
 inherits its run's project via `InternalRunService#createEpic(runId, …)`, so gate specs
 can scope the same way by passing `software_project_id` as a run input.
 
-**Re-entrant drag.** `RoadmapBoardPage#dragCardToColumn` re-measures the card immediately
-before `mouse.down()`, abandons the attempt if it shifted, and retries the whole gesture
-until the card lands.
+**Identity-checked drag.** All three boards drag through `dragBoardCard`
+(`helpers/board-drag.ts`). It presses, moves just past dnd-kit's activation distance, and
+releases over the target only once the intended card carries `aria-pressed="true"` — dnd-kit's
+mark on the active draggable. Any other pick-up is cancelled with Escape, which never reaches
+`onDragEnd`, and the gesture starts over. It returns the drop's write response, so a spec
+reloads only after the server has accepted the move. Re-measuring before the press only
+narrows the window; checking what was actually picked up closes it.
 
 **Re-entrant hover.** `RoadmapTimelinePage#hoverToRevealPreview` wraps the hover plus its
 follow-up assertions in `expect(...).toPass(...)`, so a failed attempt re-hovers (re-locating
@@ -110,6 +118,8 @@ happened to materialize its fixture first. Specs needing the seeded set specific
   run on the project must get past its first node, including any Story you design.
 - Never assert an absolute count — or an ID-set diff — over an unscoped list.
 - Need the seeded repos? `seededRepos(page.content)`, never `content[0]` or `.slice(0, 2)`.
+- Drag a board card through `dragBoardCard` (`helpers/board-drag.ts`), never a hand-rolled
+  `mouse.down()` … `mouse.up()` that releases whatever the press happened to pick up.
 - A hover (or any single-shot interaction) that asserts on something appearing after a delay
   — a Tooltip, a debounced fetch — belongs in `expect(...).toPass(...)`, re-issuing the
   interaction each attempt, not a single `hover()`/`click()` followed by one assertion.
