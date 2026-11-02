@@ -12,8 +12,9 @@ import org.junit.jupiter.api.Test;
 
 class DeliveryPromptsTest {
 
-    // Text the variants share bumps every template that uses it: CURRENT_VERSION with these hashes,
-    // and Task Delivery's VERSION with the tripwire in BaseTaskDeliverySeederTest.
+    // Feature Development's rendered text at its CURRENT_VERSION. Shared text bumps every template
+    // that uses it: CURRENT_VERSION with these hashes, and Task Delivery's VERSION with the tripwire
+    // in BaseTaskDeliverySeederTest.
     static final String IMPLEMENT_SHA256 = "580e1b0918c84a3dcfb0b7e2c9f46f6886bb78f7987822aa1f95a24451f11ecf";
     static final String CODE_REVIEW_SHA256 = "c6bb741fc5ee421513af587560b3f4b7cd3fd9acd591cc1d13f0d006c490afe9";
 
