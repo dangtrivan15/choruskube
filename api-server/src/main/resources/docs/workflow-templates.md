@@ -77,7 +77,9 @@ to run against) is **not** part of the template — it is selected at run-start 
 
 When you click **Start Run**, the **Start Run dialog** prompts you to:
 
-1. **Choose a Workflow Template** — select from the list of available templates.
+1. **Choose a Workflow Template** — select from the list of available templates. Story Design and
+   Task Delivery appear disabled, each with where to start it instead: a Story Design run starts
+   from a Story, and a Task Delivery run from a Task.
 2. **Select a Git Repository or Repository Group** — choose which codebase(s) the workflow operates on.
 
 Starting a run from a Task's detail view on the **Roadmap** page needs no choice: it runs the Task

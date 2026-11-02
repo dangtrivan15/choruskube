@@ -53,6 +53,33 @@ test.describe("Run Lifecycle", () => {
       await expect(runListPage.startButton).toBeDisabled();
     });
 
+    test("lists the templates only a Story or a Task starts as disabled, with where to start them", async ({
+      runListPage,
+      api,
+    }) => {
+      const templates = (await api.listTemplates()).content;
+      const roadmapOnly = ["story-design", "task-delivery"].map((graphId) => {
+        const t = templates.find((c) => c.graphId === graphId);
+        expect(t, `${graphId} should be seeded`).toBeDefined();
+        expect(t!.standaloneStartRefusal, `${graphId} should carry its refusal`).toBeTruthy();
+        return t!;
+      });
+
+      await runListPage.goto();
+      await runListPage.openStartRunDialog();
+      await runListPage.templateSelect.click();
+
+      for (const t of roadmapOnly) {
+        const option = runListPage.page.getByRole("option", { name: new RegExp(`^${t.name} v${t.version}`) });
+        await expect(option).toHaveAttribute("aria-disabled", "true");
+        await expect(option).toContainText(t.standaloneStartRefusal!);
+      }
+      await expect(runListPage.page.getByRole("option", { name: /^e2e-linear-pipeline v/ })).not.toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+    });
+
     test("can start a run with a template", async ({ runListPage, api }) => {
       // Assert the fixture exists so a seeder rename fails loudly, then drive
       // the dialog with the same UI-visible name (the picker renders t.name).

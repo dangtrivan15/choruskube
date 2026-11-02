@@ -84,6 +84,7 @@ export interface GraphTemplate {
   name: string;
   description: string | null;
   system: boolean;
+  standaloneStartRefusal: string | null;
 }
 
 export interface WorkflowRun {

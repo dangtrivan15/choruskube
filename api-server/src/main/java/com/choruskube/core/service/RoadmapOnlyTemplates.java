@@ -6,6 +6,7 @@ import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 
@@ -13,14 +14,13 @@ import org.springframework.stereotype.Component;
  * Templates whose runs only a Story or a Task may start. A Story Design run is recorded as a spec
  * version only through the Story stamped on it, and Task Delivery's Analyze escalates without the
  * Story spec a Task start stages, so a run started from the Runs page has neither and is wasted.
+ * The same sentence refuses such a start and tells the Start Run dialog why it lists them disabled.
  */
 @Component
 public class RoadmapOnlyTemplates {
 
-    private static final String STORY_DESIGN_REASON =
-            "Story Design runs start from a Story: use Design Story on the Story's page.";
-    private static final String TASK_DELIVERY_REASON =
-            "Task Delivery runs start from a Task: use Start on the Task's page.";
+    private static final String STORY_DESIGN_REASON = "Starts from a Story: use Design Story on the Story's page.";
+    private static final String TASK_DELIVERY_REASON = "Starts from a Task: use Start on the Task's page.";
 
     // The e2e copies are listed too: the mock graphs need the same Story or Task the real ones do.
     private static final Map<String, String> REASON_BY_GRAPH_ID = Map.of(
@@ -35,12 +35,17 @@ public class RoadmapOnlyTemplates {
         this.templateRepo = templateRepo;
     }
 
+    /** Why a run of this graph cannot be started on its own; empty when it can. */
+    public static Optional<String> standaloneStartRefusal(String graphId) {
+        return Optional.ofNullable(graphId).map(REASON_BY_GRAPH_ID::get);
+    }
+
     /** For the public start only: the Story and Task starts call {@link RunService#startRun} directly. */
     public void refuseStandaloneStart(UUID graphTemplateId) {
         templateRepo
                 .findById(graphTemplateId)
                 .map(GraphTemplate::getGraphId)
-                .map(REASON_BY_GRAPH_ID::get)
+                .flatMap(RoadmapOnlyTemplates::standaloneStartRefusal)
                 .ifPresent(reason -> {
                     throw new BadRequestException(reason);
                 });

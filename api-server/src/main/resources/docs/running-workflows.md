@@ -18,7 +18,8 @@
 1. Navigate to **Runs** in the sidebar.
 2. Click the **Start** button in the top-right corner.
 3. Fill in the **Start Run** dialog — template and repository — then click **Start**. A run
-   started this way is not linked to any Task.
+   started this way is not linked to any Task. Story Design and Task Delivery are listed but
+   disabled, each with where it starts from: they run only from a Story or a Task.
 
 ### Selecting a Git Repository
 
