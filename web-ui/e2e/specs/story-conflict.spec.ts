@@ -8,7 +8,8 @@ import type { RunMonitorPage } from "../pages/run-monitor.page";
  * find the Story spec wrong, which parks the Task run at Await Story Revision. The server's
  * reconciler (every 10s in e2e) opens a revision run on the Story; once its spec is approved as
  * v2, the reconciler resumes the Task run and Analyze plans again — `planned`, since the mock
- * never raises a conflict past iteration 1.
+ * never raises a conflict past iteration 1. A `[e2e-analyze:needs_spec]` Task instead parks at
+ * Approve Task Spec, a gate that re-checks the Story spec version on approval.
  */
 
 interface StartedTask {
@@ -40,6 +41,12 @@ async function startTaskOnDesignedStory(
   const runId = (await api.startTask(task.id)).latestRunId!;
   expect(runId).toBeTruthy();
   return { storyId: story.id, storyPath: `/roadmap/epics/${epic.id}/stories/${story.id}`, taskTitle, runId };
+}
+
+/** Cleanup: a design run left open parks at its approval gate for the rest of the suite. */
+async function cancelOpenDesignRun(api: TestApiClient, storyId: string): Promise<void> {
+  const open = (await api.getStory(storyId).catch(() => null))?.openDesignRunId;
+  if (open) await api.cancelRun(open).catch(() => {});
 }
 
 async function waitForParkedOnConflict(api: TestApiClient, runId: string): Promise<void> {
@@ -142,6 +149,7 @@ test.describe("Story conflict", () => {
     } finally {
       // Left running, the resumed run would sit at Final Approval for the rest of the suite.
       await api.cancelRun(runId).catch(() => {});
+      await cancelOpenDesignRun(api, storyId);
     }
   });
 
@@ -203,7 +211,7 @@ test.describe("Story conflict", () => {
       });
     } finally {
       await api.cancelRun(runId).catch(() => {});
-      if (revisionRunId) await api.cancelRun(revisionRunId).catch(() => {});
+      await cancelOpenDesignRun(api, storyId);
     }
   });
 

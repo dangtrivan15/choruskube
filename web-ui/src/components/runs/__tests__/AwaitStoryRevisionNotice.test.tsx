@@ -72,6 +72,7 @@ describe("AwaitStoryRevisionNotice", () => {
     );
     expect(mockGet).toHaveBeenCalledWith("/stories/story-1/conflicts");
     expect(screen.getByTestId("await-story-revision-notice")).toHaveTextContent(/is answering/i);
+    expect(mockGet).not.toHaveBeenCalledWith("/stories/story-1");
   });
 
   it.each(["failed", "cancelled"])(
@@ -88,6 +89,21 @@ describe("AwaitStoryRevisionNotice", () => {
       expect(hrefs()).toEqual(["/runs/revision-run", "/roadmap/epics/epic-1/stories/story-1"]);
     }
   );
+
+  it("does not offer a Revise while another revision of the Story is open", async () => {
+    mockGet.mockImplementation(async (path: string) =>
+      path === "/stories/story-1"
+        ? { id: "story-1", specVersion: 1, specUnderRevision: true, openDesignRunId: "other-revision" }
+        : [conflict({ revisionRunStatus: "failed" })]
+    );
+
+    renderWithProviders(<AwaitStoryRevisionNotice runId="run-1" storyId="story-1" epicId="epic-1" />);
+
+    const notice = screen.getByTestId("await-story-revision-notice");
+    await waitFor(() => expect(notice).toHaveTextContent(/resumes on the version it records/i));
+    expect(notice).toHaveTextContent(/ended without a new version/i);
+    expect(notice).not.toHaveTextContent(/A Revise of the Story answers/i);
+  });
 
   it("says the revision has not started yet when no run answers the conflict", async () => {
     mockGet.mockResolvedValue([conflict({ revisionRunId: null })]);

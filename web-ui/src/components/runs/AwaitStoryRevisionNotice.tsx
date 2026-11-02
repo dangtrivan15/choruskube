@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import StatusCallout from "@/components/ui/StatusCallout";
+import { useStory } from "@/hooks/useStories";
 import { useStoryConflicts } from "@/hooks/useStorySpec";
 import { useStorySubscription } from "@/hooks/useStorySubscription";
 import { revisionEndedWithoutVersion } from "@/lib/storyConflicts";
@@ -23,6 +24,9 @@ export default function AwaitStoryRevisionNotice({ runId, storyId, epicId }: Awa
   const conflict = conflicts?.find((c) => c.taskRunId === runId);
   const revisionRunId = conflict?.revisionRunId ?? null;
   const revisionEnded = conflict != null && revisionEndedWithoutVersion(conflict);
+  // Revise is refused while another revision is open, which then releases this conflict on its version.
+  const { data: story } = useStory(revisionEnded ? (storyId ?? undefined) : undefined);
+  const otherRevisionOpen = revisionEnded && story?.specUnderRevision === true;
 
   return (
     <StatusCallout tone="info" data-testid="await-story-revision-notice" title="Waiting on a Story revision">
@@ -35,8 +39,10 @@ export default function AwaitStoryRevisionNotice({ runId, storyId, epicId }: Awa
           {revisionEnded ? (
             <>
               The <Link to={`/runs/${revisionRunId}`} className="underline">revision run</Link> that took up
-              this conflict ended without a new version, and none restarts on its own. A Revise of the Story
-              answers this conflict.
+              this conflict ended without a new version.{" "}
+              {otherRevisionOpen
+                ? "Another revision of the Story is open; it was not asked about this conflict, and this run resumes on the version it records."
+                : "None restarts on its own; a Revise of the Story answers this conflict."}
             </>
           ) : revisionRunId ? (
             <>

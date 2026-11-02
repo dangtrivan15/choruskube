@@ -344,6 +344,14 @@ describe("StorySpecPanel", () => {
       expect(group.compareDocumentPosition(waiting) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
+    it("does not count a deleted revision run, whose deletion unassigns the conflict", () => {
+      mockUseStoryConflicts.mockReturnValue({ data: [stranded({ revisionRunStatus: null })] });
+
+      renderWithProviders(<StorySpecPanel story={makeStory({ specVersion: 2 })} />);
+
+      expect(screen.queryByTestId("story-spec-stranded-conflicts")).not.toBeInTheDocument();
+    });
+
     it("does not count a revision that recorded its version", () => {
       mockUseStoryConflicts.mockReturnValue({ data: [stranded({ revisionRunStatus: "completed" })] });
 

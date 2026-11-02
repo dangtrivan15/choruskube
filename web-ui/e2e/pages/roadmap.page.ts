@@ -58,7 +58,7 @@ export class RoadmapPage {
   readonly storySpecReviseButton: Locator;
   readonly storySpecVersionSelect: Locator;
   readonly storySpecRevisionBanner: Locator;
-  /** Conflicts whose revision run ended without a new version; only a Revise answers them. */
+  /** Conflicts whose revision run ended without a new version. */
   readonly storySpecStrandedConflicts: Locator;
   readonly storySpecReviseGuidance: Locator;
   readonly storySpecReviseSubmit: Locator;
