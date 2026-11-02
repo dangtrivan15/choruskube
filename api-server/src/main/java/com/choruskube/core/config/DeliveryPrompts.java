@@ -685,8 +685,7 @@ final class DeliveryPrompts {
             Fix what you find:
             - An addition that meets no deferral criterion: do the work in this review
               when it is small, otherwise remove the entry.
-            - An entry approved with the spec: keep it, unless the change already did it;
-              then remove it.
+            <<ROADMAP_SPEC_ENTRY_FIX>>
             - A gap you find that meets a deferral criterion: add it, its description
               opening with "Origin: added during code review — <criterion>: <one line>".
             - A new Task's title and description become a GitHub issue in the repo it is
@@ -877,6 +876,10 @@ final class DeliveryPrompts {
                     `/workspace/in/implement/roadmap_candidates.json` is absent and you have
                     nothing to add.
                     """),
+            entry("ROADMAP_SPEC_ENTRY_FIX", """
+                    - An entry approved with the spec: keep it, unless the change already did it;
+                      then remove it.
+                    """),
             entry("ESCALATION_SCOPE", """
                     Do not push speculative commits when you escalate. The spec is already approved by
                     this point — do not re-litigate its design choices outside the merged-run case above.
@@ -1010,11 +1013,16 @@ final class DeliveryPrompts {
                     you review it and own the copy Final Approval reads. Skip this section when
                     `/workspace/in/implement/roadmap_candidates.json` is absent and you have
                     nothing to add.
-
-                    Check every new Task against the story spec's Future-work caveats too. They
-                    were proposed when the Story spec was approved, so an entry that proposes one
-                    again is a duplicate, even when its Origin line matches a caveat in the PR
-                    body: remove it.
+                    """),
+            entry("ROADMAP_SPEC_ENTRY_FIX", """
+                    - An entry approved with the spec: keep it when its caveat is one of
+                      `task_spec.md`'s, unless the change already did it; then remove it.
+                    - An entry that proposes one of the story spec's Future-work caveats again,
+                      whatever its Origin line says: remove it. Those caveats were proposed when
+                      the Story spec was approved, so it is a duplicate. Where a PR body's Known
+                      limitations table marks that caveat `proposed to the roadmap (pending Final
+                      Approval)`, set the cell back to the caveat's own Disposition, `Future work`,
+                      with `gh pr edit`, and leave the rest of the body unchanged.
                     """),
             entry("ESCALATION_SCOPE", """
                     Do not push speculative commits when you escalate. The plan and the spec are

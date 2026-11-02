@@ -152,6 +152,14 @@ class StoryDesignPromptConventionsTest {
     }
 
     @Test
+    void draftSelfCheckCoversEverySectionThatNeedsAnOwnerTask() {
+        assertThat(collapsed(DRAFT_STORY_SPEC_PROMPT))
+                .as("the self-check is the drafter's last pass; a section it skips can ship with no owner")
+                .contains("every Architecture and Technical Decisions heading is realised by some Task, and so are"
+                        + " Testing Strategy and Manual Operations when they ask for anything.");
+    }
+
+    @Test
     void reviewPromptReshapesProposedTasksButNeverExistingOnes() {
         String p = collapsed(STORY_SPEC_REVIEW_PROMPT);
         assertThat(p)

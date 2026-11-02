@@ -72,7 +72,7 @@ class BaseStoryDesignSeederTest extends BaseTest {
     // never re-seeded, so a change here without a bump leaves existing databases on the old
     // template: bump VERSION and update both pins together.
     private static final int PINNED_VERSION = 2;
-    private static final String PINNED_SHA256 = "78a5b6cd933ae277f148cc006c7db487225dddd1730b6736406d27fc979183f4";
+    private static final String PINNED_SHA256 = "5f8880a7a1c3e5d866ba99007e2e8f042b9975e92f8c11a7d02d7db5033140bf";
 
     @Test
     void versionTripwire() throws Exception {
@@ -100,9 +100,8 @@ class BaseStoryDesignSeederTest extends BaseTest {
         });
         assertThat(prompts).containsKeys(StoryDesignGraph.DRAFT, StoryDesignGraph.REVIEW);
         prompts.forEach((label, prompt) -> assertThat(prompt)
-                .as("%s: a marker that is not a whole slot line is never replaced and reaches the agent", label)
-                .doesNotContain("<<")
-                .doesNotContain(">>"));
+                .as("%s: a <<NAME>> marker the slot filler did not replace reaches the agent verbatim", label)
+                .doesNotContainPattern(DeliveryPromptsTest.SLOT_MARKER));
     }
 
     @Test

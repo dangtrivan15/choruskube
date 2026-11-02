@@ -85,7 +85,7 @@ class BaseTaskDeliverySeederTest extends BaseTest {
     // input specs and graph. A stored version is never re-seeded, so a change here without a bump
     // leaves existing databases on the old template: bump VERSION and update both pins together.
     private static final int PINNED_VERSION = 2;
-    private static final String PINNED_SHA256 = "c538809880a5ba20f20215c88c7a6ab7d5f3aa17082ccda70f42088c256e7d71";
+    private static final String PINNED_SHA256 = "de42e63def99df7c07dbf6d24f68f7cf85d29bc61b4e99d1f0599360aa2d1272";
 
     @Test
     void versionTripwire() throws Exception {
@@ -115,9 +115,8 @@ class BaseTaskDeliverySeederTest extends BaseTest {
                         TaskDeliveryGraph.IMPLEMENT,
                         TaskDeliveryGraph.CODE_REVIEW);
         prompts.forEach((label, prompt) -> assertThat(prompt)
-                .as("%s: a marker that is not a whole slot line is never replaced and reaches the agent", label)
-                .doesNotContain("<<")
-                .doesNotContain(">>"));
+                .as("%s: a <<NAME>> marker the slot filler did not replace reaches the agent verbatim", label)
+                .doesNotContainPattern(DeliveryPromptsTest.SLOT_MARKER));
     }
 
     @Test
