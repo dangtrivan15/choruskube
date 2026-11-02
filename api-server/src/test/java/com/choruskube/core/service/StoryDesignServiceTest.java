@@ -14,6 +14,7 @@ import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.StoryDesignGraph;
 import com.choruskube.core.credential.GitHubCredentialResolver;
+import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.RunResponse;
@@ -91,6 +92,9 @@ class StoryDesignServiceTest extends BaseTest {
 
     @Autowired
     private TaskService taskService;
+
+    @Autowired
+    private WorkItemDependencyService dependencyService;
 
     @Autowired
     private GitRepoRepository gitRepoRepo;
@@ -294,6 +298,47 @@ class StoryDesignServiceTest extends BaseTest {
         assertThat(run.getStoryId()).isEqualTo(story.id());
         assertThat(run.getAutopilotId()).isEqualTo(autopilotId);
         assertThat(started.autopilotId()).isEqualTo(autopilotId);
+    }
+
+    /** The frontier is swept before the start: a blocker added in between is seen only under the Story lock. */
+    @Test
+    void startDesignForAutopilot_blockerAddedSinceThePlan_conflictsAndStartsNothing() {
+        StoryResponse story = makeStory("story-design-autopilot-blocked", "Story");
+        StoryResponse blocker = makeStory("story-design-autopilot-blocker", "Blocker");
+        UUID autopilotId = makeAutopilot();
+        dependencyService.create(new CreateDependencyRequest("story", blocker.id(), "story", story.id()));
+
+        assertThatThrownBy(() -> service.startDesignForAutopilot(story.id(), autopilotId))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("no longer eligible");
+        assertThat(designRunsOf(story.id())).isEmpty();
+    }
+
+    @Test
+    void startDesignForAutopilot_blockerWithApprovedSpec_starts() {
+        StoryResponse story = makeStory("story-design-autopilot-unblocked", "Story");
+        StoryResponse blocker = makeStory("story-design-autopilot-designed-blocker", "Blocker");
+        approveSpec(blocker.id());
+        UUID autopilotId = makeAutopilot();
+        dependencyService.create(new CreateDependencyRequest("story", blocker.id(), "story", story.id()));
+
+        RunResponse started = service.startDesignForAutopilot(story.id(), autopilotId);
+
+        assertThat(designRunsOf(story.id())).extracting(WorkflowRun::getId).containsExactly(started.id());
+    }
+
+    /** A person's failed or cancelled design stays put until they release it; the Autopilot must not undo it. */
+    @Test
+    void startDesignForAutopilot_afterAFailedDesignRun_conflictsAndStartsNothing() {
+        StoryResponse story = makeStory("story-design-autopilot-held", "Story");
+        UUID autopilotId = makeAutopilot();
+        RunResponse failed = service.startDesign(story.id());
+        setStatus(failed.id(), WorkflowRunStatus.failed);
+
+        assertThatThrownBy(() -> service.startDesignForAutopilot(story.id(), autopilotId))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("no longer eligible");
+        assertThat(designRunsOf(story.id())).extracting(WorkflowRun::getId).containsExactly(failed.id());
     }
 
     @Test
