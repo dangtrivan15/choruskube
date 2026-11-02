@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { test, expect } from "../fixtures";
 
 const FIXTURES = ["feature_development", "sparse_chain", "dense_fanout"] as const;
 

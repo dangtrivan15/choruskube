@@ -298,15 +298,14 @@ submit_decision() {
     list-decisions || echo "[mock-agent] list-decisions failed (continuing for mock test)"
   fi
 
-  # Primary path: use the report-result CLI tool (always available inside agent pods).
-  # The entrypoint exports REPORT_RESULT_URL for AI nodes only, and this script runs as a script
-  # node standing in for one, so it gives report-result the URL an AI node would have. The
-  # entrypoint then submits the script's own passed/failed, which a node with no such edge refuses
-  # with an HTTP 400 it logs as non-fatal, so the decision made here stands.
   if [ -z "${REPORT_RESULT_URL:-}" ] && [ -n "${API_SERVER_URL:-}" ] && [ -n "${RUN_ID:-}" ] \
     && [ -n "${NODE_EXECUTION_ID:-}" ]; then
     export REPORT_RESULT_URL="${API_SERVER_URL}/internal/runs/${RUN_ID}/node-executions/${NODE_EXECUTION_ID}/decision"
   fi
+
+  # Primary path: report-result, always available inside agent pods. The entrypoint's own report of
+  # this script's passed/failed is refused with an HTTP 400 on a node with no such edge, so the
+  # decision made here is the one that stands.
   if command -v report-result &>/dev/null; then
     report-result "$decision"
     echo "Decision '$decision' submitted via report-result"

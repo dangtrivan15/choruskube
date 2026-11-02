@@ -497,8 +497,7 @@ public class DefaultEpicService implements EpicService {
 
     private long computeReadyItemCount(UUID epicId, ReadinessAuthMode mode, UUID contextId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
-        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
+        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(candidates, mode, contextId);
         // Walks the Tasks rather than the readiness map, because the map also holds an entry for
         // every Story and for the Epic itself — containers, which EpicReadinessAssembler#isStartable
         // excludes by construction.

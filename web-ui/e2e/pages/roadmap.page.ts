@@ -58,6 +58,10 @@ export class RoadmapPage {
   readonly storySpecReviseButton: Locator;
   readonly storySpecVersionSelect: Locator;
   readonly storySpecRevisionBanner: Locator;
+  /** Conflicts whose revision run ended without a new version. */
+  readonly storySpecStrandedConflicts: Locator;
+  readonly storySpecReviseGuidance: Locator;
+  readonly storySpecReviseSubmit: Locator;
 
   // Task detail
   readonly taskDetailTitle: Locator;
@@ -173,6 +177,9 @@ export class RoadmapPage {
     this.storySpecReviseButton = page.getByTestId("story-spec-revise-button");
     this.storySpecVersionSelect = page.getByTestId("story-spec-version-select");
     this.storySpecRevisionBanner = page.getByTestId("story-spec-revision-banner");
+    this.storySpecStrandedConflicts = page.getByTestId("story-spec-stranded-conflicts");
+    this.storySpecReviseGuidance = page.getByTestId("story-spec-revise-guidance");
+    this.storySpecReviseSubmit = page.getByTestId("story-spec-revise-submit");
 
     this.taskDetailTitle = page.getByTestId("task-detail-title");
     this.taskDetailStatus = page.getByTestId("task-detail-status");

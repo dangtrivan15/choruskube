@@ -123,12 +123,7 @@ final class DeliveryPrompts {
                 Runtime Flow        -> merge into ARCHITECTURE.md (rewritten in place, so it
                                        does NOT accumulate); this is present-tense state, not
                                        a record of this change
-              - Caveats tagged "Future work" -> the roadmap proposal (see "Proposing
-                                       deferred work to the roadmap" below). Never file a GitHub
-                                       issue for one yourself: each proposed Task gets its own
-                                       issue when Final Approval approves it, and that issue
-                                       closes with the Task. Accepted caveats live only in the PR
-                                       body. Do not create a new docs/ surface for either
+            <<ROUTING_FUTURE_WORK>>
               - Context, Approach   -> discard; they tell the story of this change, and
                                        whatever in them lasts is already in Architecture or
                                        a decision
@@ -661,10 +656,7 @@ final class DeliveryPrompts {
 
             ## Roadmap proposal
 
-            Implement turns the spec's Future-work caveats into a roadmap proposal; you
-            review it and own the copy Final Approval reads. Skip this section when
-            `/workspace/in/implement/roadmap_candidates.json` is absent and you have
-            nothing to add.
+            <<ROADMAP_REVIEW_SOURCE>>
 
             Rebuild it in every iteration: start from Implement's copy, then re-apply the
             edits your previous review.md lists under "## Roadmap proposal". Never start
@@ -693,8 +685,7 @@ final class DeliveryPrompts {
             Fix what you find:
             - An addition that meets no deferral criterion: do the work in this review
               when it is small, otherwise remove the entry.
-            - An entry approved with the spec: keep it, unless the change already did it;
-              then remove it.
+            <<ROADMAP_SPEC_ENTRY_FIX>>
             - A gap you find that meets a deferral criterion: add it, its description
               opening with "Origin: added during code review — <criterion>: <one line>".
             - A new Task's title and description become a GitHub issue in the repo it is
@@ -770,8 +761,7 @@ final class DeliveryPrompts {
               clean in-repo fix (`environment`). The Supervisor can route past the Test gate;
               you cannot, so do not work around it in the repo.
 
-            Do not push speculative commits when you escalate. The spec is already approved by
-            this point — do not re-litigate its design choices outside the merged-run case above.
+            <<ESCALATION_SCOPE>>
 
             ## Reasoning requirement
 
@@ -850,6 +840,14 @@ final class DeliveryPrompts {
                     When a decision earns a durable home, route the spec's content by whether it
                     accumulates:
                     """),
+            entry("ROUTING_FUTURE_WORK", """
+                      - Caveats tagged "Future work" -> the roadmap proposal (see "Proposing
+                                               deferred work to the roadmap" below). Never file a GitHub
+                                               issue for one yourself: each proposed Task gets its own
+                                               issue when Final Approval approves it, and that issue
+                                               closes with the Task. Accepted caveats live only in the PR
+                                               body. Do not create a new docs/ surface for either
+                    """),
             entry("ROUTING_DISCARD", """
                       - Expected Changed Files, Testing Strategy, Manual Operations and Part 2
                                             -> discard; they are execution scaffolding
@@ -871,7 +869,21 @@ final class DeliveryPrompts {
                     spec contradicts. Escalate (`review_conflict`) and cite the merged run and what
                     changed.
                     """),
-            entry("REVIEW_SPEC_INPUTS", ""));
+            entry("REVIEW_SPEC_INPUTS", ""),
+            entry("ROADMAP_REVIEW_SOURCE", """
+                    Implement turns the spec's Future-work caveats into a roadmap proposal; you
+                    review it and own the copy Final Approval reads. Skip this section when
+                    `/workspace/in/implement/roadmap_candidates.json` is absent and you have
+                    nothing to add.
+                    """),
+            entry("ROADMAP_SPEC_ENTRY_FIX", """
+                    - An entry approved with the spec: keep it, unless the change already did it;
+                      then remove it.
+                    """),
+            entry("ESCALATION_SCOPE", """
+                    Do not push speculative commits when you escalate. The spec is already approved by
+                    this point — do not re-litigate its design choices outside the merged-run case above.
+                    """));
 
     private static final Map<String, String> TASK_DELIVERY_PASSAGES = Map.ofEntries(
             entry("OPENING", """
@@ -936,6 +948,14 @@ final class DeliveryPrompts {
                     graduate the rest of the story spec. When a decision earns a durable home,
                     route the spec's content by whether it accumulates:
                     """),
+            entry("ROUTING_FUTURE_WORK", """
+                      - The Task spec's Future-work caveats -> the roadmap proposal (see "Proposing
+                                               deferred work to the roadmap" below). Never file a GitHub
+                                               issue for one yourself: each proposed Task gets its own
+                                               issue when Final Approval approves it, and that issue
+                                               closes with the Task. Accepted caveats live only in the PR
+                                               body. Do not create a new docs/ surface for either
+                    """),
             entry("ROUTING_DISCARD", """
                       - Testing Strategy, Manual Operations and plan.md
                                             -> discard; they are execution scaffolding
@@ -987,5 +1007,27 @@ final class DeliveryPrompts {
                       if the Task needed one.
                     - `/workspace/in/run_input/story_spec.md` — the story spec, as
                       context; see "What you check the change against" above.
+                    """),
+            entry("ROADMAP_REVIEW_SOURCE", """
+                    Implement turns the Task spec's Future-work caveats into a roadmap proposal;
+                    you review it and own the copy Final Approval reads. Skip this section when
+                    `/workspace/in/implement/roadmap_candidates.json` is absent and you have
+                    nothing to add.
+                    """),
+            entry("ROADMAP_SPEC_ENTRY_FIX", """
+                    - An entry approved with the spec: keep it when its caveat is one of
+                      `task_spec.md`'s, unless the change already did it; then remove it.
+                    - An entry that proposes one of the story spec's Future-work caveats again,
+                      whatever its Origin line says: remove it. Those caveats were proposed when
+                      the Story spec was approved, so it is a duplicate. Where a PR body's Known
+                      limitations table marks that caveat `proposed to the roadmap (pending Final
+                      Approval)`, set the cell back to the caveat's own Disposition, `Future work`,
+                      with `gh pr edit`, and leave the rest of the body unchanged.
+                    """),
+            entry("ESCALATION_SCOPE", """
+                    Do not push speculative commits when you escalate. The plan and the spec are
+                    settled by this point — do not re-litigate their design choices unless the plan
+                    no longer holds: it contradicts the story spec, or the merged-run case above
+                    applies (see "What you check the change against").
                     """));
 }

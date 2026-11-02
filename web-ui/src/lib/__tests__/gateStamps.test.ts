@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decisionToastMessage, latestStampFor, pendingStamp } from "../gateStamps";
+import { decisionToastMessage, decisionToastVariant, latestStampFor, pendingStamp } from "../gateStamps";
 import type { GateStampResponse } from "@/lib/types";
 
 function makeStamp(overrides: Partial<GateStampResponse> = {}): GateStampResponse {
@@ -30,6 +30,30 @@ describe("decisionToastMessage", () => {
 
   it("says the approval is being finalized when the server accepted it for finalizing", () => {
     expect(decisionToastMessage({ outcome: "finalizing" })).toBe("Finalizing your approval…");
+  });
+
+  it("says the approval became a re-review, with the server's reason, when it was rerouted", () => {
+    expect(decisionToastMessage({ outcome: "rerouted", reason: "R" })).toBe(
+      "Not approved yet: R It goes back for a re-check first; approve again after.",
+    );
+  });
+
+  it("still says the approval was rerouted when the server gave no reason", () => {
+    expect(decisionToastMessage({ outcome: "rerouted", reason: null })).toBe(
+      "Not approved yet. It goes back for a re-check first; approve again after.",
+    );
+  });
+});
+
+describe("decisionToastVariant", () => {
+  it("is a success for a decision the server applied or is applying", () => {
+    expect(decisionToastVariant(undefined)).toBe("success");
+    expect(decisionToastVariant({ outcome: "signaled" })).toBe("success");
+    expect(decisionToastVariant({ outcome: "finalizing" })).toBe("success");
+  });
+
+  it("is a warning for an approval that was rerouted instead of applied", () => {
+    expect(decisionToastVariant({ outcome: "rerouted", reason: "R" })).toBe("warning");
   });
 });
 

@@ -1,5 +1,7 @@
 package com.choruskube.core.controller;
 
+import static org.hamcrest.Matchers.hasKey;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -348,6 +350,8 @@ class StorySpecControllerTest extends BaseTest {
                 .andExpect(jsonPath("$[0].taskId").value(task.id().toString()))
                 .andExpect(jsonPath("$[0].taskTitle").value("Add health check"))
                 .andExpect(jsonPath("$[0].raisedAgainstVersion").value(1))
+                .andExpect(jsonPath("$[0]", hasKey("revisionRunStatus")))
+                .andExpect(jsonPath("$[0].revisionRunStatus").value(nullValue()))
                 .andExpect(jsonPath("$[0].createdAt").exists())
                 .andExpect(jsonPath("$[0].report").doesNotExist());
     }

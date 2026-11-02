@@ -1,8 +1,6 @@
 package com.choruskube.core.config;
 
-// A prompt edit reaches a database only with a BaseTaskDeliverySeeder.VERSION bump. Any {word}
-// placeholder the server does not supply fails the node: Analyze gets no {review_history}, since it
-// is in no loop group, and neither prompt may name an {input.<label>} a branch can skip.
+// A prompt edit reaches a database only with a BaseTaskDeliverySeeder.VERSION bump.
 final class TaskDeliveryPrompts {
 
     static final String ANALYZE_PROMPT = """

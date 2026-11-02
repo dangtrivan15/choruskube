@@ -1,5 +1,6 @@
 import { type Page, type Locator, expect } from "@playwright/test";
 import { RoadmapViewControls } from "./roadmap-view-controls.page";
+import { dragBoardCard } from "../helpers/board-drag";
 
 export type EpicStage = "backlog" | "in_progress" | "rolled_out";
 
@@ -73,85 +74,24 @@ export class RoadmapBoardPage {
     await expect(this.column(stage).getByText(title)).toBeVisible();
   }
 
-  /** Resolves true if `title`'s card shows up in `stage`'s column within `timeout`. */
-  private async cardLandedIn(title: string, stage: EpicStage, timeout: number): Promise<boolean> {
-    return this.column(stage)
-      .getByText(title)
-      .waitFor({ state: "visible", timeout })
-      .then(() => true)
-      .catch(() => false);
-  }
-
   /**
-   * Drags the Epic card titled `title` into the `targetStage` column.
-   *
-   * dnd-kit's `PointerSensor` only starts a drag after the pointer has moved
-   * past its activation-distance threshold, so this issues a raw
-   * mouse down → a few incremental moves → mouse up sequence rather than a
-   * single jump (which some DnD libraries miss because they see no
-   * intermediate `pointermove` events).
-   *
-   * A hand-rolled pointer sequence opts out of Playwright's auto-waiting: the
-   * coordinates are frozen at `boundingBox()` time, and any `roadmap-items`
-   * STOMP event in the window before `mouse.down()` invalidates `["epics"]`
-   * and re-orders the column, so the press can land on a moved or replaced
-   * node and no drop happens at all. On a shared stack another worker's Epic
-   * write is enough to trigger that. Hence: re-measure immediately before
-   * pressing, abandon the attempt if the card shifted, and retry the whole
-   * gesture until the card lands.
+   * Drags the Epic card titled `title` into the `targetStage` column and waits for the server to
+   * accept the move, so a following reload reads the new stage rather than racing the write.
    */
-  async dragCardToColumn(title: string, targetStage: EpicStage, attempts = 3) {
+  async dragCardToColumn(title: string, targetStage: EpicStage) {
     const card = this.cardByTitle(title);
-    // Measured from a non-interactive part of the card, never the card box: centre coordinates can
-    // land on the title, which is a `<Link>` deliberately excluded from the drag surface (it stops
-    // `pointerdown`), so a press there starts no drag at all.
-    const grip = card.getByTestId("epic-board-card-progress");
-    const targetColumn = this.column(targetStage);
-
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      await card.waitFor({ state: "visible" });
-
-      const sourceBox = await grip.boundingBox();
-      const targetBox = await targetColumn.boundingBox();
-      if (!sourceBox || !targetBox) continue;
-
-      const startX = sourceBox.x + sourceBox.width / 2;
-      const startY = sourceBox.y + sourceBox.height / 2;
-      const endX = targetBox.x + targetBox.width / 2;
-      const endY = targetBox.y + Math.min(40, targetBox.height / 2);
-
-      await this.page.mouse.move(startX, startY);
-
-      // The pointer is in position but nothing is pressed yet — the last point
-      // at which a re-render is still recoverable.
-      const settledBox = await grip.boundingBox();
-      if (
-        !settledBox ||
-        Math.abs(settledBox.x - sourceBox.x) > 2 ||
-        Math.abs(settledBox.y - sourceBox.y) > 2
-      ) {
-        continue;
-      }
-
-      await this.page.mouse.down();
-      await this.page.mouse.move(
-        startX + (endX - startX) / 3,
-        startY + (endY - startY) / 3,
-        { steps: 5 },
-      );
-      await this.page.mouse.move(
-        startX + ((endX - startX) * 2) / 3,
-        startY + ((endY - startY) * 2) / 3,
-        { steps: 5 },
-      );
-      await this.page.mouse.move(endX, endY, { steps: 5 });
-      await this.page.mouse.up();
-
-      if (await this.cardLandedIn(title, targetStage, 5_000)) return;
-    }
-
-    throw new Error(
-      `Card "${title}" never landed in the ${targetStage} column after ${attempts} drag attempts`,
-    );
+    const epicId = await card.getAttribute("data-epic-id");
+    expect(epicId, `data-epic-id on "${title}"`).not.toBeNull();
+    const response = await dragBoardCard({
+      card,
+      grip: card.getByTestId("epic-board-card-progress"),
+      target: this.column(targetStage),
+      isWrite: (r) =>
+        r.request().method() === "PATCH" && r.url().endsWith(`/api/v1/epics/${epicId}/stage`),
+    });
+    expect(
+      response.ok(),
+      `PATCH stage of "${title}" -> ${targetStage}: ${response.status()}`,
+    ).toBe(true);
   }
 }

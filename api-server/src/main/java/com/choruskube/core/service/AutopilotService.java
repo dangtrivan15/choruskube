@@ -12,7 +12,6 @@ import com.choruskube.core.model.Story;
 import com.choruskube.core.model.Task;
 import com.choruskube.core.model.WorkItemDependency;
 import com.choruskube.core.model.WorkflowRun;
-import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
@@ -651,13 +650,8 @@ public class AutopilotService {
                 log.info("Autopilot tick stopped early on a quota: {}", e.getMessage());
                 break;
             } catch (ConflictException e) {
-                // Every ConflictException out of either start says the same thing: this item is no
-                // longer what the frontier was swept for — a Task left backlog or gained a blocker,
-                // a Story got a spec or a design run. Someone clicked Start or Design, or an
-                // instance that overran its lease got here first. That is the roadmap changing under
-                // a plan, not the platform failing, so it must not reach the breaker — three lost
-                // races would otherwise disengage the Autopilot for no reason at all. The next item
-                // is unaffected, so the pass goes on.
+                // A lost race is the roadmap changing under the plan, not the platform failing: it must
+                // not reach the breaker, or three of them disengage the Autopilot.
                 String described = describe(item);
                 notes.add(Character.toUpperCase(described.charAt(0)) + described.substring(1)
                         + " was no longer startable: " + e.getMessage());
@@ -773,10 +767,14 @@ public class AutopilotService {
         static final Frontier EMPTY = new Frontier(List.of(), 0, 0, 0, List.of(), List.of(), List.of(), Map.of());
     }
 
-    /** The Story half of the frontier: designs to start, and Stories a finished design run holds. */
-    private record DesignSweep(List<AutopilotFrontierItem> designable, List<HeldStory> held) {
+    /**
+     * The Story half of the frontier: designs to start, and Stories a finished design run holds.
+     *
+     * @param started the swept Stories with an approved spec or an open design run, and their Epics
+     */
+    private record DesignSweep(List<AutopilotFrontierItem> designable, List<HeldStory> held, Set<UUID> started) {
 
-        static final DesignSweep NONE = new DesignSweep(List.of(), List.of());
+        static final DesignSweep NONE = new DesignSweep(List.of(), List.of(), Set.of());
     }
 
     /**
@@ -834,12 +832,8 @@ public class AutopilotService {
             }
             epicsById.put(epicId, epic);
             EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
-            EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                    candidates.candidateIds(),
-                    candidates.statusById(),
-                    candidates.parentOf(),
-                    ReadinessAuthMode.AUTOPILOT,
-                    autopilotId);
+            EpicReadinessAssembler.Assembly assembly =
+                    readinessAssembler.assemble(candidates, ReadinessAuthMode.AUTOPILOT, autopilotId);
             readinessById.putAll(assembly.readinessById());
             edges.addAll(assembly.edges());
             swept.add(new SweptEpic(candidates, assembly));
@@ -881,6 +875,7 @@ public class AutopilotService {
         }
         DesignSweep design = sweepStoryDesign(swept, edges);
         items.addAll(design.designable());
+        startedIds.addAll(design.started());
 
         items.sort(TaskOrderingStrategy.itemComparator(epicsById, storiesById, startedIds));
         return new Frontier(
@@ -905,11 +900,7 @@ public class AutopilotService {
         if (storyIds.isEmpty()) {
             return DesignSweep.NONE;
         }
-        Set<UUID> versionIds = new HashSet<>(storyIds);
-        edges.stream()
-                .filter(edge -> edge.getBlockingItemType() == BlockableItemType.story)
-                .forEach(edge -> versionIds.add(edge.getBlockingItemId()));
-        Map<UUID, Integer> versions = specService.currentVersions(versionIds);
+        Map<UUID, Integer> versions = specService.currentVersions(StoryDesignEligibility.versionIds(storyIds, edges));
         Set<UUID> undesigned =
                 storyIds.stream().filter(id -> !versions.containsKey(id)).collect(Collectors.toSet());
         Set<UUID> openDesign = undesigned.isEmpty() ? Set.of() : specService.storiesWithOpenDesignRun(undesigned);
@@ -919,8 +910,13 @@ public class AutopilotService {
 
         List<AutopilotFrontierItem> designable = new ArrayList<>();
         List<HeldStory> held = new ArrayList<>();
+        Set<UUID> started = new HashSet<>();
         for (SweptEpic epic : swept) {
             for (Story story : epic.candidates().stories()) {
+                if (versions.containsKey(story.getId()) || openDesign.contains(story.getId())) {
+                    started.add(story.getId());
+                    started.add(story.getEpicId());
+                }
                 StoryDesignEligibility.holdingRun(story, epic.candidates(), versions, openDesign, latestRuns)
                         .ifPresent(run -> held.add(new HeldStory(story, run)));
                 if (StoryDesignEligibility.isDesignable(
@@ -929,7 +925,7 @@ public class AutopilotService {
                 }
             }
         }
-        return new DesignSweep(designable, List.copyOf(held));
+        return new DesignSweep(designable, List.copyOf(held), Set.copyOf(started));
     }
 
     /**

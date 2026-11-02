@@ -60,7 +60,7 @@ public class ArtifactResolutionService {
      *
      * <p>A group names either one producer ({@code template_node_label}, resolved to that node's
      * highest completed iteration) or several ({@code newest_of} + {@code alias}, resolved to
-     * whichever of them completed most recently and exposed under the alias).
+     * the most recently completed of them that recorded output, and exposed under the alias).
      *
      * @return List of resolved artifact groups; {@code List.of()} for the Supervisor when nothing
      *     has escalated yet; or {@code null} if no declarations exist (legacy mode).
@@ -195,10 +195,11 @@ public class ArtifactResolutionService {
     }
 
     /**
-     * The most recently completed execution of any listed producer. Ordered by {@code completed_at}
-     * alone: iteration counts are per node, so they cannot rank one producer against another.
+     * The most recently completed execution of any listed producer that recorded an output prefix,
+     * or of any listed producer when none did. Ordered by {@code completed_at} alone: iteration
+     * counts are per node, so they cannot rank one producer against another.
      */
-    private static UUID newestProducer(
+    private UUID newestProducer(
             List<String> producerLabels, Map<String, UUID> labelToTemplateNodeId, List<NodeExecution> completedExecs) {
         Map<UUID, Integer> declarationOrder = new HashMap<>();
         for (int i = 0; i < producerLabels.size(); i++) {
@@ -207,8 +208,15 @@ public class ArtifactResolutionService {
                 declarationOrder.putIfAbsent(templateNodeId, i);
             }
         }
-        return completedExecs.stream()
+        List<NodeExecution> producers = completedExecs.stream()
                 .filter(e -> declarationOrder.containsKey(e.getTemplateNodeId()))
+                .toList();
+        // A producer with no output prefix wrote nothing; ranking it first would hide an older
+        // producer's files, required ones included, from the pod.
+        List<NodeExecution> withOutput =
+                producers.stream().filter(e -> outputPrefixOf(e) != null).toList();
+        List<NodeExecution> candidates = withOutput.isEmpty() ? producers : withOutput;
+        return candidates.stream()
                 .min(Comparator.comparing(
                                 NodeExecution::getCompletedAt, Comparator.nullsLast(Comparator.reverseOrder()))
                         .thenComparing(e -> declarationOrder.get(e.getTemplateNodeId()))
@@ -242,7 +250,8 @@ public class ArtifactResolutionService {
      *   <li><b>Declared</b> — {@code required_input_artifacts} names a file and a source label;
      *       the source's {@code artifact_refs["output"]} supplies the directory prefix. Selection is
      *       latest-iteration, matching {@code resolveRequiredArtifacts}; a {@code newest_of} group
-     *       instead takes the newest completed of several sources and only the files it wrote.
+     *       instead takes the newest completed of several sources that recorded output, and only
+     *       the files it wrote.
      *   <li><b>Passthrough</b> — a human gate's {@code artifact_refs} is already a
      *       filename → object path map, so it needs no declaration. This matters because gate
      *       attachments are arbitrary (a reviewer can attach anything) and cannot be declared when
@@ -285,14 +294,14 @@ public class ArtifactResolutionService {
             if (source == null) {
                 continue;
             }
-            String prefix = readRef(source.getArtifactRefs(), OUTPUT_PREFIX_KEY);
-            if (prefix == null || prefix.isBlank()) {
+            String prefix = outputPrefixOf(source);
+            if (prefix == null && !declared.newestOf()) {
                 continue;
             }
-            if (!prefix.endsWith("/")) {
-                prefix = prefix + "/";
+            Set<String> written = null;
+            if (declared.newestOf()) {
+                written = prefix == null ? Set.of() : filesWrittenBy(source);
             }
-            Set<String> written = declared.newestOf() ? filesWrittenBy(source) : null;
             for (ResolvedArtifactEntry entry : group.artifacts()) {
                 // A newest_of group's producers write different files, so an entry the winner did
                 // not write is stale or absent — except a required one, which stays so the pod
@@ -301,12 +310,23 @@ public class ArtifactResolutionService {
                     continue;
                 }
                 String key = group.nodeLabel() + "/" + entry.name();
-                artifacts.put(key, prefix + entry.name());
+                // No producer recorded an output prefix, so no object exists to point at; the pod's
+                // download of the empty path fails, which is the abort a required entry needs.
+                artifacts.put(key, prefix == null ? "" : prefix + entry.name());
                 if (entry.required()) {
                     required.add(key);
                 }
             }
         }
+    }
+
+    /** The execution's output prefix ending in {@code /}, or {@code null} when it recorded none. */
+    private String outputPrefixOf(NodeExecution exec) {
+        String prefix = readRef(exec.getArtifactRefs(), OUTPUT_PREFIX_KEY);
+        if (prefix == null || prefix.isBlank()) {
+            return null;
+        }
+        return prefix.endsWith("/") ? prefix : prefix + "/";
     }
 
     /** {@code null} when the store cannot be listed: that admits every declared name instead of failing the launch. */
@@ -315,9 +335,7 @@ public class ArtifactResolutionService {
             return new HashSet<>(artifactService.listArtifactNamesInternal(source.getArtifactRefs()));
         } catch (RuntimeException e) {
             log.warn(
-                    "Could not list the output of node execution {}; admitting every declared name: {}",
-                    source.getId(),
-                    e.getMessage());
+                    "Could not list the output of node execution {}; admitting every declared name", source.getId(), e);
             return null;
         }
     }

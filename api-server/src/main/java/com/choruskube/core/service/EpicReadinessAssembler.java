@@ -189,21 +189,18 @@ class EpicReadinessAssembler {
      * blocker's status (one hop only), and computes per-item {@link Readiness} via
      * {@link TransitiveReadinessResolver}.
      *
-     * @param statusById status for every id in {@code candidateIds}; mutated copies are made
-     *     internally, the caller's map is left untouched
-     * @param parentOf maps a Story to its Epic and a Task to its Story, so a blocked container's
-     *     readiness can be cascaded onto the work inside it after the walk below
+     * @param candidates the Epic's items from {@link #loadEpicCandidates}; the status map is
+     *     copied internally and left untouched, and {@code parentOf} lets a blocked container's
+     *     readiness be cascaded onto the work inside it after the walk below
      * @param mode which authorization path cross-Epic references are resolved through
      * @param contextId the id {@code mode} authorizes against — the calling run for {@link
      *     ReadinessAuthMode#INTERNAL_RUN}, the Autopilot for {@link ReadinessAuthMode#AUTOPILOT},
      *     unused (and normally null) for {@link ReadinessAuthMode#PUBLIC}
      */
-    Assembly assemble(
-            Set<UUID> candidateIds,
-            Map<UUID, String> statusById,
-            Map<UUID, UUID> parentOf,
-            ReadinessAuthMode mode,
-            UUID contextId) {
+    Assembly assemble(EpicCandidates candidates, ReadinessAuthMode mode, UUID contextId) {
+        Set<UUID> candidateIds = candidates.candidateIds();
+        Map<UUID, String> statusById = candidates.statusById();
+        Map<UUID, UUID> parentOf = candidates.parentOf();
         List<WorkItemDependency> rows = candidateIds.isEmpty()
                 ? List.of()
                 : dependencyRepo.findByBlockingItemIdInOrBlockedItemIdIn(candidateIds, candidateIds);
@@ -271,19 +268,13 @@ class EpicReadinessAssembler {
                 dependencies,
                 externalBlockers,
                 rows,
-                notDesignedReasons(candidateIds, parentOf),
+                notDesignedReasons(candidates.stories()),
                 Collections.unmodifiableMap(effectiveStatusById));
     }
 
-    /**
-     * Every Story among {@code candidateIds} that may not start its Tasks, with the reason. {@code
-     * parentOf} maps a Task to its Story and a Story to its Epic, so a Story is the candidate whose
-     * parent has no parent of its own.
-     */
-    private Map<UUID, String> notDesignedReasons(Set<UUID> candidateIds, Map<UUID, UUID> parentOf) {
-        Set<UUID> storyIds = candidateIds.stream()
-                .filter(id -> parentOf.containsKey(id) && !parentOf.containsKey(parentOf.get(id)))
-                .collect(Collectors.toSet());
+    /** Every one of {@code stories} that may not start its Tasks, with the reason. */
+    private Map<UUID, String> notDesignedReasons(List<Story> stories) {
+        Set<UUID> storyIds = stories.stream().map(Story::getId).collect(Collectors.toSet());
         Map<UUID, Integer> versions = specService.currentVersions(storyIds);
         Set<UUID> revising = specService.storiesWithOpenDesignRun(versions.keySet());
         Map<UUID, String> reasons = new HashMap<>();

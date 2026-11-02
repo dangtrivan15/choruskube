@@ -7,7 +7,9 @@ import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
+import java.util.Collection;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -56,6 +58,19 @@ final class StoryDesignEligibility {
             }
         }
         return true;
+    }
+
+    /**
+     * The Stories whose approved spec {@link #isDesignable} reads: {@code storyIds} themselves, and
+     * every Story that blocks anything in {@code edges}, wherever it lives. A blocker in another
+     * Epic is no candidate, and its approved spec is what satisfies the Story it blocks.
+     */
+    static Set<UUID> versionIds(Collection<UUID> storyIds, Collection<WorkItemDependency> edges) {
+        Set<UUID> ids = new HashSet<>(storyIds);
+        edges.stream()
+                .filter(edge -> edge.getBlockingItemType() == BlockableItemType.story)
+                .forEach(edge -> ids.add(edge.getBlockingItemId()));
+        return ids;
     }
 
     /**

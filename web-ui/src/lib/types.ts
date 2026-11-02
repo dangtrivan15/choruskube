@@ -735,7 +735,9 @@ export interface StorySpecVersionSummary {
 
 /**
  * An open conflict a Task run raised against its Story's spec (`GET /stories/{id}/conflicts`).
- * `revisionRunId` is set once a revision run has been started to answer it.
+ * `revisionRunId` is set once a revision run has been started to answer it, and stays set if that
+ * run ends without a new version. `revisionRunStatus` is that run's status, `null` when there is no
+ * run or it was deleted.
  */
 export interface StoryConflictResponse {
   id: string;
@@ -744,6 +746,7 @@ export interface StoryConflictResponse {
   taskTitle: string | null;
   raisedAgainstVersion: number;
   revisionRunId: string | null;
+  revisionRunStatus: string | null;
   createdAt: string;
 }
 
@@ -1428,7 +1431,9 @@ export interface AttachmentRefsResponse {
 
 /** `POST /runs/{id}/nodes/{exec}/signal` response. */
 export interface SignalResponse {
-  outcome: "signaled" | "finalizing";
+  outcome: "signaled" | "finalizing" | "rerouted";
+  /** Why an approval was not applied; set when `outcome` is `rerouted`. */
+  reason?: string | null;
 }
 
 /** A gate approval: being finalized, held for a re-check, consumed or voided. */

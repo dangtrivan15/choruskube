@@ -8,6 +8,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class GraphValidationServiceTest {
 
@@ -608,6 +610,27 @@ class GraphValidationServiceTest {
         assertThat(result.errors())
                 .contains("Node 'gate' declares story_version_recheck route 'rereview' but has no outgoing "
                         + "'rereview' edge");
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "{\"terminal_decisions\":[\"approved\"],\"story_version_recheck\":{}}",
+                "{\"terminal_decisions\":[\"approved\"],\"story_version_recheck\":{\"route\":\"\"}}",
+                "{\"terminal_decisions\":[\"approved\"],\"story_version_recheck\":{\"route\":\"  \"}}"
+            })
+    void storyVersionRecheck_blankRoute_isRejected(String configOverrides) {
+        UUID entry = UUID.randomUUID();
+        UUID gate = UUID.randomUUID();
+
+        var gateNode = makeNode(gate, "gate", false);
+        gateNode.setConfigOverrides(configOverrides);
+        var nodes = List.of(makeNode(entry, "entry", true), gateNode);
+        var edges = List.of(makeEdge(entry, gate, null), makeEdge(gate, entry, "rereview"));
+
+        var result = service.validate(nodes, edges);
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).contains("Node 'gate' declares story_version_recheck without a route");
     }
 
     @Test

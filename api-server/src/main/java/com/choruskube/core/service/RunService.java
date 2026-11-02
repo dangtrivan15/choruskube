@@ -22,8 +22,10 @@ import com.choruskube.core.specification.LikePatterns;
 import com.choruskube.core.util.NodeExecutionUtil;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.temporal.client.WorkflowNotFoundException;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
@@ -53,6 +55,9 @@ public class RunService {
     static final int RUN_NAME_MAX_LENGTH = 30;
     static final String ASYNC_FINALIZE = "async";
     static final String RUN_NAME_TRUNCATION_MARKER = "…";
+
+    private static final String ATTACHMENT_REFS_NOT_AN_OBJECT =
+            "attachmentRefs must be a JSON object of file names to object keys";
 
     private final WorkflowRunRepository runRepo;
     private final NodeExecutionRepository execRepo;
@@ -526,8 +531,11 @@ public class RunService {
         UUID runId = run.getId();
         UUID nodeExecId = exec.getId();
 
+        // Every decision's refs are checked first, so a refusal leaves the gate as it was.
+        ObjectNode reviewerRefs = parseAttachmentRefs(request.attachmentRefs());
+
         // Ahead of the async hand-over and the claim, so a refusal leaves the gate as it was.
-        Optional<SignalResponse> rerouted = recheckStoryVersion(run, exec, request);
+        Optional<SignalResponse> rerouted = recheckStoryVersion(run, exec, request, reviewerRefs);
         if (rerouted.isPresent()) {
             return rerouted.get();
         }
@@ -606,7 +614,8 @@ public class RunService {
      * re-check route with the current spec and guidance naming the new Revisions entries, after
      * which a human approves again. Empty when the approval proceeds as it is.
      */
-    private Optional<SignalResponse> recheckStoryVersion(WorkflowRun run, NodeExecution exec, SignalRequest request) {
+    private Optional<SignalResponse> recheckStoryVersion(
+            WorkflowRun run, NodeExecution exec, SignalRequest request, ObjectNode reviewerRefs) {
         // A gate no longer awaiting is refused by the claim; writing first would replace the
         // guidance a reviewer's decision left at this execution.
         if (exec.getStatus() != NodeExecutionStatus.awaiting_human
@@ -626,15 +635,24 @@ public class RunService {
         int planned = stale.get().planned();
         StorySpecVersion current = stale.get().current();
         String guidance = storyVersionGuidance(planned, current.getVersion());
+        if (request.feedback() != null && !request.feedback().isBlank()) {
+            guidance += "\n\n## Reviewer's note with the approval\n\n" + request.feedback();
+        }
         uploadService.overwriteRunInput(runId, StorySpecLifecycleService.SPEC_FILE, current.getContent());
+        // A fresh object per attempt: of two submissions at one gate the claim loser would
+        // otherwise overwrite the winner's guidance with its own feedback.
         String guidanceRefs = uploadService.uploadGateText(
                 storagePrefixResolver.storagePrefixForRun(runId),
                 runId,
                 exec.getId(),
+                UUID.randomUUID(),
                 StorySpecLifecycleService.GUIDANCE_FILE,
                 guidance);
-        SignalResponse response =
-                decideGate(run, exec, new SignalRequest(stale.get().route(), guidance, guidanceRefs, null));
+        decideGate(
+                run,
+                exec,
+                new SignalRequest(
+                        stale.get().route(), guidance, mergeAttachmentRefs(guidanceRefs, reviewerRefs), null));
         // Recorded only once the round is under way: recorded for a round that never started, it
         // would let the next approval skip that round. Unrecorded, the next approval re-runs it.
         try {
@@ -649,7 +667,47 @@ public class RunService {
                 runId,
                 stale.get().route(),
                 stale.get().reason());
-        return Optional.of(response);
+        return Optional.of(SignalResponse.rerouted(stale.get().reason()));
+    }
+
+    private ObjectNode parseAttachmentRefs(String attachmentRefs) {
+        if (attachmentRefs == null || attachmentRefs.isBlank()) {
+            return objectMapper.createObjectNode();
+        }
+        JsonNode refs;
+        try {
+            refs = objectMapper.readTree(attachmentRefs);
+        } catch (JsonProcessingException e) {
+            throw new ValidationException(List.of(ATTACHMENT_REFS_NOT_AN_OBJECT));
+        }
+        if (refs instanceof ObjectNode object && allValuesAreText(object)) {
+            return object;
+        }
+        throw new ValidationException(List.of(ATTACHMENT_REFS_NOT_AN_OBJECT));
+    }
+
+    private static boolean allValuesAreText(ObjectNode refs) {
+        for (JsonNode value : refs) {
+            if (!value.isTextual()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The reviewer's attachments beside the guidance file; a reviewer file of that name never replaces it. */
+    private String mergeAttachmentRefs(String guidanceRefs, ObjectNode reviewerRefs) {
+        try {
+            ObjectNode merged = (ObjectNode) objectMapper.readTree(guidanceRefs);
+            reviewerRefs.fields().forEachRemaining(ref -> {
+                if (!StorySpecLifecycleService.GUIDANCE_FILE.equals(ref.getKey())) {
+                    merged.set(ref.getKey(), ref.getValue());
+                }
+            });
+            return objectMapper.writeValueAsString(merged);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Failed to merge attachment refs", e);
+        }
     }
 
     /**

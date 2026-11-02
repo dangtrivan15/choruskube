@@ -101,12 +101,8 @@ public class DefaultRoadmapTimelineService implements RoadmapTimelineService {
         // A request-scoped read, so cross-Epic blockers are authorized against the caller's own
         // tenant context (PUBLIC) and there is no context id to assert against.
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epic.getId());
-        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(),
-                candidates.statusById(),
-                candidates.parentOf(),
-                ReadinessAuthMode.PUBLIC,
-                null);
+        EpicReadinessAssembler.Assembly assembly =
+                readinessAssembler.assemble(candidates, ReadinessAuthMode.PUBLIC, null);
 
         List<TimelineStorySummary> stories = storiesByEpicId.getOrDefault(epic.getId(), List.of()).stream()
                 .sorted(Comparator.comparing(Story::getCreatedAt))

@@ -116,7 +116,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
     // run() early-returns when a template at the current VERSION already exists, so an edit
     // without a bump is a no-op against any environment whose database survived the
     // previous boot.
-    static final int VERSION = 10;
+    static final int VERSION = 11;
 
     private static final String E2E_REPO_URL = "https://github.com/e2e-test/mock-repo";
     private static final String E2E_SECONDARY_REPO_URL = "https://github.com/e2e-test/mock-frontend";
@@ -405,8 +405,10 @@ public class E2eTestDataSeeder implements ApplicationRunner {
 
         TemplateNode start = createNode(t, mockSuccess, "start", true, cmd("success --artifact start-done"));
         TemplateNode branchA = createNode(t, mockSuccess, "branch_a", false, cmd("success --artifact branch-a-done"));
+        // status-colors.spec.ts holds branch_b at "running" for its whole test timeout; a delay shorter than
+        // that timeout lets branch_b complete between its reads.
         TemplateNode branchB =
-                createNode(t, mockSlow, "branch_b", false, cmd("slow --delay 5 --artifact branch-b-done"));
+                createNode(t, mockSlow, "branch_b", false, cmd("slow --delay 120 --artifact branch-b-done"));
         TemplateNode branchC = createNode(t, mockSuccess, "branch_c", false, cmd("success --artifact branch-c-done"));
         TemplateNode merge = createNode(t, mockSuccess, "merge", false, cmd("success --artifact merge-done"));
 

@@ -27,7 +27,7 @@ public class BaseTaskDeliverySeeder implements ApplicationRunner {
     // A stored version is never re-seeded: a change to TaskDeliveryGraph, TaskDeliveryPrompts, the
     // shared DeliveryPrompts or the schema below reaches a database only with a bump here, so without
     // one, existing databases silently keep the old template while fresh ones get the new.
-    static final int VERSION = 1;
+    static final int VERSION = 2;
 
     static final String TEMPLATE_NAME = "Task Delivery";
 

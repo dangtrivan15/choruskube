@@ -83,6 +83,7 @@ function conflict(overrides: Partial<StoryConflictResponse> = {}): StoryConflict
     taskTitle: "Wire the payment form",
     raisedAgainstVersion: 2,
     revisionRunId: "revision-run",
+    revisionRunStatus: "awaiting_human",
     createdAt: "2026-10-25T00:00:00Z",
     ...overrides,
   };
@@ -275,6 +276,88 @@ describe("StorySpecPanel", () => {
       renderWithProviders(<StorySpecPanel story={underRevision()} />);
 
       expect(screen.getByTestId("markdown-viewer")).toHaveTextContent("Ship it in two Tasks.");
+    });
+  });
+
+  describe("when a revision ended without a new version", () => {
+    beforeEach(() => {
+      mockUseStorySpec.mockReturnValue({ data: makeSpec(), isLoading: false, isError: false });
+    });
+
+    function stranded(overrides: Partial<StoryConflictResponse> = {}) {
+      return conflict({
+        id: "conflict-2",
+        taskRunId: "task-run-2",
+        taskId: "task-2",
+        taskTitle: "Store the receipt",
+        revisionRunId: "cancelled-run",
+        revisionRunStatus: "cancelled",
+        ...overrides,
+      });
+    }
+
+    it("lists its conflict on its own, links that run, and says a Revise answers it", () => {
+      mockUseStoryConflicts.mockReturnValue({ data: [stranded()] });
+
+      renderWithProviders(<StorySpecPanel story={makeStory({ specVersion: 2 })} />);
+
+      const group = screen.getByTestId("story-spec-stranded-conflicts");
+      expect(group).toHaveTextContent("Store the receipt");
+      expect(group).toHaveTextContent(/ended without a new version/i);
+      expect(group).toHaveTextContent(/Revise the spec to answer them/i);
+      const hrefs = within(group)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href"));
+      expect(hrefs).toContain("/runs/cancelled-run");
+      expect(hrefs).toContain("/runs/task-run-2");
+      expect(screen.queryByTestId("story-spec-pending-conflicts")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("story-spec-revision-banner")).not.toBeInTheDocument();
+      expect(screen.getByTestId("story-spec-revise-button")).toBeInTheDocument();
+    });
+
+    it("keeps it out of an open revision's list, and orders answered, ended, then waiting", () => {
+      mockUseStoryConflicts.mockReturnValue({
+        data: [
+          conflict(),
+          stranded({ revisionRunStatus: "failed" }),
+          conflict({ id: "conflict-3", taskRunId: "task-run-3", taskTitle: "Raised later", revisionRunId: null }),
+        ],
+      });
+
+      renderWithProviders(
+        <StorySpecPanel story={makeStory({ specVersion: 2, specUnderRevision: true, openDesignRunId: "revision-run" })} />
+      );
+
+      const banner = screen.getByTestId("story-spec-revision-banner");
+      const group = screen.getByTestId("story-spec-stranded-conflicts");
+      const waiting = screen.getByTestId("story-spec-pending-conflicts");
+      expect(banner).toHaveTextContent("Wire the payment form");
+      expect(banner).not.toHaveTextContent("Store the receipt");
+      expect(group).toHaveTextContent("Store the receipt");
+      expect(group).not.toHaveTextContent("Wire the payment form");
+      expect(group).not.toHaveTextContent("Raised later");
+      expect(waiting).not.toHaveTextContent("Store the receipt");
+      // Revise is hidden while a revision is open; the open one moves the spec past this conflict.
+      expect(group).not.toHaveTextContent(/Revise the spec/i);
+      expect(group).toHaveTextContent(/resume on the version it records/i);
+      expect(banner.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(group.compareDocumentPosition(waiting) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it("does not count a deleted revision run, whose deletion unassigns the conflict", () => {
+      mockUseStoryConflicts.mockReturnValue({ data: [stranded({ revisionRunStatus: null })] });
+
+      renderWithProviders(<StorySpecPanel story={makeStory({ specVersion: 2 })} />);
+
+      expect(screen.queryByTestId("story-spec-stranded-conflicts")).not.toBeInTheDocument();
+    });
+
+    it("does not count a revision that recorded its version", () => {
+      mockUseStoryConflicts.mockReturnValue({ data: [stranded({ revisionRunStatus: "completed" })] });
+
+      renderWithProviders(<StorySpecPanel story={makeStory({ specVersion: 3 })} />);
+
+      expect(screen.queryByTestId("story-spec-stranded-conflicts")).not.toBeInTheDocument();
     });
   });
 

@@ -3,7 +3,9 @@ package com.choruskube.core.service;
 import com.choruskube.core.config.StoryDesignGraph;
 import com.choruskube.core.config.TaskDeliveryGraph;
 import com.choruskube.core.dto.SignalRequest;
+import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.NotFoundException;
+import com.choruskube.core.exception.QuotaExceededException;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.StoryConflict;
 import com.choruskube.core.model.StorySpecVersion;
@@ -16,14 +18,13 @@ import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -146,12 +147,12 @@ public class StorySpecLifecycleService {
         try {
             announce(storyId);
         } catch (RuntimeException e) {
-            log.warn(
-                    "Recorded spec v{} of Story {} from run {} but could not announce it: {}",
+            warn(
+                    "Recorded spec v{} of Story {} from run {} but could not announce it",
                     version.getVersion(),
                     storyId,
                     runId,
-                    e.getMessage());
+                    e);
         }
         return true;
     }
@@ -163,18 +164,12 @@ public class StorySpecLifecycleService {
      * assigned. Not transactional, so one Story's failure never rolls back another's progress.
      */
     public int processConflicts() {
-        Set<UUID> storyIds = conflictRepo.findByReleasedAtIsNull().stream()
-                .map(StoryConflict::getStoryId)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
         int processed = 0;
-        for (UUID storyId : storyIds) {
+        for (UUID storyId : conflictRepo.findStoryIdsWithOpenConflicts()) {
             try {
                 processed += processStory(storyId);
             } catch (Exception e) {
-                log.warn(
-                        "Could not process the open conflicts of Story {}; will be retried: {}",
-                        storyId,
-                        e.getMessage());
+                warn("Could not process the open conflicts of Story {}; will be retried", storyId, e);
             }
         }
         return processed;
@@ -213,18 +208,14 @@ public class StorySpecLifecycleService {
                 // Otherwise its revision ended without a version. Restarting one each pass would loop, so
                 // it waits for a later version, or for that run's deletion to unassign it (ON DELETE SET NULL).
             } catch (RuntimeException e) {
-                log.warn(
-                        "Could not process conflict {} of Story {}; will be retried: {}",
-                        conflict.getId(),
-                        storyId,
-                        e.getMessage());
+                warn("Could not process conflict {} of Story {}; will be retried", conflict.getId(), storyId, e);
             }
         }
         if (processed > 0) {
             announceQuietly(storyId);
         }
-        if (!toRevise.isEmpty() && startRevision(storyId, toRevise, autopilotId)) {
-            processed += toRevise.size();
+        if (!toRevise.isEmpty()) {
+            processed += startRevision(storyId, toRevise, autopilotId);
         }
         return processed;
     }
@@ -308,19 +299,27 @@ public class StorySpecLifecycleService {
                 raisedAgainst, current, raisedAgainst + 1, current);
     }
 
-    private boolean startRevision(UUID storyId, List<StoryConflict> conflicts, UUID autopilotId) {
+    /** Returns how many of {@code conflicts} the revision it started took; 0 when it started none. */
+    private int startRevision(UUID storyId, List<StoryConflict> conflicts, UUID autopilotId) {
+        List<UUID> ids = conflicts.stream().map(StoryConflict::getId).toList();
+        AtomicReference<UUID> revisionId = new AtomicReference<>();
         try {
-            storyScopeBinder.runInScopeOf(
-                    storyId, () -> storyDesignService.startRevisionForConflicts(storyId, conflicts, autopilotId));
-            return true;
+            storyScopeBinder.runInScopeOf(storyId, () -> storyDesignService
+                    .startRevisionForConflicts(storyId, conflicts, autopilotId)
+                    .ifPresent(run -> revisionId.set(run.id())));
         } catch (RuntimeException e) {
-            log.warn(
-                    "Could not start a revision of Story {} for conflicts {}; will be retried: {}",
-                    storyId,
-                    conflicts.stream().map(StoryConflict::getId).toList(),
-                    e.getMessage());
-            return false;
+            if (e instanceof NotFoundException && !storyRepo.existsById(storyId)) {
+                log.info("Story {} was deleted before a revision could start; its conflicts went with it", storyId);
+                return 0;
+            }
+            warn("Could not start a revision of Story {} for conflicts {}; will be retried", storyId, ids, e);
+            return 0;
         }
+        if (revisionId.get() == null) {
+            log.info("Started no revision of Story {}: conflicts {} were moved on since they were read", storyId, ids);
+            return 0;
+        }
+        return (int) conflictRepo.countByIdInAndRevisionRunId(ids, revisionId.get());
     }
 
     private void announce(UUID storyId) {
@@ -334,7 +333,22 @@ public class StorySpecLifecycleService {
         try {
             announce(storyId);
         } catch (RuntimeException e) {
-            log.warn("Could not announce the conflict changes of Story {}: {}", storyId, e.getMessage());
+            warn("Could not announce the conflict changes of Story {}", storyId, e);
         }
+    }
+
+    /**
+     * The last argument is the failure, whose message ends the line. Passes repeat every few seconds, so
+     * an expected refusal gets no stack trace, and anything else needs one to be diagnosed.
+     */
+    private static void warn(String message, Object... args) {
+        Throwable failure = (Throwable) args[args.length - 1];
+        boolean expected = failure instanceof ConflictException || failure instanceof QuotaExceededException;
+        Object[] withReason = Arrays.copyOf(args, expected ? args.length : args.length + 1);
+        withReason[args.length - 1] = failure.getMessage();
+        if (!expected) {
+            withReason[args.length] = failure;
+        }
+        log.warn(message + ": {}", withReason);
     }
 }

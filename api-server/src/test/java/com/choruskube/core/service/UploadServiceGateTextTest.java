@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import com.choruskube.core.repository.WorkflowRunRepository;
@@ -36,5 +37,39 @@ class UploadServiceGateTextTest {
         assertThat(put.getValue().bucket()).isEqualTo("artifacts");
         assertThat(put.getValue().key()).isEqualTo(key);
         assertThat(put.getValue().contentType()).isEqualTo("text/markdown");
+    }
+
+    @Test
+    void anAttemptIdKeysTheObjectApart_whileTheRefStillNamesTheFile() throws Exception {
+        S3Client s3 = mock(S3Client.class);
+        UploadService service = new UploadService(
+                s3, new ObjectMapper(), mock(StoragePrefixResolver.class), mock(WorkflowRunRepository.class));
+        ReflectionTestUtils.setField(service, "bucket", "artifacts");
+        UUID runId = UUID.randomUUID();
+        UUID execId = UUID.randomUUID();
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+
+        String firstRefs = service.uploadGateText("acme", runId, execId, first, "human_guidance.md", "one");
+        String secondRefs = service.uploadGateText("acme", runId, execId, second, "human_guidance.md", "two");
+
+        String prefix = "acme/runs/" + runId + "/gate-attachments/" + execId + "/";
+        assertThat(new ObjectMapper()
+                        .readTree(firstRefs)
+                        .path("human_guidance.md")
+                        .asText())
+                .isEqualTo(prefix + first + "/human_guidance.md");
+        assertThat(new ObjectMapper()
+                        .readTree(secondRefs)
+                        .path("human_guidance.md")
+                        .asText())
+                .isEqualTo(prefix + second + "/human_guidance.md");
+        ArgumentCaptor<PutObjectRequest> put = ArgumentCaptor.forClass(PutObjectRequest.class);
+        verify(s3, times(2)).putObject(put.capture(), any(RequestBody.class));
+        assertThat(put.getAllValues()).extracting(PutObjectRequest::key).doesNotHaveDuplicates();
+        assertThat(put.getAllValues()).allSatisfy(request -> {
+            assertThat(request.bucket()).isEqualTo("artifacts");
+            assertThat(request.contentType()).isEqualTo("text/markdown");
+        });
     }
 }

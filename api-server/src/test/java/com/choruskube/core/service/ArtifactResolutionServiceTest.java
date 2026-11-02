@@ -2,6 +2,10 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.*;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.choruskube.core.dto.InputArtifactManifest;
 import com.choruskube.core.dto.ResolvedArtifactGroup;
 import com.choruskube.core.model.NodeExecution;
@@ -23,6 +27,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.slf4j.LoggerFactory;
 
 class ArtifactResolutionServiceTest {
 
@@ -799,6 +804,57 @@ class ArtifactResolutionServiceTest {
     }
 
     @Test
+    void newestOf_laterCompletionOutranksHigherIterationAndEarlierDeclaration() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        Instant t1 = Instant.parse("2026-11-01T10:00:00Z");
+        NodeExecution analyze = f.producer("analyze", 3, t1, "runs/r/analyze-3/out/", "plan.md");
+        NodeExecution review = f.producer("task_spec_review", 1, t1.plusSeconds(60), "runs/r/review-1/out/", "plan.md");
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(analyze.getIteration()).isGreaterThan(review.getIteration());
+        assertThat(manifest.artifacts()).containsEntry("plan/plan.md", "runs/r/review-1/out/plan.md");
+    }
+
+    @Test
+    void newestOf_newestProducerWithoutOutput_doesNotShadowAnOlderPlan() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        Instant t1 = Instant.parse("2026-11-01T10:00:00Z");
+        NodeExecution analyze = f.producer("analyze", 1, t1, "runs/r/analyze-1/out/", "plan.md");
+        f.producerWithoutOutput("task_spec_review", 1, t1.plusSeconds(60));
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts())
+                .containsEntry("plan/plan.md", "runs/r/analyze-1/out/plan.md")
+                .doesNotContainKey("plan/task_spec.md");
+        assertThat(manifest.required()).containsExactly("plan/plan.md");
+        assertThat(service.resolveRequiredArtifacts(f.targetNodeId, f.runId))
+                .singleElement()
+                .extracting(ResolvedArtifactGroup::nodeExecutionId)
+                .isEqualTo(analyze.getId());
+    }
+
+    @Test
+    void newestOf_noProducerRecordedOutput_requiredEntryStaysSoThePodFailsLoudly() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        f.producerWithoutOutput("analyze", 1, Instant.parse("2026-11-01T10:00:00Z"));
+        f.stub();
+
+        InputArtifactManifest manifest = service.resolveInputArtifactManifest(f.runId, f.execId);
+
+        assertThat(manifest.artifacts())
+                .as("no object path exists, and the pod's download of an empty one fails")
+                .containsExactly(Map.entry("plan/plan.md", ""));
+        assertThat(manifest.required()).containsExactly("plan/plan.md");
+    }
+
+    @Test
     void newestOf_requiredEntryTheProducerDidNotWrite_staysSoThePodFailsLoudly() {
         ManifestFixture f = new ManifestFixture();
         f.declare(PLAN_GROUP);
@@ -828,6 +884,35 @@ class ArtifactResolutionServiceTest {
         assertThat(manifest.artifacts())
                 .containsKeys("plan/plan.md", "plan/task_spec.md")
                 .containsEntry("plan/task_spec.md", "runs/r/analyze-1/out/task_spec.md");
+    }
+
+    @Test
+    void newestOf_listingFailure_warnsWithItsCause() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        NodeExecution analyze =
+                f.producer("analyze", 1, Instant.parse("2026-11-01T10:00:00Z"), "runs/r/analyze-1/out/", "plan.md");
+        f.stub();
+        Mockito.when(artifactService.listArtifactNamesInternal(analyze.getArtifactRefs()))
+                .thenThrow(new IllegalStateException("object storage unavailable"));
+        Logger logger = (Logger) LoggerFactory.getLogger(ArtifactResolutionService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            service.resolveInputArtifactManifest(f.runId, f.execId);
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        assertThat(appender.list)
+                .filteredOn(e -> e.getLevel() == Level.WARN)
+                .singleElement()
+                .satisfies(e -> {
+                    assertThat(e.getFormattedMessage()).contains(analyze.getId().toString());
+                    assertThat(e.getThrowableProxy()).isNotNull();
+                    assertThat(e.getThrowableProxy().getMessage()).isEqualTo("object storage unavailable");
+                });
     }
 
     @Test
@@ -972,6 +1057,19 @@ class ArtifactResolutionServiceTest {
          * exactly {@code written} as far as the object store listing is concerned.
          */
         NodeExecution producer(String label, int iteration, Instant completedAt, String prefix, String... written) {
+            NodeExecution exec = completedExecution(label, iteration, completedAt, "{\"output\":\"" + prefix + "\"}");
+            Mockito.when(artifactService.listArtifactNamesInternal(exec.getArtifactRefs()))
+                    .thenReturn(List.of(written));
+            return exec;
+        }
+
+        /** A completed execution of the node labelled {@code label} that recorded no output prefix. */
+        NodeExecution producerWithoutOutput(String label, int iteration, Instant completedAt) {
+            return completedExecution(label, iteration, completedAt, "{}");
+        }
+
+        private NodeExecution completedExecution(
+                String label, int iteration, Instant completedAt, String artifactRefs) {
             TemplateNode node = producerNodes.computeIfAbsent(label, l -> {
                 TemplateNode tn = new TemplateNode();
                 tn.setId(UUID.randomUUID());
@@ -988,10 +1086,8 @@ class ArtifactResolutionServiceTest {
             exec.setIteration(iteration);
             exec.setLabel(label);
             exec.setCompletedAt(completedAt);
-            exec.setArtifactRefs("{\"output\":\"" + prefix + "\"}");
+            exec.setArtifactRefs(artifactRefs);
             completed.add(exec);
-            Mockito.when(artifactService.listArtifactNamesInternal(exec.getArtifactRefs()))
-                    .thenReturn(List.of(written));
             return exec;
         }
 

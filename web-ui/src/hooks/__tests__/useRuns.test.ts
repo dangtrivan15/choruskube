@@ -427,6 +427,21 @@ describe("useRuns hooks", () => {
       expect(showMutationToast).toHaveBeenCalledWith("Finalizing your approval…", "success");
     });
 
+    it("toasts a warning with the reason when the approval was rerouted to a re-check", async () => {
+      mockApi.post.mockResolvedValueOnce({ outcome: "rerouted", reason: "The Story spec moved." });
+      const { wrapper } = createTestHookWrapper();
+
+      const { result } = renderHook(() => useSignalNode("run-1"), { wrapper });
+
+      result.current.mutate({ nodeExecId: "exec-1", decision: "approved", feedback: "" });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(showMutationToast).toHaveBeenCalledWith(
+        "Not approved yet: The Story spec moved. It goes back for a re-check first; approve again after.",
+        "warning",
+      );
+    });
+
     it("calls api.postForm first then api.post with attachmentRefs when files provided", async () => {
       const attachmentRefs = '{"evidence.png":"org/runs/uuid/gate-attachments/exec-1/evidence.png"}';
       mockApi.postForm.mockResolvedValueOnce({ attachmentRefs });

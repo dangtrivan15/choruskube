@@ -6,9 +6,9 @@ stack — one api-server, one PostgreSQL, one Temporal — and, because `fullyPa
 distributes individual tests rather than whole files, two tests from the same spec file
 can run at the same time in different workers.
 
-This file records why four tests flaked under that setup, what was done about it, and
+This file records how tests have flaked under that setup, what was done about it, and
 the rules a new spec has to follow. Read it before adding a spec that asserts over a
-list, or that drives a drag or a hover.
+list, drives a drag or a hover, or reads or clicks a toast.
 
 ## What `uniqueName()` does and does not cover
 
@@ -26,8 +26,9 @@ That prevents name collisions. It does not isolate anything a name isn't the key
 | Org-wide list endpoints (`GET /api/v1/epics`, `/git-repos`) | Any spec's create or delete changes what every other spec reads |
 | The board DOM + its react-query cache | A refetch re-renders and re-orders cards under a running test |
 | `/topic/roadmap-items` | One event invalidates `["epics"]`, `["stories"]`, `["tasks"]` in every open page |
+| The toast stack (`roadmap-items` on roadmap pages, `pending-gates` on every page) | Any worker's event raises a toast in the bottom-right corner of the open page |
 
-## The three failure modes
+## The four failure modes
 
 **1. Assertions over an org-wide list.**
 
@@ -49,29 +50,64 @@ is what fixes this.
 boundingBox() ─────────────────── mouse.down() → moves → mouse.up()
        ▲
   STOMP event → invalidate ["epics"] → list re-renders / re-orders HERE
-       └→ pointer sequence lands on a moved or replaced node → no drop → no PATCH
+       ├→ press lands on a gap or a title link → no drop → no PATCH
+       └→ press lands on a neighbour card → the neighbour is dropped → PATCH to another worker's item
 ```
 
 Playwright's auto-waiting covers individual locator actions. A hand-rolled pointer
 sequence opts out of it, so nothing re-checks the card between measuring and pressing.
+Columns sort newest-first, so any other worker's create pushes every card down one slot
+and puts the newcomer exactly where the press lands. The second branch fails this spec and
+silently moves another spec's fixture (on the Task board, it starts that Task's run).
 
-**3. A hover-triggered assertion interrupted by a re-render.**
+**3. A hover preview opened under another worker's traffic.**
 
 ```
-hover() ─────────────────────── wait for Tooltip open → assert content
-    ▲
-STOMP event → invalidate ["epics"] → marker re-renders at a new x  HERE
-    └→ a CSS-transform move alone doesn't re-fire mouseenter/mouseleave → Tooltip never opens
+hover() ──── 600 ms hover-rest ──── Tooltip mounts → pointer re-hit-tested
+                  ▲                       └→ no longer on the marker → mouseleave → closes
+    STOMP event from any worker HERE
+                  ├→ invalidate ["epics"] → /roadmap/timeline refetch → marker re-laid out
+                  └→ a toast stacks over the marker (failure mode 4)
 ```
 
-Unlike the drag case, Playwright's `hover()` itself auto-waits and is locator-based, not
-coordinate-based — the problem isn't the hover call, it's that a single hover-then-assert
-only samples one moment. If the element's on-screen position (or the DOM node itself, on a
-full re-render) moves out from under an already-resting cursor before the assertion
-observes the open Tooltip, the wait times out even though nothing about the interaction
-itself was wrong.
+`fitView` puts the org's newest Story — a spec's own, just created — in the Timeline
+canvas's bottom-right corner at roughly 31×6 px. A refetch that moves the marker during the
+rest delay leaves the resting pointer off it. The preview still opens, and closes at once
+when mounting it re-hit-tests the pointer. A toast landing over the marker has the same
+effect. Re-hovering doesn't help under sustained traffic, because every attempt has the same
+window. Against the built app with a mocked broker, bursts of such events let the preview
+open on 0 of 32 attempts. With toasts alone it was 0 of 33, with re-layouts alone 47 of 76,
+and with neither 221 of 221.
+
+**4. The toast stack under the pointer.**
+
+```
+any worker's event → toast mounts in the bottom-right stack of the open page
+    ├→ over a click target   → "<li data-sonner-toast> … intercepts pointer events", every retry
+    ├→ under a resting cursor → the element below loses the hover (failure mode 3)
+    └→ stack hovered          → Sonner pauses every dismiss timer → the stack only grows
+```
+
+Sonner stacks toasts 24 px in from the bottom-right corner, 356 px wide, over whatever lies
+there: the Timeline's newest Story marker, the graph detail panel's cross-Epic picker.
+Playwright's click retry fails its hit-target check before it moves the mouse, so a cursor
+parked on the stack never leaves it. While it rests there, Sonner pauses every toast's
+dismiss timer, and other workers keep adding toasts. In the cross-Epic picker's flake the
+stack grew from 15 to 177 toasts, and every click retry was intercepted until the 120 s
+test timeout. Scrolling can't help, because the stack is `position: fixed`.
 
 ## What the suite does about it
+
+**Click-through toasts.** The shared fixture (`fixtures/index.ts`) overrides `context` with
+`installToastClickThrough` (`helpers/toast.ts`), an init script that adopts one stylesheet into
+every document before any app script runs:
+`pointer-events: none` on the Sonner stack (`[data-sonner-toaster]` and everything inside it).
+Toasts still render, so specs assert them by text, but nothing can hit them. They never
+intercept a click, never take the hover from what lies under them, and never pause their own
+dismissal. Init scripts on the context run for every page it opens and on every reload; an
+SPA navigation keeps the same document, and so the same sheet. This closes failure mode 4
+outright, and failure mode 3's toast half. A context a spec creates itself, with
+`browser.newContext()`, skips the fixture, so it calls `installToastClickThrough` right after.
 
 **Per-worker software project.** The `workerRepo` fixture (`fixtures/index.ts`) mints one
 GitRepo + RepoGroup per worker, fetch-or-create, keyed on `workerInfo.parallelIndex`.
@@ -89,13 +125,23 @@ software project. Any count or ID-set assertion goes through it. A materialized 
 inherits its run's project via `InternalRunService#createEpic(runId, …)`, so gate specs
 can scope the same way by passing `software_project_id` as a run input.
 
-**Re-entrant drag.** `RoadmapBoardPage#dragCardToColumn` re-measures the card immediately
-before `mouse.down()`, abandons the attempt if it shifted, and retries the whole gesture
-until the card lands.
+**Identity-checked drag.** All three boards drag through `dragBoardCard`
+(`helpers/board-drag.ts`). It presses, moves just past dnd-kit's activation distance, and
+releases over the target only once the intended card carries `aria-pressed="true"` — dnd-kit's
+mark on the active draggable. Any other pick-up is cancelled with Escape, which never reaches
+`onDragEnd`, and the gesture starts over. It returns the drop's write response, so a spec
+reloads only after the server has accepted the move. Re-measuring before the press only
+narrows the window; checking what was actually picked up closes it.
 
 **Re-entrant hover.** `RoadmapTimelinePage#hoverToRevealPreview` wraps the hover plus its
 follow-up assertions in `expect(...).toPass(...)`, so a failed attempt re-hovers (re-locating
 the marker at its current position) rather than re-asserting against a stale one.
+
+**Pinned hover target.** Re-hovering alone loses to sustained re-layouts, so
+`RoadmapTimelinePage#gotoPinned` replays the first `/roadmap/timeline` response for the page's
+lifetime. No other worker can then move the marker. Under the same mocked traffic, with
+click-through toasts, the preview opened on 36 of 59 attempts without pinning and on all 165
+with it.
 
 **Seeded-repo filter.** `GET /api/v1/git-repos` sorts by `url` ascending, and worker repos
 live under `https://example.invalid/e2e-worker/` — which sorts **ahead** of the seeded
@@ -110,9 +156,17 @@ happened to materialize its fixture first. Specs needing the seeded set specific
   run on the project must get past its first node, including any Story you design.
 - Never assert an absolute count — or an ID-set diff — over an unscoped list.
 - Need the seeded repos? `seededRepos(page.content)`, never `content[0]` or `.slice(0, 2)`.
+- Drag a board card through `dragBoardCard` (`helpers/board-drag.ts`), never a hand-rolled
+  `mouse.down()` … `mouse.up()` that releases whatever the press happened to pick up.
 - A hover (or any single-shot interaction) that asserts on something appearing after a delay
   — a Tooltip, a debounced fetch — belongs in `expect(...).toPass(...)`, re-issuing the
   interaction each attempt, not a single `hover()`/`click()` followed by one assertion.
+- Open the Timeline with `gotoPinned()` before hovering a marker for its preview, unless the
+  spec asserts live updates. Retrying alone can't outlast other workers' traffic.
+- Import `test` from `fixtures/index.ts`, never from `@playwright/test`, so every page the spec
+  opens gets click-through toasts; call `installToastClickThrough` on any `browser.newContext()`
+  the spec creates. Assert a toast by its text. No spec clicks inside one; one
+  that must (a close or action button) needs an opt-out added to that fixture first.
 
 ## Why not serialize instead
 

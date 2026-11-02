@@ -181,8 +181,7 @@ public class DefaultStoryService implements StoryService {
      */
     private List<StoryResponse> listWithReadiness(UUID epicId, ReadinessAuthMode mode, UUID contextId) {
         EpicReadinessAssembler.EpicCandidates candidates = readinessAssembler.loadEpicCandidates(epicId);
-        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(
-                candidates.candidateIds(), candidates.statusById(), candidates.parentOf(), mode, contextId);
+        EpicReadinessAssembler.Assembly assembly = readinessAssembler.assemble(candidates, mode, contextId);
         Map<UUID, StorySpecService.DesignState> designStates = specService.designStates(
                 candidates.stories().stream().map(Story::getId).toList());
         return candidates.stories().stream()

@@ -31,6 +31,7 @@ import java.util.UUID;
 import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -181,27 +182,34 @@ public class StorySpecService {
                 designRunId, StoryDesignGraph.REVIEW, NodeExecutionStatus.completed);
     }
 
-    /** The Story's unreleased conflicts, oldest first, each with the Task whose run raised it. */
+    /**
+     * The Story's unreleased conflicts, oldest first, each with the Task whose run raised it and the
+     * status of the revision run it is assigned to.
+     */
     @Transactional(readOnly = true)
     public List<StoryConflictResponse> openConflicts(UUID storyId) {
         List<StoryConflict> conflicts = conflictRepo.findByStoryIdAndReleasedAtIsNullOrderByCreatedAtAsc(storyId);
         if (conflicts.isEmpty()) {
             return List.of();
         }
-        Map<UUID, UUID> taskIdByRunId =
-                runRepo
-                        .findAllById(conflicts.stream()
-                                .map(StoryConflict::getTaskRunId)
-                                .collect(Collectors.toSet()))
-                        .stream()
-                        .filter(run -> run.getTaskId() != null)
-                        .collect(Collectors.toMap(WorkflowRun::getId, WorkflowRun::getTaskId));
-        Map<UUID, Task> taskById = taskRepo.findAllById(Set.copyOf(taskIdByRunId.values())).stream()
-                .collect(Collectors.toMap(Task::getId, Function.identity()));
+        Set<UUID> runIds = conflicts.stream()
+                .flatMap(c -> Stream.of(c.getTaskRunId(), c.getRevisionRunId()))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<UUID, WorkflowRun> runById =
+                runRepo.findAllById(runIds).stream().collect(Collectors.toMap(WorkflowRun::getId, Function.identity()));
+        Set<UUID> taskIds = runById.values().stream()
+                .map(WorkflowRun::getTaskId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<UUID, Task> taskById =
+                taskRepo.findAllById(taskIds).stream().collect(Collectors.toMap(Task::getId, Function.identity()));
         return conflicts.stream()
                 .map(c -> {
-                    UUID taskId = taskIdByRunId.get(c.getTaskRunId());
+                    WorkflowRun taskRun = runById.get(c.getTaskRunId());
+                    UUID taskId = taskRun == null ? null : taskRun.getTaskId();
                     Task task = taskId == null ? null : taskById.get(taskId);
+                    WorkflowRun revision = c.getRevisionRunId() == null ? null : runById.get(c.getRevisionRunId());
                     return new StoryConflictResponse(
                             c.getId(),
                             c.getTaskRunId(),
@@ -209,6 +217,7 @@ public class StorySpecService {
                             task == null ? null : task.getTitle(),
                             c.getRaisedAgainstVersion(),
                             c.getRevisionRunId(),
+                            revision == null ? null : revision.getStatus().name(),
                             c.getCreatedAt());
                 })
                 .toList();
@@ -221,7 +230,6 @@ public class StorySpecService {
         return runRepo
                 .findOpenDesignRuns(storyIds, WorkflowRunStatusGroups.ACTIVE, WorkflowRunStatus.completed)
                 .stream()
-                .filter(run -> Objects.nonNull(run.getStoryId()))
                 .sorted(Comparator.comparing(
                         WorkflowRun::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();

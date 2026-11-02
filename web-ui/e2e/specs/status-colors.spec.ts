@@ -18,50 +18,53 @@ test.describe("Run Monitor status colors", () => {
     runMonitorPage,
     api,
   }) => {
+    // Must not exceed branch_b's `slow --delay 120` (E2eTestDataSeeder#seedParallelFanout): branch_b
+    // starts after this test does, so it is still running, with "merge" pending, for every read.
+    test.setTimeout(120_000);
     const template = await api.getTemplateByName("e2e-parallel-fanout");
     const run = await api.startRun({
       graphTemplateId: template.id,
       name: uniqueName("e2e-status-colors-fanout"),
     });
 
-    // branch_b runs `mock-agent.sh slow --delay 5` — a 5s window in which
-    // "start" and the other two branches have already completed, branch_b is
-    // still running, and the fan-in "merge" node is still pending, all in one
-    // snapshot (see E2eTestDataSeeder#seedParallelFanout).
-    await api.waitForNodeStatus(run.id, "branch_b", ["running"], 15_000);
+    try {
+      await api.waitForNodeStatus(run.id, "branch_b", ["running"], 60_000);
 
-    await runMonitorPage.goto(run.id);
-    await expect(runMonitorPage.dagNodes.first()).toBeVisible({ timeout: 15_000 });
+      await runMonitorPage.goto(run.id);
+      await expect(runMonitorPage.dagNodes.first()).toBeVisible({ timeout: 15_000 });
 
-    const completedColor = await runMonitorPage.nodeStatusColor("start");
-    const runningColor = await runMonitorPage.nodeStatusColor("branch_b");
-    const pendingColor = await runMonitorPage.nodeStatusColor("merge");
+      const completedColor = await runMonitorPage.nodeStatusColor("start");
+      const runningColor = await runMonitorPage.nodeStatusColor("branch_b");
+      const pendingColor = await runMonitorPage.nodeStatusColor("merge");
 
-    expect(new Set([completedColor, runningColor, pendingColor]).size).toBe(3);
+      expect(new Set([completedColor, runningColor, pendingColor]).size).toBe(3);
 
-    // The status *word* is uniform ink for every status, in both themes — the
-    // tone lives on the icon (above), not the word.
-    const foreground = await runMonitorPage.page.evaluate(() => getComputedStyle(document.body).color);
-    for (const node of ["start", "branch_b", "merge"]) {
-      expect(await runMonitorPage.nodeStatusLabelColor(node)).toBe(foreground);
-    }
+      // The status *word* is uniform ink for every status, in both themes — the
+      // tone lives on the icon (above), not the word.
+      const foreground = await runMonitorPage.page.evaluate(() => getComputedStyle(document.body).color);
+      for (const node of ["start", "branch_b", "merge"]) {
+        expect(await runMonitorPage.nodeStatusLabelColor(node)).toBe(foreground);
+      }
 
-    await toggleTheme(runMonitorPage.page);
-    await expect(runMonitorPage.page.locator("html")).toHaveClass(/dark/);
+      await toggleTheme(runMonitorPage.page);
+      await expect(runMonitorPage.page.locator("html")).toHaveClass(/dark/);
 
-    const darkCompletedColor = await runMonitorPage.nodeStatusColor("start");
-    const darkRunningColor = await runMonitorPage.nodeStatusColor("branch_b");
-    const darkPendingColor = await runMonitorPage.nodeStatusColor("merge");
+      const darkCompletedColor = await runMonitorPage.nodeStatusColor("start");
+      const darkRunningColor = await runMonitorPage.nodeStatusColor("branch_b");
+      const darkPendingColor = await runMonitorPage.nodeStatusColor("merge");
 
-    expect(new Set([darkCompletedColor, darkRunningColor, darkPendingColor]).size).toBe(3);
-    // Re-resolved from the new theme's tokens, not stale light-mode hexes.
-    expect(darkCompletedColor).not.toBe(completedColor);
-    expect(darkRunningColor).not.toBe(runningColor);
-    expect(darkPendingColor).not.toBe(pendingColor);
+      expect(new Set([darkCompletedColor, darkRunningColor, darkPendingColor]).size).toBe(3);
+      // Re-resolved from the new theme's tokens, not stale light-mode hexes.
+      expect(darkCompletedColor).not.toBe(completedColor);
+      expect(darkRunningColor).not.toBe(runningColor);
+      expect(darkPendingColor).not.toBe(pendingColor);
 
-    const darkForeground = await runMonitorPage.page.evaluate(() => getComputedStyle(document.body).color);
-    for (const node of ["start", "branch_b", "merge"]) {
-      expect(await runMonitorPage.nodeStatusLabelColor(node)).toBe(darkForeground);
+      const darkForeground = await runMonitorPage.page.evaluate(() => getComputedStyle(document.body).color);
+      for (const node of ["start", "branch_b", "merge"]) {
+        expect(await runMonitorPage.nodeStatusLabelColor(node)).toBe(darkForeground);
+      }
+    } finally {
+      await api.cancelRun(run.id).catch(() => {});
     }
   });
 

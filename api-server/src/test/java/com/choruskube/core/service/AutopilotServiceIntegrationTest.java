@@ -290,6 +290,37 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     }
 
     @Test
+    void tick_pausedRunFreesItsSlot_soTheNextTaskStarts() {
+        StoryResponse story = makeStory(makeRepo("autopilot-paused").getId());
+        taskService.create(story.id(), new TaskRequest("First", "D"));
+        taskService.create(story.id(), new TaskRequest("Second", "D"));
+        UUID autopilotId = engage();
+        int maxParallel = autopilotRepo.findById(autopilotId).orElseThrow().getMaxParallel();
+
+        autopilotService.tick();
+        WorkflowRun first = runsFor(autopilotId).getFirst();
+        park(first, WorkflowRunStatus.running);
+        autopilotService.tick();
+
+        assertThat(runsFor(autopilotId))
+                .as("the budget is %d and the first run is still running, so it holds the only slot", maxParallel)
+                .hasSize(1);
+
+        park(first, WorkflowRunStatus.paused);
+        autopilotService.tick();
+
+        assertThat(autopilotRepo.findById(autopilotId).orElseThrow().getMaxParallel())
+                .as("the budget is unchanged: only the pause freed a slot")
+                .isEqualTo(maxParallel);
+        assertThat(runsFor(autopilotId)).hasSize(2);
+        AutopilotStatusResponse status = autopilotService.getStatus();
+        assertThat(status.inFlight())
+                .as("only the second, pending run occupies a slot")
+                .isEqualTo(1);
+        assertThat(status.awaitingYou()).extracting(AutopilotTaskRef::status).containsExactly("paused");
+    }
+
+    @Test
     void tick_taskLeftInProgressByACancelledRun_isReportedAsHeld() {
         StoryResponse story = makeStory(makeRepo("autopilot-held").getId());
         TaskResponse task = taskService.create(story.id(), new TaskRequest("Stranded", "D"));

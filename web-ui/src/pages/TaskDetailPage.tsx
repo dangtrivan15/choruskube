@@ -137,14 +137,8 @@ export default function TaskDetailPage() {
     ? `/roadmap/epics/${parentStory.epicId}/stories/${parentStory.id}`
     : "/roadmap";
 
-  // Shared by the Start (backlog) and Restart (in_progress + canRestart) triggers below — both
-  // hit the same `POST /tasks/{id}/start`, and the backend gates both identically on readiness and
-  // on the Story's spec (DefaultTaskService.start() checks both before either a fresh start or a
-  // re-trigger), so a dependency added, or a revision opened, after the Task already started can
-  // block a Restart exactly the same way it blocks the original Start. A disabled native <button>
-  // stops receiving pointer events entirely (`disabled:pointer-events-none`), so the Tooltip's hover
-  // trigger is a wrapping <span> instead — hovering where the button visually sits still reaches
-  // the span underneath it.
+  // A disabled native <button> receives no pointer events (`disabled:pointer-events-none`), so the
+  // Tooltip's hover trigger is a wrapping <span>: hovering where the button sits still reaches it.
   function renderStartTrigger(testId: string, label: string) {
     const button = (
       <Button

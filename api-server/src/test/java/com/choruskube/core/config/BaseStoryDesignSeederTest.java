@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -67,11 +68,11 @@ class BaseStoryDesignSeederTest extends BaseTest {
                 .collect(Collectors.toMap(TemplateNode::getLabel, Function.identity()));
     }
 
-    // What VERSION 1 seeds: its prompts, node configs, input specs and graph. A stored version is
+    // What VERSION 2 seeds: its prompts, node configs, input specs and graph. A stored version is
     // never re-seeded, so a change here without a bump leaves existing databases on the old
     // template: bump VERSION and update both pins together.
-    private static final int PINNED_VERSION = 1;
-    private static final String PINNED_SHA256 = "45714dcd9512aba67da98c40fb7da30a31f88fb093dc85109371bf51c2846534";
+    private static final int PINNED_VERSION = 2;
+    private static final String PINNED_SHA256 = "5f8880a7a1c3e5d866ba99007e2e8f042b9975e92f8c11a7d02d7db5033140bf";
 
     @Test
     void versionTripwire() throws Exception {
@@ -83,6 +84,24 @@ class BaseStoryDesignSeederTest extends BaseTest {
                 .isEqualTo(PINNED_VERSION);
         assertThat(templateRepo.findByGraphIdAndVersion("story-design", PINNED_VERSION))
                 .isPresent();
+    }
+
+    @Test
+    void noSlotMarkerSurvivesInAnySeededPrompt() {
+        Map<String, String> prompts = new HashMap<>();
+        nodesByLabel().forEach((label, node) -> {
+            String prompt = nodeDefRepo
+                    .findById(node.getNodeDefinitionId())
+                    .orElseThrow()
+                    .getPromptTemplate();
+            if (prompt != null) {
+                prompts.put(label, prompt);
+            }
+        });
+        assertThat(prompts).containsKeys(StoryDesignGraph.DRAFT, StoryDesignGraph.REVIEW);
+        prompts.forEach((label, prompt) -> assertThat(prompt)
+                .as("%s: a <<NAME>> marker the slot filler did not replace reaches the agent verbatim", label)
+                .doesNotContainPattern(DeliveryPromptsTest.SLOT_MARKER));
     }
 
     @Test
