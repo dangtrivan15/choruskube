@@ -230,7 +230,6 @@ public class StorySpecService {
         return runRepo
                 .findOpenDesignRuns(storyIds, WorkflowRunStatusGroups.ACTIVE, WorkflowRunStatus.completed)
                 .stream()
-                .filter(run -> Objects.nonNull(run.getStoryId()))
                 .sorted(Comparator.comparing(
                         WorkflowRun::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();

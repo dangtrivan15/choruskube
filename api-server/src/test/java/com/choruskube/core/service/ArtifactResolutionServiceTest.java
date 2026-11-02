@@ -2,6 +2,10 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.*;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.choruskube.core.dto.InputArtifactManifest;
 import com.choruskube.core.dto.ResolvedArtifactGroup;
 import com.choruskube.core.model.NodeExecution;
@@ -23,6 +27,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.slf4j.LoggerFactory;
 
 class ArtifactResolutionServiceTest {
 
@@ -879,6 +884,35 @@ class ArtifactResolutionServiceTest {
         assertThat(manifest.artifacts())
                 .containsKeys("plan/plan.md", "plan/task_spec.md")
                 .containsEntry("plan/task_spec.md", "runs/r/analyze-1/out/task_spec.md");
+    }
+
+    @Test
+    void newestOf_listingFailure_warnsWithItsCause() {
+        ManifestFixture f = new ManifestFixture();
+        f.declare(PLAN_GROUP);
+        NodeExecution analyze =
+                f.producer("analyze", 1, Instant.parse("2026-11-01T10:00:00Z"), "runs/r/analyze-1/out/", "plan.md");
+        f.stub();
+        Mockito.when(artifactService.listArtifactNamesInternal(analyze.getArtifactRefs()))
+                .thenThrow(new IllegalStateException("object storage unavailable"));
+        Logger logger = (Logger) LoggerFactory.getLogger(ArtifactResolutionService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            service.resolveInputArtifactManifest(f.runId, f.execId);
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        assertThat(appender.list)
+                .filteredOn(e -> e.getLevel() == Level.WARN)
+                .singleElement()
+                .satisfies(e -> {
+                    assertThat(e.getFormattedMessage()).contains(analyze.getId().toString());
+                    assertThat(e.getThrowableProxy()).isNotNull();
+                    assertThat(e.getThrowableProxy().getMessage()).isEqualTo("object storage unavailable");
+                });
     }
 
     @Test

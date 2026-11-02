@@ -335,9 +335,7 @@ public class ArtifactResolutionService {
             return new HashSet<>(artifactService.listArtifactNamesInternal(source.getArtifactRefs()));
         } catch (RuntimeException e) {
             log.warn(
-                    "Could not list the output of node execution {}; admitting every declared name: {}",
-                    source.getId(),
-                    e.getMessage());
+                    "Could not list the output of node execution {}; admitting every declared name", source.getId(), e);
             return null;
         }
     }
