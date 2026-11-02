@@ -442,6 +442,56 @@ class RunServiceStoryVersionRecheckTest {
     }
 
     @Test
+    void approved_runThatNeverRecordedAVersion_unaffected() {
+        stubExec();
+        stubRun(STORY_RECHECK_GATE, taskId, null);
+        currentVersion(3);
+
+        approve();
+
+        assertThat(signalled().path("decision").asText()).isEqualTo("approved");
+        verify(uploadService, never()).overwriteRunInput(any(), any(), any());
+        verifyNoGuidanceUploaded();
+    }
+
+    @Test
+    void approved_storyWithNoApprovedSpec_unaffected() {
+        stubExec();
+        stubRun(STORY_RECHECK_GATE, taskId, 1);
+        when(storySpecService.current(storyId)).thenReturn(Optional.empty());
+
+        approve();
+
+        assertThat(signalled().path("decision").asText()).isEqualTo("approved");
+        verify(uploadService, never()).overwriteRunInput(any(), any(), any());
+        verifyNoGuidanceUploaded();
+    }
+
+    @Test
+    void approved_taskThatIsGone_unaffected() {
+        stubExec();
+        stubRun(STORY_RECHECK_GATE, taskId, 1);
+        when(taskRepo.findById(taskId)).thenReturn(Optional.empty());
+
+        approve();
+
+        assertThat(signalled().path("decision").asText()).isEqualTo("approved");
+        verifyNoInteractions(storySpecService);
+    }
+
+    @Test
+    void approved_taskWithNoStory_unaffected() {
+        stubExec();
+        stubRun(STORY_RECHECK_GATE, taskId, 1);
+        when(taskRepo.findById(taskId)).thenReturn(Optional.of(new Task()));
+
+        approve();
+
+        assertThat(signalled().path("decision").asText()).isEqualTo("approved");
+        verifyNoInteractions(storySpecService);
+    }
+
+    @Test
     void approved_gateNoLongerAwaiting_versionMoved_writesNothingAndIsRefusedByTheClaim() {
         NodeExecution exec = stubExec();
         exec.setStatus(NodeExecutionStatus.running);

@@ -19,6 +19,8 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.choruskube.core.BaseTest;
+import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.TaskDeliveryGraph;
 import com.choruskube.core.credential.GitHubCredentialResolver;
@@ -72,6 +74,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -145,6 +148,9 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
     @MockitoSpyBean
     private StoryScopeBinder storyScopeBinder;
 
+    @MockitoSpyBean
+    private StoragePrefixResolver storagePrefixResolver;
+
     @MockitoBean
     private WorkflowServiceStubs workflowServiceStubs;
 
@@ -200,6 +206,8 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
         Parked parked = parkedTaskRun(storyId, 1);
         approveSpec(storyId, "# Spec v2");
         UUID runId = parked.run().getId();
+        // Another org's prefix would write this run's guidance into someone else's storage.
+        doReturn("run-prefix").when(storagePrefixResolver).storagePrefixForRun(runId);
 
         lifecycle.processConflicts();
 
@@ -208,7 +216,11 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
         ArgumentCaptor<String> guidance = ArgumentCaptor.forClass(String.class);
         verify(uploadService)
                 .uploadGateText(
-                        anyString(), eq(runId), eq(parked.gate().getId()), eq("human_guidance.md"), guidance.capture());
+                        eq("run-prefix"),
+                        eq(runId),
+                        eq(parked.gate().getId()),
+                        eq("human_guidance.md"),
+                        guidance.capture());
         assertThat(guidance.getValue()).contains("v1", "v2", "Revisions");
         ArgumentCaptor<SignalRequest> signal = ArgumentCaptor.forClass(SignalRequest.class);
         verify(runService).decideGateAsSystem(eq(runId), eq(parked.gate().getId()), signal.capture());
@@ -372,6 +384,45 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
         assertThat(conflictCount(deletedDuring)).isZero();
         verify(storyDesignService, never()).startRevisionForConflicts(eq(deletedBefore), any(), any());
         verify(runService, never()).decideGateAsSystem(any(), any(), any());
+    }
+
+    /**
+     * Runs outside the test transaction: only a pass that commits Story by Story shows that one
+     * Story's failure leaves another's release committed. It deletes what it committed, since the
+     * suite shares one database.
+     */
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void aStoryThatFails_leavesAnotherStorysReleaseCommitted() {
+        CommittedFixtureCleaner cleaner = new CommittedFixtureCleaner(jdbc);
+        try {
+            UUID failing = makeStory("conflict-isolation-failing", cleaner);
+            StorySpecFixtures.approve(jdbc, failing);
+            parkedTaskRun(failing, 1);
+            UUID releasing = makeStory("conflict-isolation-releasing", cleaner);
+            StorySpecFixtures.approve(jdbc, releasing);
+            Parked parked = parkedTaskRun(releasing, 1);
+            StorySpecFixtures.approve(jdbc, releasing);
+            doThrow(new IllegalStateException("Run could not be created"))
+                    .when(runService)
+                    .startRunExemptFromConcurrentQuota(any());
+
+            lifecycle.processConflicts();
+
+            verify(runService).startRunExemptFromConcurrentQuota(any());
+            assertThat(jdbc.queryForObject(
+                            "SELECT released_at IS NOT NULL FROM story_conflict WHERE id = ?",
+                            Boolean.class,
+                            parked.conflict().getId()))
+                    .isTrue();
+            assertThat(jdbc.queryForObject(
+                            "SELECT story_spec_version FROM workflow_run WHERE id = ?",
+                            Integer.class,
+                            parked.run().getId()))
+                    .isEqualTo(2);
+        } finally {
+            cleaner.deleteAll();
+        }
     }
 
     @Test
@@ -756,12 +807,21 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
     }
 
     private UUID makeStory(String slug) {
+        return makeStory(slug, null);
+    }
+
+    /** A non-null {@code cleaner} also gets the rows registered, for a test that commits them. */
+    private UUID makeStory(String slug, CommittedFixtureCleaner cleaner) {
         String url = "https://github.com/test/" + slug + ".git";
         GitRepo r = new GitRepo();
         r.setUrl(url);
         r.setName(RepoNameUtil.deriveOwnerRepoName(url));
         GitRepo repo = gitRepoRepo.save(r);
         EpicResponse epic = epicService.create(new EpicRequest("Epic", "D", null, repo.getId()), null);
+        if (cleaner != null) {
+            cleaner.trackSoftwareProject(repo.getId());
+            cleaner.trackEpic(epic.id());
+        }
         StoryResponse story = storyService.create(epic.id(), new StoryRequest("Story", "D"));
         return story.id();
     }

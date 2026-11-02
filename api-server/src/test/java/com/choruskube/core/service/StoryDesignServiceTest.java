@@ -73,6 +73,7 @@ import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @Transactional
@@ -377,6 +378,33 @@ class StoryDesignServiceTest extends BaseTest {
     }
 
     @Test
+    void startRevision_priorReviewObjectMissing_stagesOnlyTheSpec() throws Exception {
+        StoryResponse story = makeStory("story-revision-review-missing", "Story");
+        WorkflowRun designRun = completedDesignRun(story.id());
+        reviewExecution(designRun, "system/runs/" + designRun.getId() + "/outputs/review/");
+        specService.recordApproved(story.id(), designRun.getId(), "# Spec v1 body");
+        when(s3Client.getObject(any(GetObjectRequest.class)))
+                .thenThrow(NoSuchKeyException.builder().message("missing").build());
+
+        RunResponse started = service.startRevision(story.id(), "Tighten the API");
+
+        assertThat(stagedInputNames(started.id())).containsExactly("story_spec.md");
+        assertThat(stagedTexts()).containsEntry("story_spec.md", "# Spec v1 body");
+    }
+
+    @Test
+    void startRevision_designRunWithoutAReviewExecution_stagesOnlyTheSpec() throws Exception {
+        StoryResponse story = makeStory("story-revision-no-review", "Story");
+        WorkflowRun designRun = completedDesignRun(story.id());
+        specService.recordApproved(story.id(), designRun.getId(), "# Spec v1 body");
+
+        RunResponse started = service.startRevision(story.id(), "Tighten the API");
+
+        assertThat(stagedInputNames(started.id())).containsExactly("story_spec.md");
+        verify(s3Client, never()).getObject(any(GetObjectRequest.class));
+    }
+
+    @Test
     void startRevision_versionWithoutDesignRun_stagesOnlyTheSpec() throws Exception {
         StoryResponse story = makeStory("story-revision-fixture", "Story");
         approveSpec(story.id());
@@ -647,6 +675,15 @@ class StoryDesignServiceTest extends BaseTest {
     private void approveSpec(UUID storyId) {
         entityManager.flush();
         StorySpecFixtures.approve(jdbc, storyId);
+    }
+
+    private List<String> stagedInputNames(UUID runId) throws Exception {
+        List<String> names = new ArrayList<>();
+        objectMapper
+                .readTree(runRepo.findById(runId).orElseThrow().getInputArtifactRefs())
+                .fieldNames()
+                .forEachRemaining(names::add);
+        return names;
     }
 
     private Map<String, String> stagedTexts() throws Exception {
