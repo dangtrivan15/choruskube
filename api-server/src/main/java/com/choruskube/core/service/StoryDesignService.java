@@ -31,6 +31,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.function.IntFunction;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,30 +99,49 @@ public class StoryDesignService {
     public RunResponse startDesign(UUID storyId) {
         requireStory(storyId);
         authService.checkOrgAccess("story", storyId);
-        return start(storyId, null, null, runService::startRun);
+        return start(storyId, null, null, runService::startRun).orElseThrow().run();
     }
 
     @Transactional
     public RunResponse startDesignForAutopilot(UUID storyId, UUID autopilotId) {
         requireStory(storyId);
         authService.assertSameOrg("story", storyId, "autopilot", autopilotId);
-        return start(storyId, autopilotId, null, runService::startRun);
+        return start(storyId, autopilotId, null, runService::startRun)
+                .orElseThrow()
+                .run();
     }
 
+    /**
+     * Answers every open conflict raised against the current version, including those a revision
+     * that ended without a version still holds: the reconciler never restarts a revision for those.
+     */
     @Transactional
     public RunResponse startRevision(UUID storyId, String guidance) {
         requireStory(storyId);
         authService.checkOrgAccess("story", storyId);
-        return start(storyId, null, new Revision(List.of(), guidance), runService::startRun);
+        Revision revision =
+                new Revision(version -> conflictRepo.findOpenRaisedAgainst(storyId, version), guidance, false);
+        Started started = start(storyId, null, revision, runService::startRun).orElseThrow();
+        List<UUID> ids = idsOf(started.conflicts());
+        if (!ids.isEmpty()) {
+            // Not count-checked: a conflict closed since the read is only answered needlessly, while
+            // throwing would refuse the human's Revise and strand its staged inputs.
+            conflictRepo.reassignToRevision(
+                    ids, storyId, started.specVersion(), started.run().id());
+        }
+        return started.run();
     }
 
     /**
      * System path: no caller to authorize, so off-request it must run inside the Story's org scope.
      * Assigns the conflicts in the transaction that creates the run: assigned after it, a crash in
      * between leaves them unassigned under an open revision, and they are released unanswered.
+     * Empty, starting nothing, when none of {@code conflicts} is still open, unassigned and raised
+     * against the current version.
      */
     @Transactional
-    public RunResponse startRevisionForConflicts(UUID storyId, List<StoryConflict> conflicts, UUID autopilotIdOrNull) {
+    public Optional<RunResponse> startRevisionForConflicts(
+            UUID storyId, List<StoryConflict> conflicts, UUID autopilotIdOrNull) {
         requireStory(storyId);
         List<UUID> foreign = conflicts.stream()
                 .filter(c -> !storyId.equals(c.getStoryId()))
@@ -130,24 +150,39 @@ public class StoryDesignService {
         if (!foreign.isEmpty()) {
             throw new IllegalArgumentException("Conflicts " + foreign + " do not belong to Story " + storyId);
         }
+        if (conflicts.isEmpty()) {
+            return Optional.empty();
+        }
+        List<UUID> requested = idsOf(conflicts);
+        // Re-read and row-locked under the Story lock: a conflict closed or taken since the caller read
+        // it would fail the assignment below, rolling this start back and stranding its staged inputs.
+        Revision revision = new Revision(
+                version -> conflictRepo.lockOpenUnassignedRaisedAgainst(storyId, version, requested), null, true);
         // Skips the concurrent-run cap: it counts the parked Task runs this revision unblocks, so at
         // the cap a checked start is refused on every pass until their gates time out.
-        RunResponse started = start(
-                storyId,
-                autopilotIdOrNull,
-                new Revision(conflicts, null),
-                runService::startRunExemptFromConcurrentQuota);
-        List<UUID> ids = conflicts.stream().map(StoryConflict::getId).toList();
-        if (!ids.isEmpty() && conflictRepo.assignToRevision(ids, storyId, started.id()) != ids.size()) {
+        Optional<Started> started =
+                start(storyId, autopilotIdOrNull, revision, runService::startRunExemptFromConcurrentQuota);
+        if (started.isEmpty()) {
+            return Optional.empty();
+        }
+        RunResponse run = started.get().run();
+        List<UUID> ids = idsOf(started.get().conflicts());
+        if (conflictRepo.assignToRevision(ids, storyId, run.id()) != ids.size()) {
             throw new IllegalStateException(
                     "Conflicts " + ids + " of Story " + storyId + " are no longer all open and unassigned");
         }
-        return started;
+        return Optional.of(run);
     }
 
-    private record Revision(List<StoryConflict> conflicts, String guidance) {}
+    /**
+     * {@code conflictsAt} reads the conflicts to answer against the spec version read under the Story
+     * lock. With {@code conflictsRequired}, a revision none qualify for starts nothing.
+     */
+    private record Revision(IntFunction<List<StoryConflict>> conflictsAt, String guidance, boolean conflictsRequired) {}
 
-    private RunResponse start(
+    private record Started(RunResponse run, int specVersion, List<StoryConflict> conflicts) {}
+
+    private Optional<Started> start(
             UUID storyId, UUID autopilotId, Revision revision, Function<CreateRunRequest, RunResponse> startRun) {
         // Every start serialises on the Story row, so two starters (a human and the Autopilot, or
         // the conflict reconciler) cannot both pass the open-run guard below.
@@ -163,6 +198,13 @@ public class StoryDesignService {
         }
         if (revision != null && current.isEmpty()) {
             throw new ConflictException("Story has no approved spec to revise; design it first");
+        }
+        List<StoryConflict> conflicts = List.of();
+        if (revision != null) {
+            conflicts = revision.conflictsAt().apply(current.get().getVersion());
+            if (conflicts.isEmpty() && revision.conflictsRequired()) {
+                return Optional.empty();
+            }
         }
         Optional<WorkflowRun> open = specService.openDesignRun(storyId);
         if (open.isPresent()) {
@@ -192,7 +234,7 @@ public class StoryDesignService {
             name = "Design: " + story.getTitle();
         } else {
             StorySpecVersion spec = current.get();
-            inputs.put("revision_context", composeRevisionContext(spec, revision));
+            inputs.put("revision_context", composeRevisionContext(spec, conflicts, revision.guidance()));
             stagingRefs = uploadService.stageTexts(revisionInputs(spec));
             name = "Revise spec v" + spec.getVersion() + ": " + story.getTitle();
         }
@@ -215,7 +257,10 @@ public class StoryDesignService {
 
         eventPublisher.publishRoadmapItemChanged(
                 "story", storyId, story.getStage().name());
-        return withAutopilotId(started, autopilotId);
+        return Optional.of(new Started(
+                withAutopilotId(started, autopilotId),
+                current.map(StorySpecVersion::getVersion).orElse(0),
+                conflicts));
     }
 
     /**
@@ -270,15 +315,15 @@ public class StoryDesignService {
     }
 
     /** The draft prompt reads the version to write next from the first line's {@code v<N>}. */
-    private String composeRevisionContext(StorySpecVersion spec, Revision revision) {
+    private String composeRevisionContext(StorySpecVersion spec, List<StoryConflict> conflicts, String guidance) {
         StringBuilder sb = new StringBuilder();
         sb.append("## Current version: v").append(spec.getVersion());
         sb.append("\n\n## Conflicts to answer");
-        if (revision.conflicts().isEmpty()) {
+        if (conflicts.isEmpty()) {
             sb.append("\n\nNone.");
         } else {
-            Map<UUID, Task> taskByRunId = tasksByRunId(revision.conflicts());
-            for (StoryConflict conflict : revision.conflicts()) {
+            Map<UUID, Task> taskByRunId = tasksByRunId(conflicts);
+            for (StoryConflict conflict : conflicts) {
                 Task task = taskByRunId.get(conflict.getTaskRunId());
                 String title = task == null ? "(deleted Task)" : task.getTitle();
                 sb.append("\n\n### Conflict ")
@@ -298,8 +343,7 @@ public class StoryDesignService {
                 appendParagraph(sb, conflict.getReport());
             }
         }
-        sb.append("\n\n## Human guidance\n\n")
-                .append(isNotBlank(revision.guidance()) ? revision.guidance().strip() : "None.");
+        sb.append("\n\n## Human guidance\n\n").append(isNotBlank(guidance) ? guidance.strip() : "None.");
         return sb.toString();
     }
 
@@ -374,6 +418,10 @@ public class StoryDesignService {
                 autopilotId,
                 r.softwareProject(),
                 r.storySpecVersion());
+    }
+
+    private static List<UUID> idsOf(List<StoryConflict> conflicts) {
+        return conflicts.stream().map(StoryConflict::getId).toList();
     }
 
     private void requireStory(UUID storyId) {
