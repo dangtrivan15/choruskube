@@ -115,12 +115,31 @@ describe("AwaitStoryRevisionNotice", () => {
     expect(hrefs()).toEqual(["/roadmap/epics/epic-1/stories/story-1"]);
   });
 
+  it("does not promise a revision for an unassigned conflict while another revision is open", async () => {
+    mockGet.mockImplementation(async (path: string) =>
+      path === "/stories/story-1"
+        ? { id: "story-1", specVersion: 1, specUnderRevision: true, openDesignRunId: "other-revision" }
+        : [conflict({ revisionRunId: null })]
+    );
+
+    renderWithProviders(<AwaitStoryRevisionNotice runId="run-1" storyId="story-1" epicId="epic-1" />);
+
+    const notice = screen.getByTestId("await-story-revision-notice");
+    await waitFor(() => expect(notice).toHaveTextContent(/not asked about this conflict/i));
+    expect(notice).toHaveTextContent(/resumes on the version it records/i);
+    expect(notice).not.toHaveTextContent(/starts automatically/i);
+    expect(hrefs()).toEqual(["/roadmap/epics/epic-1/stories/story-1"]);
+  });
+
   it("links the revision run once its Story's roadmap event arrives, with no roadmap page mounted", async () => {
-    mockGet.mockResolvedValueOnce([conflict({ revisionRunId: null })]);
+    let conflicts = [conflict({ revisionRunId: null })];
+    mockGet.mockImplementation(async (path: string) =>
+      path === "/stories/story-1" ? { id: "story-1", specVersion: 1, specUnderRevision: false } : conflicts
+    );
     renderWithProviders(<AwaitStoryRevisionNotice runId="run-1" storyId="story-1" epicId="epic-1" />);
     await waitFor(() => expect(screen.getByTestId("await-story-revision-notice")).toHaveTextContent(/starts automatically/i));
 
-    mockGet.mockResolvedValueOnce([conflict({ revisionRunId: "revision-run" })]);
+    conflicts = [conflict({ revisionRunId: "revision-run" })];
     storyEvent("story-1");
 
     await waitFor(() => expect(hrefs()).toContain("/runs/revision-run"));
@@ -129,11 +148,12 @@ describe("AwaitStoryRevisionNotice", () => {
   it("ignores another Story's roadmap event", async () => {
     mockGet.mockResolvedValue([conflict({ revisionRunId: null })]);
     renderWithProviders(<AwaitStoryRevisionNotice runId="run-1" storyId="story-1" epicId="epic-1" />);
-    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(1));
+    // The unassigned conflict also reads the Story, so the count settles at two reads.
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2));
 
     storyEvent("story-2");
 
-    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockGet).toHaveBeenCalledTimes(2);
   });
 
   it("still explains the wait for a run with no Story", () => {

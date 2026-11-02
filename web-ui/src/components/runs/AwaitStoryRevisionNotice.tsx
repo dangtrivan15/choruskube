@@ -24,9 +24,11 @@ export default function AwaitStoryRevisionNotice({ runId, storyId, epicId }: Awa
   const conflict = conflicts?.find((c) => c.taskRunId === runId);
   const revisionRunId = conflict?.revisionRunId ?? null;
   const revisionEnded = conflict != null && revisionEndedWithoutVersion(conflict);
-  // Revise is refused while another revision is open, which then releases this conflict on its version.
-  const { data: story } = useStory(revisionEnded ? (storyId ?? undefined) : undefined);
-  const otherRevisionOpen = revisionEnded && story?.specUnderRevision === true;
+  const unassigned = conflict != null && revisionRunId == null;
+  // An open revision that was not asked about this conflict releases it on the version it records,
+  // and starts nothing for it.
+  const { data: story } = useStory(revisionEnded || unassigned ? (storyId ?? undefined) : undefined);
+  const otherRevisionOpen = story?.specUnderRevision === true;
 
   return (
     <StatusCallout tone="info" data-testid="await-story-revision-notice" title="Waiting on a Story revision">
@@ -49,6 +51,8 @@ export default function AwaitStoryRevisionNotice({ runId, storyId, epicId }: Awa
               The <Link to={`/runs/${revisionRunId}`} className="underline">revision run</Link> is answering
               this conflict.
             </>
+          ) : otherRevisionOpen ? (
+            "A revision of the Story is open; it was not asked about this conflict, and this run resumes on the version it records."
           ) : (
             "No revision run has taken up this conflict yet; one starts automatically."
           )}
