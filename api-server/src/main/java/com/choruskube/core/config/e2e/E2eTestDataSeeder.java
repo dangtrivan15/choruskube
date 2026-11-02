@@ -406,7 +406,7 @@ public class E2eTestDataSeeder implements ApplicationRunner {
         TemplateNode start = createNode(t, mockSuccess, "start", true, cmd("success --artifact start-done"));
         TemplateNode branchA = createNode(t, mockSuccess, "branch_a", false, cmd("success --artifact branch-a-done"));
         // status-colors.spec.ts holds branch_b at "running" for its whole test timeout; a delay shorter than
-        // that timeout lets branch_b complete between its reads, which only shows under parallel load.
+        // that timeout lets branch_b complete between its reads.
         TemplateNode branchB =
                 createNode(t, mockSlow, "branch_b", false, cmd("slow --delay 120 --artifact branch-b-done"));
         TemplateNode branchC = createNode(t, mockSuccess, "branch_c", false, cmd("success --artifact branch-c-done"));

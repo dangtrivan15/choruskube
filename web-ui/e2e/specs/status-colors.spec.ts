@@ -18,8 +18,8 @@ test.describe("Run Monitor status colors", () => {
     runMonitorPage,
     api,
   }) => {
-    // Must not exceed branch_b's `slow --delay 120` (E2eTestDataSeeder#seedParallelFanout): that
-    // margin is what keeps branch_b running, "start" completed and "merge" pending for every read.
+    // Must not exceed branch_b's `slow --delay 120` (E2eTestDataSeeder#seedParallelFanout): branch_b
+    // starts after this test does, so it is still running, with "merge" pending, for every read.
     test.setTimeout(120_000);
     const template = await api.getTemplateByName("e2e-parallel-fanout");
     const run = await api.startRun({

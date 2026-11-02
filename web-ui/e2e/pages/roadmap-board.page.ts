@@ -81,6 +81,7 @@ export class RoadmapBoardPage {
   async dragCardToColumn(title: string, targetStage: EpicStage) {
     const card = this.cardByTitle(title);
     const epicId = await card.getAttribute("data-epic-id");
+    expect(epicId, `data-epic-id on "${title}"`).not.toBeNull();
     const response = await dragBoardCard({
       card,
       grip: card.getByTestId("epic-board-card-progress"),

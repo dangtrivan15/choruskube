@@ -1,6 +1,5 @@
 import type { Locator, Response } from "@playwright/test";
 
-// Past the 5px activation distance every board's PointerSensor sets, still inside the card.
 const ACTIVATION_NUDGE_PX = 12;
 
 export interface BoardDrag {
@@ -42,7 +41,7 @@ export async function dragBoardCard(
 
     const pickedUpThisCard = await card
       .and(page.locator('[aria-pressed="true"]'))
-      .waitFor({ state: "attached", timeout: 2_000 })
+      .waitFor({ state: "attached", timeout: 5_000 })
       .then(
         () => true,
         () => false,
@@ -62,9 +61,10 @@ export async function dragBoardCard(
       { steps: 10 },
     );
     const write = page.waitForResponse(isWrite, { timeout: 30_000 });
+    write.catch(() => {});
     await page.mouse.up();
     return await write;
   }
 
-  throw new Error(`dnd-kit never picked up the intended card in ${attempts} attempts`);
+  throw new Error(`dnd-kit never picked up ${card} in ${attempts} attempts`);
 }

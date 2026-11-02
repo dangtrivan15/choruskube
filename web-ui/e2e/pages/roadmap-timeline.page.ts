@@ -92,8 +92,8 @@ export class RoadmapTimelinePage {
    * marker slides out from under an already-resting cursor before the Tooltip's hover-rest delay
    * elapses, and a CSS-transform move alone doesn't re-fire `mouseenter`/`mouseleave`, so the
    * preview just never opens. Re-issuing `hover()` inside `toPass` re-measures the marker's
-   * *current* position each attempt — the same "re-measure and retry" fix `RoadmapBoardPage`
-   * already uses for the analogous drag-interruption flake (see web-ui/e2e/PARALLELISM.md).
+   * *current* position each attempt; the analogous drag flake is closed by `dragBoardCard`, which
+   * retries the gesture after checking what was grabbed (see web-ui/e2e/PARALLELISM.md).
    *
    * `afterOpen`, when given, runs inside the same retried attempt as the hover — per
    * PARALLELISM.md's "re-entrant hover" rule, any assertion that reads the opened preview has to

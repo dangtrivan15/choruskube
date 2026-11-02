@@ -61,6 +61,7 @@ export class TaskBoardPage {
   async dragCardToColumn(title: string, targetStatus: TaskStatus) {
     const card = this.cardByTitle(title);
     const taskId = await card.getAttribute("data-task-id");
+    expect(taskId, `data-task-id on "${title}"`).not.toBeNull();
     const response = await dragBoardCard({
       card,
       grip: card.getByTestId("task-board-card-status"),

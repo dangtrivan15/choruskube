@@ -868,12 +868,15 @@ export class TestApiClient {
     timeoutMs = 60_000,
     pollIntervalMs = 2_000,
   ): Promise<WorkflowRun> {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      const run = await this.getRun(runId);
-      if (targetStatuses.includes(run.status)) return run;
-      await sleep(pollIntervalMs);
-    }
+    const run = await pollUntil(
+      async () => {
+        const current = await this.getRun(runId);
+        return targetStatuses.includes(current.status) ? current : undefined;
+      },
+      timeoutMs,
+      pollIntervalMs,
+    );
+    if (run) return run;
     throw new Error(
       `Run ${runId} did not reach status [${targetStatuses.join(", ")}] within ${timeoutMs}ms`,
     );
@@ -886,17 +889,15 @@ export class TestApiClient {
     timeoutMs = 60_000,
     pollIntervalMs = 2_000,
   ): Promise<NodeExecution> {
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const run = await this.getRun(runId);
-      const exec = run.nodeExecutions.find(
-        (ne) => ne.label === nodeLabel && targetStatuses.includes(ne.status),
-      );
-      if (exec) return exec;
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
-      await sleep(Math.min(pollIntervalMs, remaining));
-    }
+    const exec = await pollUntil(
+      async () =>
+        (await this.getRun(runId)).nodeExecutions.find(
+          (ne) => ne.label === nodeLabel && targetStatuses.includes(ne.status),
+        ),
+      timeoutMs,
+      pollIntervalMs,
+    );
+    if (exec) return exec;
     throw new Error(
       `Node "${nodeLabel}" in run ${runId} did not reach [${targetStatuses.join(", ")}] within ${timeoutMs}ms`,
     );
@@ -911,19 +912,35 @@ export class TestApiClient {
     timeoutMs = 60_000,
     pollIntervalMs = 2_000,
   ): Promise<NodeExecution> {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      const run = await this.getRun(runId);
-      const exec = run.nodeExecutions.find(
-        (ne) => ne.label === nodeLabel && ne.iteration === iteration && targetStatuses.includes(ne.status),
-      );
-      if (exec) return exec;
-      await sleep(pollIntervalMs);
-    }
+    const exec = await pollUntil(
+      async () =>
+        (await this.getRun(runId)).nodeExecutions.find(
+          (ne) => ne.label === nodeLabel && ne.iteration === iteration && targetStatuses.includes(ne.status),
+        ),
+      timeoutMs,
+      pollIntervalMs,
+    );
+    if (exec) return exec;
     throw new Error(
       `Node "${nodeLabel}" iteration ${iteration} in run ${runId} did not reach ` +
         `[${targetStatuses.join(", ")}] within ${timeoutMs}ms`,
     );
+  }
+}
+
+/** Reads every `intervalMs` until `read` returns a value; the last read lands at the deadline. */
+async function pollUntil<T>(
+  read: () => Promise<T | undefined>,
+  timeoutMs: number,
+  intervalMs: number,
+): Promise<T | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const found = await read();
+    if (found !== undefined) return found;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return undefined;
+    await sleep(Math.min(intervalMs, remaining));
   }
 }
 

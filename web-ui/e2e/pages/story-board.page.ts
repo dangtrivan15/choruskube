@@ -62,6 +62,7 @@ export class StoryBoardPage {
   async dragCardToColumn(title: string, targetStage: StoryStage) {
     const card = this.cardByTitle(title);
     const storyId = await card.getAttribute("data-story-id");
+    expect(storyId, `data-story-id on "${title}"`).not.toBeNull();
     const response = await dragBoardCard({
       card,
       grip: card.getByTestId("story-board-card-progress"),
