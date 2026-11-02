@@ -113,13 +113,16 @@ log. **Design** starts a Story's first design. **Revise** starts a revision with
 Tasks raise conflicts, a revision starts by itself for all of them together, a banner lists the
 conflicts it answers, and each waiting Task resumes once the revised spec is approved. A revision is
 a new Story Design run that goes through the same review and approval as the first design, so a
-conflict is never settled without the Story's own approval.
+conflict is never settled without the Story's own approval. **Revise** also answers the conflicts
+still waiting for a revision and those a failed or cancelled revision left behind: such a revision
+never restarts on its own, and its conflicts stay listed on the Story until a Revise answers them.
 
 On the **Task** page, **Start** is disabled until the Story's spec is approved ("Story spec not
 approved yet") and while a revision is open ("Story spec under revision"). A run shows the spec
 version it planned against. If the Story's spec moves while a Task waits at **Approve Task Spec** or
 **Final Approval**, your approval is not applied. The run sends the work back to its reviewer to
-check against the new Revisions entries, and you approve again afterwards.
+check against the new Revisions entries, and you approve again afterwards. Your feedback and
+attachments go to the reviewer with it, and a warning says why the approval was not applied.
 
 The **Autopilot** designs Stories ahead of their Tasks, in its Epic and Story order, once the
 Stories they depend on are done or have an approved spec. A design waiting for your approval counts

@@ -217,7 +217,9 @@ ahead of its own Tasks. Within the focused Epic it counts as ready work, so the 
 Epic and designs the Story rather than moving on. A design run is stamped with the Autopilot's id and then counts like a
 Task run: it occupies a slot while active, counts toward `maxAwaitingHuman` while it waits at
 Approve Story Spec, and settles into the breaker. Those two ceilings also bound how far ahead it
-designs. A revision run started for a Task's story conflict inherits that Task run's attribution.
+designs. A revision run started for a Task's story conflict inherits that Task run's attribution,
+unless a human's Revise answers the conflict first: that revision carries no Autopilot id, so it
+holds no slot and does not count toward `maxAwaitingHuman`.
 See [2026-11-01---01-design-per-story-deliver-per-task](../decisions/2026-11-01---01-design-per-story-deliver-per-task.md).
 
 ### `maxParallel` counts live agent pods only
@@ -350,6 +352,14 @@ Three details are easy to remove by accident:
 The resulting `ConflictException` reaches the caller as **409** via
 `GlobalExceptionHandler`. When the Autopilot is the loser, phase 3 treats that 409 as
 "the roadmap moved under the plan" and continues with the next Task — see below.
+
+A Story design start takes the same lock on the Story row, and checks the Story again once it
+holds it. The design sweep read its blockers, spec versions and design runs before the lock, so
+[`StoryDesignService#requireDesignable`](../../api-server/src/main/java/com/choruskube/core/service/StoryDesignService.java)
+runs the sweep's eligibility predicate over fresh reads. A blocker or a held design run added
+since the sweep ends the start with a `ConflictException`, which the tick records as a note
+without touching the breaker; otherwise the Autopilot would restart a design a human just
+cancelled.
 
 ## Failure model
 
