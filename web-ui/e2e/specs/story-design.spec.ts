@@ -57,7 +57,10 @@ test.describe("Story design", () => {
       await expect(roadmapPage.storySpecDesignButton).toHaveCount(0);
       await expect(roadmapPage.storySpecReviseButton).toBeVisible();
     } finally {
-      // No Task started under it, so the Epic can still be deleted.
+      // Deleting the Story only nulls its run's story_id, so a live design run would stay on the
+      // shared stack. No Task started under it, so the Epic can still be deleted.
+      const openRunId = (await api.getStory(story.id).catch(() => null))?.openDesignRunId;
+      if (openRunId) await api.cancelRun(openRunId).catch(() => {});
       await api.deleteEpic(epic.id);
     }
   });

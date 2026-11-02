@@ -33,6 +33,7 @@ import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskRequest;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.exception.ConflictException;
+import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.exception.QuotaExceededException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.NodeExecution;
@@ -378,8 +379,13 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
                 .when(storyDesignService)
                 .startRevisionForConflicts(eq(deletedDuring), any(), any());
 
-        assertThatCode(lifecycle::processConflicts).doesNotThrowAnyException();
+        List<ILoggingEvent> warnings = captureWarnings(
+                () -> assertThatCode(lifecycle::processConflicts).doesNotThrowAnyException());
 
+        assertThat(warnings)
+                .as("a deleted Story has nothing to retry")
+                .noneMatch(e -> e.getFormattedMessage().contains(deletedDuring.toString())
+                        || e.getFormattedMessage().contains(deletedBefore.toString()));
         assertThat(conflictCount(deletedBefore)).isZero();
         assertThat(conflictCount(deletedDuring)).isZero();
         verify(storyDesignService, never()).startRevisionForConflicts(eq(deletedBefore), any(), any());
@@ -515,6 +521,7 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
     static Stream<Arguments> startFailures() {
         return Stream.of(
                 Arguments.of(new IllegalStateException("Unexpected state"), true),
+                Arguments.of(new NotFoundException("Story Design template not found"), true),
                 Arguments.of(new ConflictException("Story already has an open design run"), false),
                 Arguments.of(new QuotaExceededException("Run quota exceeded"), false));
     }

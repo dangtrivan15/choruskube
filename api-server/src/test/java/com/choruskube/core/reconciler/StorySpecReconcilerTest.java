@@ -40,7 +40,7 @@ class StorySpecReconcilerTest {
     }
 
     @Test
-    void reconcile_failingStepIsLoggedNotThrown() {
+    void reconcile_failingRecordStep_doesNotStopTheConflictStep() {
         when(lifecycle.recordCompletedDesigns()).thenThrow(new IllegalStateException("database unavailable"));
 
         assertThatCode(reconciler::reconcile).doesNotThrowAnyException();
@@ -49,7 +49,7 @@ class StorySpecReconcilerTest {
     }
 
     @Test
-    void reconcile_failingConflictStepIsLoggedNotThrown() {
+    void reconcile_failingConflictStep_isNotThrown() {
         when(lifecycle.processConflicts()).thenThrow(new IllegalStateException("database unavailable"));
 
         assertThatCode(reconciler::reconcile).doesNotThrowAnyException();

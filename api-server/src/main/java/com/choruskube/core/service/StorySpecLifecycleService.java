@@ -308,6 +308,10 @@ public class StorySpecLifecycleService {
                     .startRevisionForConflicts(storyId, conflicts, autopilotId)
                     .ifPresent(run -> revisionId.set(run.id())));
         } catch (RuntimeException e) {
+            if (e instanceof NotFoundException && !storyRepo.existsById(storyId)) {
+                log.info("Story {} was deleted before a revision could start; its conflicts went with it", storyId);
+                return 0;
+            }
             warn("Could not start a revision of Story {} for conflicts {}; will be retried", storyId, ids, e);
             return 0;
         }
