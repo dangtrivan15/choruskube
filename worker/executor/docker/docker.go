@@ -45,6 +45,8 @@ const (
 	defaultDindImage        = "docker:29-dind"
 	dindNamePrefix          = "ck-dind-"
 	dindVolumePrefix        = "ck-dind-data-"
+	workspaceVolumePrefix   = "ck-workspace-"
+	workspaceMountPath      = "/workspace"
 	defaultNetwork          = "choruskube"
 	logLimitBytes           = 64 * 1024
 	defaultDindReadyTimeout = 30 * time.Second
@@ -185,6 +187,10 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 			return executor.ExecutionResult{}, fmt.Errorf("start DinD sidecar: %w", err)
 		}
 		env = append(env, "DOCKER_HOST=tcp://"+dindNamePrefix+execIDShort+":2375")
+		// Docker fills an empty volume from the image's /workspace, owner included, which is what
+		// lets the non-root agent write there. Pre-populating the volume or mounting it no-copy
+		// leaves it root-owned, and every Docker-enabled agent fails to set up its workspace.
+		mounts = append(mounts, mount.Mount{Type: mount.TypeVolume, Source: workspaceVolumePrefix + execIDShort, Target: workspaceMountPath})
 	}
 
 	var pullAuth string
@@ -401,6 +407,9 @@ func (d *DockerExecutor) startDindSidecar(ctx context.Context, execIDShort strin
 	if _, err := d.client.VolumeCreate(ctx, volume.CreateOptions{Name: volName}); err != nil {
 		return "", fmt.Errorf("create DinD volume: %w", err)
 	}
+	if _, err := d.client.VolumeCreate(ctx, volume.CreateOptions{Name: workspaceVolumePrefix + execIDShort}); err != nil {
+		return "", fmt.Errorf("create workspace volume: %w", err)
+	}
 
 	img := dindImageOverride
 	if img == "" {
@@ -427,7 +436,12 @@ func (d *DockerExecutor) startDindSidecar(ctx context.Context, execIDShort strin
 			Healthcheck: healthcheck,
 		},
 		&container.HostConfig{
-			Mounts:      []mount.Mount{{Type: mount.TypeVolume, Source: volName, Target: "/var/lib/docker"}},
+			Mounts: []mount.Mount{
+				{Type: mount.TypeVolume, Source: volName, Target: "/var/lib/docker"},
+				// dockerd resolves bind-mount sources on its own filesystem: without the agent's
+				// workspace at the same path, every bind mount from the checkout comes up empty.
+				{Type: mount.TypeVolume, Source: workspaceVolumePrefix + execIDShort, Target: workspaceMountPath},
+			},
 			NetworkMode: container.NetworkMode(d.network),
 			Privileged:  true,
 		},
@@ -460,20 +474,22 @@ func (d *DockerExecutor) waitForDindReady(ctx context.Context, containerID strin
 	return fmt.Errorf("DinD sidecar did not become healthy within %s", d.dindReadyTimeout)
 }
 
-// cleanupDindResources force-removes the DinD sidecar container and its data volume for
-// execIDShort. Idempotent: a not-found error on either is swallowed. The two removals are
-// attempted independently — a failure removing the container must not skip the attempt to
-// remove its volume, since each is the only handle a retry would have to that resource.
+// cleanupDindResources force-removes the DinD sidecar container, its data volume and the
+// workspace volume it shares with the agent for execIDShort. Idempotent: a not-found error on
+// any is swallowed. The removals are attempted independently — a failure removing one must not
+// skip the others, since each is the only handle a retry would have to that resource.
 func (d *DockerExecutor) cleanupDindResources(ctx context.Context, execIDShort string) error {
 	dindName := dindNamePrefix + execIDShort
-	volName := dindVolumePrefix + execIDShort
 
 	var errs []error
 	if err := d.client.ContainerRemove(ctx, dindName, container.RemoveOptions{Force: true}); err != nil && !client.IsErrNotFound(err) {
 		errs = append(errs, fmt.Errorf("remove DinD container: %w", err))
 	}
-	if err := d.client.VolumeRemove(ctx, volName, true); err != nil && !client.IsErrNotFound(err) {
+	if err := d.client.VolumeRemove(ctx, dindVolumePrefix+execIDShort, true); err != nil && !client.IsErrNotFound(err) {
 		errs = append(errs, fmt.Errorf("remove DinD volume: %w", err))
+	}
+	if err := d.client.VolumeRemove(ctx, workspaceVolumePrefix+execIDShort, true); err != nil && !client.IsErrNotFound(err) {
+		errs = append(errs, fmt.Errorf("remove workspace volume: %w", err))
 	}
 	return errors.Join(errs...)
 }
