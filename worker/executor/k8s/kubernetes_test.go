@@ -599,6 +599,86 @@ func TestKubernetesExecutor_Execute_DinD_SplicesTemplate(t *testing.T) {
 	assert.True(t, foundVol, "docker-certs volume should be spliced onto the pod spec")
 }
 
+// mountsAt returns the volume mounts whose mount path is path.
+func mountsAt(mounts []corev1.VolumeMount, path string) []corev1.VolumeMount {
+	var found []corev1.VolumeMount
+	for _, m := range mounts {
+		if m.MountPath == path {
+			found = append(found, m)
+		}
+	}
+	return found
+}
+
+// dockerd resolves a bind-mount source on its own filesystem, so a sidecar without the agent's
+// workspace hands every Compose service under the checkout an empty directory.
+func TestKubernetesExecutor_Execute_DinD_SidecarSharesAgentWorkspace(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	templateNamespace := "choruskube"
+	templateName := "choruskube-agent-pod-template"
+	setupDindTemplate(t, fakeClient, templateNamespace, templateName)
+
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		Namespace:            testNamespace,
+		AgentPodTemplateName: templateName,
+		TemplateNamespace:    templateNamespace,
+		AgentResources:       testAgentResources(),
+	})
+	params := newTestParams()
+	params.EnableDocker = true
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+	job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+	podSpec := job.Spec.Template.Spec
+
+	require.Len(t, podSpec.InitContainers, 1)
+	dindMounts := mountsAt(podSpec.InitContainers[0].VolumeMounts, "/workspace")
+	require.Len(t, dindMounts, 1, "the dind sidecar must see the agent's checkout at the same path")
+	assert.Equal(t, "workspace", dindMounts[0].Name)
+	assert.Empty(t, dindMounts[0].SubPath)
+	// Read-write: Compose services write into their bind-mounted sources.
+	assert.False(t, dindMounts[0].ReadOnly)
+
+	agentMounts := mountsAt(podSpec.Containers[0].VolumeMounts, "/workspace")
+	require.Len(t, agentMounts, 1)
+	assert.Equal(t, dindMounts[0].Name, agentMounts[0].Name, "agent and sidecar must share one volume")
+}
+
+// Kubernetes rejects a container with two mounts at one path, so a template that already mounts
+// the workspace into its sidecar must not get a second mount from the executor.
+func TestKubernetesExecutor_Execute_DinD_TemplateWorkspaceMountIsNotDuplicated(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	templateNamespace := "choruskube"
+	templateName := "choruskube-agent-pod-template"
+	setupDindTemplate(t, fakeClient, templateNamespace, templateName)
+	cm, err := fakeClient.CoreV1().ConfigMaps(templateNamespace).Get(context.Background(), templateName, metav1.GetOptions{})
+	require.NoError(t, err)
+	cm.Data["template.yaml"] = strings.Replace(cm.Data["template.yaml"],
+		"        image: docker:29-dind\n",
+		"        image: docker:29-dind\n        volumeMounts:\n          - name: workspace\n            mountPath: /workspace\n", 1)
+	_, err = fakeClient.CoreV1().ConfigMaps(templateNamespace).Update(context.Background(), cm, metav1.UpdateOptions{})
+	require.NoError(t, err)
+
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		Namespace:            testNamespace,
+		AgentPodTemplateName: templateName,
+		TemplateNamespace:    templateNamespace,
+		AgentResources:       testAgentResources(),
+	})
+	params := newTestParams()
+	params.EnableDocker = true
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+	job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+
+	require.Len(t, job.Spec.Template.Spec.InitContainers, 1)
+	assert.Len(t, mountsAt(job.Spec.Template.Spec.InitContainers[0].VolumeMounts, "/workspace"), 1)
+}
+
 // TestKubernetesExecutor_Execute_DinD_ImageOverride_SetsDindImage guards the per-project custom
 // dind image: a non-empty params.DindImage must replace the template's init-container image
 // rather than being ignored in favor of what the operator-supplied PodTemplate carries.
