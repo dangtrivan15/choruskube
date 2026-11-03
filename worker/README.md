@@ -200,6 +200,10 @@ service account, or credential itself — see
 | `DOCKER_NETWORK` | `choruskube` | Docker network agent containers and DinD sidecars attach to. |
 | `DOCKER_STAGING_DIR` | `/tmp/choruskube-agent-staging` | Base directory for per-execution config/credential staging. In Docker-out-of-Docker deployments this path must be bind-mounted identically on both sides — the Worker's own filesystem and the host daemon it talks to. |
 
+A node that requests Docker gets a DinD sidecar plus a per-execution `ck-workspace-<id>` volume
+mounted at `/workspace` in both the agent and the sidecar, so a bind mount the agent sends to the
+sidecar's daemon finds the checkout. Cleanup removes the volume with the sidecar.
+
 ### Kubernetes agent pod template
 
 The Kubernetes executor builds each agent pod itself and takes only named fields from the

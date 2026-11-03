@@ -1,10 +1,13 @@
 package docker
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types/build"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	dclient "github.com/docker/docker/client"
 	"github.com/google/uuid"
@@ -488,6 +493,90 @@ func TestDockerExecutor_Execute_WithDinD_SetsDockerHostEnv(t *testing.T) {
 
 	_, err = exec.client.VolumeInspect(context.Background(), dindVolumePrefix+execIDShort)
 	assert.Error(t, err, "DinD data volume must be removed by Cleanup")
+}
+
+// buildNonRootAgentImage builds an image shaped like the real agent's: /workspace owned by a
+// uid-1000 user that the container runs as.
+func buildNonRootAgentImage(t *testing.T, cli *dclient.Client) string {
+	t.Helper()
+	tag := "ck-test-nonroot-agent:" + uuid.New().String()[:8]
+	dockerfile := "FROM alpine:latest\n" +
+		"RUN adduser -D -u 1000 agent && mkdir -p /workspace && chown agent:agent /workspace\n" +
+		"USER agent\n"
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "Dockerfile", Mode: 0o644, Size: int64(len(dockerfile))}))
+	_, err := tw.Write([]byte(dockerfile))
+	require.NoError(t, err)
+	require.NoError(t, tw.Close())
+
+	resp, err := cli.ImageBuild(context.Background(), &buf, build.ImageBuildOptions{Tags: []string{tag}, Remove: true})
+	require.NoError(t, err)
+	out, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.NoError(t, err)
+	require.NotContains(t, string(out), `"error"`, "image build failed: %s", out)
+	t.Cleanup(func() {
+		_, _ = cli.ImageRemove(context.Background(), tag, image.RemoveOptions{Force: true})
+	})
+	return tag
+}
+
+// containerHasFile reports whether path exists inside the running container.
+func containerHasFile(t *testing.T, cli *dclient.Client, containerName, path string) bool {
+	t.Helper()
+	ctx := context.Background()
+	created, err := cli.ContainerExecCreate(ctx, containerName, container.ExecOptions{Cmd: []string{"test", "-f", path}})
+	require.NoError(t, err)
+	require.NoError(t, cli.ContainerExecStart(ctx, created.ID, container.ExecStartOptions{}))
+	for {
+		inspect, err := cli.ContainerExecInspect(ctx, created.ID)
+		require.NoError(t, err)
+		if !inspect.Running {
+			return inspect.ExitCode == 0
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// dockerd resolves bind-mount sources on its own filesystem, so the sidecar must see what the agent
+// writes under /workspace — written by the non-root user the real agent image runs as.
+func TestDockerExecutor_Execute_WithDinD_SidecarSeesNonRootAgentWorkspace(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec, err := New(Config{
+		Host:             "unix:///var/run/docker.sock",
+		Network:          "bridge",
+		StagingDir:       t.TempDir(),
+		DindReadyTimeout: 60 * time.Second,
+	})
+	require.NoError(t, err)
+	agentImage := buildNonRootAgentImage(t, exec.client)
+
+	params := executor.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           agentImage,
+		Command:         []string{"sh", "-c", "mkdir -p /workspace/repo && echo hi > /workspace/repo/probe && sleep 60"},
+		JobSecret:       "sec",
+		ConfigJSON:      map[string]any{},
+		EnableDocker:    true,
+	}
+	_, err = exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+	defer exec.Cleanup(context.Background(), params.NodeExecutionID)
+
+	execIDShort := params.NodeExecutionID.String()[:8]
+	dindName := dindNamePrefix + execIDShort
+	assert.Eventually(t, func() bool {
+		return containerHasFile(t, exec.client, dindName, "/workspace/repo/probe")
+	}, 20*time.Second, 250*time.Millisecond, "the sidecar must see the file the agent wrote under /workspace")
+
+	require.NoError(t, exec.Cleanup(context.Background(), params.NodeExecutionID))
+	_, err = exec.client.VolumeInspect(context.Background(), workspaceVolumePrefix+execIDShort)
+	assert.Error(t, err, "the shared workspace volume must be removed by Cleanup")
 }
 
 func TestDockerExecutor_Execute_WritesConfigJSONToStagingDir(t *testing.T) {
