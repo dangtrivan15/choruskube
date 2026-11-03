@@ -216,7 +216,10 @@ Docker parts stay on Docker nodes because no other agent needs the sidecar or it
 the template sets replaces the executor's own value outright rather than merging with it, so the
 pod gets exactly what the template says. The one exception is the `dind` container's memory
 limit: the executor sets it to 1.4× the container's memory request, so the template declares only the
-request, and a template that declares the limit is rejected as malformed. The Worker refuses to start
+request, and a template that declares the limit is rejected as malformed. The executor also mounts
+the agent's workspace volume into the `dind` container at `/workspace`, read-write, so a bind mount
+the agent sends to the sidecar's daemon finds the checkout instead of an empty directory; a template
+that already mounts something at `/workspace` keeps its own mount. The Worker refuses to start
 when the template is missing or malformed, and reads it once per process — restart the Worker after
 editing it.
 

@@ -45,6 +45,9 @@ const (
 	dindInitContainerName = "dind"
 	agentContainerName    = "agent"
 
+	workspaceVolumeName = "workspace"
+	workspaceMountPath  = "/workspace"
+
 	// logLimitBytes keeps GetLogs' return under the callback payload's upstream size ceiling.
 	logLimitBytes = 64 * 1024
 
@@ -296,7 +299,7 @@ func (k *KubernetesExecutor) buildJob(
 		},
 		EnvFrom: envFrom,
 		VolumeMounts: []corev1.VolumeMount{
-			{Name: "workspace", MountPath: "/workspace"},
+			{Name: workspaceVolumeName, MountPath: workspaceMountPath},
 			{Name: "config", MountPath: "/workspace/config.json", SubPath: "config.json"},
 			{Name: "tmp", MountPath: "/tmp"},
 		},
@@ -309,7 +312,7 @@ func (k *KubernetesExecutor) buildJob(
 	}
 
 	volumes := []corev1.Volume{
-		{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: workspaceVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{
 			Name: "config",
 			VolumeSource: corev1.VolumeSource{
@@ -752,6 +755,12 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 		}
 		dind.Resources.Limits[corev1.ResourceMemory] = derivedMemoryLimit(request)
 	}
+	// dockerd resolves bind-mount sources on its own filesystem: without the agent's workspace at the
+	// same path, every bind mount from the checkout silently comes up as an empty directory. A
+	// template that already mounts the path keeps its mount — Kubernetes rejects a duplicate path.
+	if !hasMountAt(dind.VolumeMounts, workspaceMountPath) {
+		dind.VolumeMounts = append(dind.VolumeMounts, corev1.VolumeMount{Name: workspaceVolumeName, MountPath: workspaceMountPath})
+	}
 	podSpec.InitContainers = append(podSpec.InitContainers, *dind)
 
 	var templateAgent *corev1.Container
@@ -774,6 +783,15 @@ func (k *KubernetesExecutor) addDindSupport(ctx context.Context, job *batchv1.Jo
 
 	podSpec.Volumes = append(podSpec.Volumes, templateSpec.Volumes...)
 	return nil
+}
+
+func hasMountAt(mounts []corev1.VolumeMount, path string) bool {
+	for _, m := range mounts {
+		if m.MountPath == path {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidatePodTemplate loads and parses the agent PodTemplate once (also warming the cache),
