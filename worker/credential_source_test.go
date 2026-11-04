@@ -60,7 +60,9 @@ func TestNewCredentialProviderLocalReadsTheMountedFolderAndSkipsTheAPI(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, "ghp_local", tok.Value)
 	assert.Zero(t, client.calls, "local mode must never ask the API server for a GitHub token")
-	assert.Zero(t, client.scopeCalls, "a PAT credential must never trigger a scope call")
+	// The scope call here is the run's-first-token reachability check, not a minting input --
+	// a PAT never mints, so it must never ask the API server for anything else.
+	assert.Equal(t, 1, client.scopeCalls)
 }
 
 func TestConfigValidateRejectsAnUnknownCredentialSource(t *testing.T) {
@@ -93,12 +95,17 @@ func TestConfigWithDefaults_FillsCredentialSettings(t *testing.T) {
 
 	assert.Equal(t, "/etc/choruskube/credentials", got.CredentialsDir)
 	assert.Equal(t, "https://api.github.com", got.GitHubAPIURL)
+	assert.Equal(t, "https://api.anthropic.com", got.AnthropicAPIURL)
 }
 
 func TestConfigWithDefaults_LeavesExplicitCredentialSettingsAlone(t *testing.T) {
-	got := Config{CredentialSource: CredentialSourceLocal, CredentialsDir: "/creds", GitHubAPIURL: "http://ghe.example.test/api/v3"}.withDefaults()
+	got := Config{
+		CredentialSource: CredentialSourceLocal, CredentialsDir: "/creds",
+		GitHubAPIURL: "http://ghe.example.test/api/v3", AnthropicAPIURL: "http://claude.example.test",
+	}.withDefaults()
 
 	assert.Equal(t, CredentialSourceLocal, got.CredentialSource)
 	assert.Equal(t, "/creds", got.CredentialsDir)
 	assert.Equal(t, "http://ghe.example.test/api/v3", got.GitHubAPIURL)
+	assert.Equal(t, "http://claude.example.test", got.AnthropicAPIURL)
 }

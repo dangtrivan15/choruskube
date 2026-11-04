@@ -19,7 +19,10 @@ import com.choruskube.core.exception.ForbiddenException;
  * request.credentialSource()} is validated by {@link WorkerRegisterRequest} before this class
  * ever sees it, but is otherwise unused here: this server serves exactly one Fleet, so which mode
  * it runs is a fact about the deployment, not something to learn from whichever Worker happens to
- * register, and there is nothing per-Worker to record it against.
+ * register, and there is nothing per-Worker to record it against. {@code
+ * request.credentialHealth()} is likewise validated before this class sees it and otherwise
+ * ignored: this class receives every Worker's credential-health report and keeps none of it,
+ * because there is no Worker record here for a report to lapse with.
  *
  * <p><b>Not a Spring bean.</b> {@code WorkerRegistrationController} holds it as the fallback
  * behind an {@code ObjectProvider}, the same arrangement as {@link ShufflingTickOrder}, so an

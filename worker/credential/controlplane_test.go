@@ -82,3 +82,22 @@ func TestControlPlaneScriptNodeNeedsNoToken(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, agent.ClaudeOAuthToken)
 }
+
+// panicTokenClient fails the test the instant any TokenClient method is called -- a control-plane
+// Worker holds nothing, so its health check must never reach the API server at all.
+type panicTokenClient struct{ t *testing.T }
+
+func (p panicTokenClient) GitHubToken(context.Context, uuid.UUID) (string, error) {
+	p.t.Fatal("control-plane CheckHealth must never call TokenClient")
+	return "", nil
+}
+
+func TestControlPlaneCheckHealthReportsEveryKindNotHeldAndCallsNoClient(t *testing.T) {
+	got := NewControlPlane(panicTokenClient{t: t}).CheckHealth(context.Background())
+
+	assert.Len(t, got, 3)
+	for _, r := range got {
+		assert.Equal(t, StatusNotHeld, r.Status, "%s", r.Kind)
+		assert.False(t, r.CheckedAt.IsZero())
+	}
+}

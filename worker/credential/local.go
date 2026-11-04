@@ -21,6 +21,35 @@ import (
 	"github.com/dangtrivan15/choruskube/worker/github"
 )
 
+// healthCheckTimeout bounds every outbound read CheckHealth makes, and the repository read a
+// run's first PAT token triggers, so a stalled service can delay a registration or a token
+// request by at most this long rather than hanging the caller indefinitely.
+const healthCheckTimeout = 10 * time.Second
+
+// maxVerifiedRuns bounds the "already verified this run's repositories" set. A Worker runs many
+// runs over its lifetime and holds this in memory only, so an unbounded set would grow forever;
+// the oldest entry is evicted first, same as the trade a restart already makes (every run is
+// re-verified once more).
+const maxVerifiedRuns = 1024
+
+// GitHubChecker is the lightest authenticated GitHub reads a PAT health check and a run's
+// repository-reachability check need. *github.Client satisfies it.
+type GitHubChecker interface {
+	User(ctx context.Context, token string) (github.UserCheck, error)
+	Repository(ctx context.Context, token, ownerRepo string) error
+}
+
+// AnthropicChecker checks a Claude token the lightest way the API offers. *anthropic.Client
+// satisfies it structurally -- this package never imports anthropic, so the dependency runs the
+// other way: anthropic imports credential for the Status type it returns.
+type AnthropicChecker interface {
+	Check(ctx context.Context, token string) (Status, string)
+}
+
+// RegistryChecker checks a registry login the lightest way the API offers. registry.Check (the
+// package function) satisfies this function type directly.
+type RegistryChecker func(ctx context.Context, host, username, password string) (Status, string)
+
 // refreshMargin re-mints a cached App token this long before it expires, so a pod is never handed
 // one that lapses mid-clone.
 const refreshMargin = 5 * time.Minute
@@ -53,9 +82,19 @@ type local struct {
 	scopes ScopeClient
 	now    func() time.Time
 
+	ghChecker        GitHubChecker
+	anthropicChecker AnthropicChecker
+	registryChecker  RegistryChecker
+
 	mu            sync.Mutex
 	installations map[[sha256.Size]byte]cachedInstallation
 	tokens        map[string]github.InstallationToken
+
+	// verifiedMu guards the bounded set of runs whose repositories a PAT has already proven it
+	// can reach, so GitHubToken checks reachability once per run rather than on every call.
+	verifiedMu    sync.Mutex
+	verifiedRuns  map[uuid.UUID]struct{}
+	verifiedOrder []uuid.UUID
 }
 
 type cachedInstallation struct {
@@ -67,19 +106,29 @@ type cachedInstallation struct {
 // for anything dir does not hold: GITHUB_PAT, GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID,
 // GITHUB_APP_PRIVATE_KEY_PATH, CLAUDE_CODE_OAUTH_TOKEN, REGISTRY_HOST, REGISTRY_USERNAME and
 // REGISTRY_PASSWORD. An empty dir means environment only. scopes supplies the run scope an App
-// credential's mint is narrowed to; it is never consulted for a PAT. AgentCredentials never reads
+// credential's mint is narrowed to, and the repositories a PAT's first use for a run checks it can
+// reach; it is never consulted for a PAT's minting (there is none). AgentCredentials never reads
 // what prepare attached — a Claude-running node with no Claude token of its own is an error.
-func NewLocal(dir string, gh AppTokenMinter, scopes ScopeClient, now func() time.Time) Provider {
+// ghChecker, anthropic and registryChecker are consulted only by CheckHealth and, for ghChecker,
+// a PAT's first-token repository check.
+func NewLocal(
+	dir string, gh AppTokenMinter, scopes ScopeClient, now func() time.Time,
+	ghChecker GitHubChecker, anthropic AnthropicChecker, registryChecker RegistryChecker,
+) Provider {
 	if now == nil {
 		now = time.Now
 	}
 	return &local{
-		dir:           dir,
-		gh:            gh,
-		scopes:        scopes,
-		now:           now,
-		installations: make(map[[sha256.Size]byte]cachedInstallation),
-		tokens:        make(map[string]github.InstallationToken),
+		dir:              dir,
+		gh:               gh,
+		scopes:           scopes,
+		now:              now,
+		ghChecker:        ghChecker,
+		anthropicChecker: anthropic,
+		registryChecker:  registryChecker,
+		installations:    make(map[[sha256.Size]byte]cachedInstallation),
+		tokens:           make(map[string]github.InstallationToken),
+		verifiedRuns:     make(map[uuid.UUID]struct{}),
 	}
 }
 
@@ -107,6 +156,9 @@ func (l *local) GitHubToken(ctx context.Context, runID uuid.UUID) (Token, error)
 		return Token{}, err
 	}
 	if pat != "" {
+		if err := l.verifyRunRepositories(ctx, runID, pat); err != nil {
+			return Token{}, err
+		}
 		return Token{Value: pat}, nil
 	}
 	app, err := l.appFromFiles()
@@ -117,6 +169,9 @@ func (l *local) GitHubToken(ctx context.Context, runID uuid.UUID) (Token, error)
 		return l.mintScoped(ctx, runID, *app)
 	}
 	if pat := strings.TrimSpace(os.Getenv("GITHUB_PAT")); pat != "" {
+		if err := l.verifyRunRepositories(ctx, runID, pat); err != nil {
+			return Token{}, err
+		}
 		return Token{Value: pat}, nil
 	}
 	app, err = appFromEnv()
@@ -128,6 +183,77 @@ func (l *local) GitHubToken(ctx context.Context, runID uuid.UUID) (Token, error)
 	}
 	return Token{}, fmt.Errorf("no GitHub credential configured: put github-pat or github-app/{app-id,installation-id,private-key.pem} "+
 		"in CREDENTIALS_DIR (%s), or set GITHUB_PAT, or GITHUB_APP_ID with GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY_PATH", l.dirLabel())
+}
+
+// verifyRunRepositories checks, once per run, that a PAT can reach every repository the run's
+// scope names -- a narrowed App mint already fails the same way for its own credential kind, so a
+// PAT needs an explicit read to catch the same class of problem. A run already proven is skipped
+// so a long-lived PAT is not re-read on every node of the same run.
+func (l *local) verifyRunRepositories(ctx context.Context, runID uuid.UUID, pat string) error {
+	if l.runVerified(runID) {
+		return nil
+	}
+	if l.scopes == nil {
+		return errors.New("no GitHub token scope source configured for a PAT credential")
+	}
+	repositories, _, err := l.scopes.GitHubTokenScope(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("fetch GitHub token scope for run %s: %w", runID, err)
+	}
+	if l.ghChecker != nil {
+		var unreachable []string
+		for _, repo := range repositories {
+			if err := l.checkRepositoryReachable(ctx, pat, repo); err != nil {
+				unreachable = append(unreachable, fmt.Sprintf("%s (%s)", repo, reachabilityReason(err)))
+			}
+		}
+		if len(unreachable) > 0 {
+			sort.Strings(unreachable)
+			return fmt.Errorf("this PAT cannot reach %s", strings.Join(unreachable, ", "))
+		}
+	}
+	l.markRunVerified(runID)
+	return nil
+}
+
+// reachabilityReason separates a repository GitHub refused from one this Worker could not ask
+// about at all, so an operator does not read an outage as a missing grant.
+func reachabilityReason(err error) string {
+	var apiErr *github.APIError
+	if errors.As(err, &apiErr) {
+		return fmt.Sprintf("HTTP %d", apiErr.Status)
+	}
+	return "could not check: " + err.Error()
+}
+
+func (l *local) checkRepositoryReachable(ctx context.Context, pat, repo string) error {
+	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+	defer cancel()
+	return l.ghChecker.Repository(cctx, pat, repo)
+}
+
+func (l *local) runVerified(runID uuid.UUID) bool {
+	l.verifiedMu.Lock()
+	defer l.verifiedMu.Unlock()
+	_, ok := l.verifiedRuns[runID]
+	return ok
+}
+
+// markRunVerified records runID as proven reachable, evicting the oldest entry first once the
+// bounded set is full.
+func (l *local) markRunVerified(runID uuid.UUID) {
+	l.verifiedMu.Lock()
+	defer l.verifiedMu.Unlock()
+	if _, ok := l.verifiedRuns[runID]; ok {
+		return
+	}
+	if len(l.verifiedOrder) >= maxVerifiedRuns {
+		oldest := l.verifiedOrder[0]
+		l.verifiedOrder = l.verifiedOrder[1:]
+		delete(l.verifiedRuns, oldest)
+	}
+	l.verifiedRuns[runID] = struct{}{}
+	l.verifiedOrder = append(l.verifiedOrder, runID)
 }
 
 // AgentCredentials ignores attached: this Worker holds its own credentials and never launches on
@@ -380,4 +506,182 @@ func (l *local) dirLabel() string {
 		return "unset"
 	}
 	return l.dir
+}
+
+// CheckHealth re-reads the credentials folder and env on every call, the same as GitHubToken, so
+// a credential rotated in place is picked up by the next check rather than cached from startup.
+// The kinds are checked concurrently, so the startup check that precedes the first registration
+// waits at most one healthCheckTimeout rather than one per kind.
+func (l *local) CheckHealth(ctx context.Context) []HealthResult {
+	checks := []func(context.Context) HealthResult{l.checkGitHub, l.checkClaude, l.checkRegistryHealth}
+	out := make([]HealthResult, len(checks))
+	var wg sync.WaitGroup
+	for i, check := range checks {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out[i] = check(ctx)
+		}()
+	}
+	wg.Wait()
+	return out
+}
+
+func (l *local) checkGitHub(ctx context.Context) HealthResult {
+	now := l.now()
+	pat, err := l.fileValue("github-pat")
+	if err != nil {
+		return malformedGitHub(err, now)
+	}
+	if pat != "" {
+		return l.checkPAT(ctx, pat, now)
+	}
+	app, err := l.appFromFiles()
+	if err != nil {
+		return malformedGitHub(err, now)
+	}
+	if app != nil {
+		return l.checkApp(ctx, *app, now)
+	}
+	if envPAT := strings.TrimSpace(os.Getenv("GITHUB_PAT")); envPAT != "" {
+		return l.checkPAT(ctx, envPAT, now)
+	}
+	app, err = appFromEnv()
+	if err != nil {
+		return malformedGitHub(err, now)
+	}
+	if app != nil {
+		return l.checkApp(ctx, *app, now)
+	}
+	return HealthResult{Kind: KindGitHub, Status: StatusNotHeld, CheckedAt: now}
+}
+
+// malformedGitHub reports a partial or unreadable credential set as Expired, naming the missing
+// file or variable -- the same message GitHubToken would fail with, which never names a secret,
+// only a path or an env var name.
+func malformedGitHub(err error, now time.Time) HealthResult {
+	return HealthResult{Kind: KindGitHub, Status: StatusExpired, Detail: truncateDetail(err.Error()), CheckedAt: now}
+}
+
+// repoScopes splits an X-OAuth-Scopes header the way GitHub sends it: comma-separated, each
+// optionally followed by whitespace.
+func repoScopes(header string) []string {
+	parts := strings.Split(header, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, strings.TrimSpace(p))
+	}
+	return out
+}
+
+func hasScope(header, want string) bool {
+	for _, s := range repoScopes(header) {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// checkPAT classifies a PAT the same way an API server's own PAT check does: 401 expired, 403
+// insufficient permissions, any other non-2xx unreachable. On success a missing scopes header is a
+// fine-grained PAT (valid), and a present header without "repo" is insufficient permissions.
+func (l *local) checkPAT(ctx context.Context, pat string, now time.Time) HealthResult {
+	if l.ghChecker == nil {
+		return HealthResult{Kind: KindGitHub, Status: StatusUnreachable, Detail: "no GitHub checker configured", CheckedAt: now}
+	}
+	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+	defer cancel()
+	check, err := l.ghChecker.User(cctx, pat)
+	if err != nil {
+		return HealthResult{Kind: KindGitHub, Status: StatusUnreachable, Detail: "GitHub request failed", CheckedAt: now}
+	}
+	switch check.Status {
+	case http.StatusUnauthorized:
+		return HealthResult{Kind: KindGitHub, Status: StatusExpired, Detail: fmt.Sprintf("GitHub API returned HTTP %d", check.Status), CheckedAt: now}
+	case http.StatusForbidden:
+		return HealthResult{Kind: KindGitHub, Status: StatusInsufficientPermissions, Detail: fmt.Sprintf("GitHub API returned HTTP %d", check.Status), CheckedAt: now}
+	}
+	if check.Status >= 400 {
+		return HealthResult{Kind: KindGitHub, Status: StatusUnreachable, Detail: fmt.Sprintf("GitHub API returned HTTP %d", check.Status), CheckedAt: now}
+	}
+	if !check.ScopesPresent {
+		return HealthResult{Kind: KindGitHub, Status: StatusValid, Detail: "token is valid (fine-grained PAT, scopes not verifiable via header)", CheckedAt: now}
+	}
+	if !hasScope(check.Scopes, "repo") {
+		return HealthResult{
+			Kind: KindGitHub, Status: StatusInsufficientPermissions,
+			Detail: truncateDetail("token is missing the required 'repo' scope; current scopes: " + check.Scopes), CheckedAt: now,
+		}
+	}
+	return HealthResult{Kind: KindGitHub, Status: StatusValid, CheckedAt: now}
+}
+
+// checkApp looks up the installation and mints nothing: 200 and not suspended is valid, a
+// suspended installation or a 401/404 is expired, 403 is insufficient permissions, and a network
+// error, timeout or any other status (including 5xx) is unreachable.
+func (l *local) checkApp(ctx context.Context, app appCredential, now time.Time) HealthResult {
+	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+	defer cancel()
+	inst, err := l.gh.Installation(cctx, app.appID, app.installationID, app.pem, l.now())
+	if err != nil {
+		var apiErr *github.APIError
+		if errors.As(err, &apiErr) {
+			switch apiErr.Status {
+			case http.StatusUnauthorized, http.StatusNotFound:
+				return HealthResult{Kind: KindGitHub, Status: StatusExpired, Detail: truncateDetail(apiErr.Error()), CheckedAt: now}
+			case http.StatusForbidden:
+				return HealthResult{Kind: KindGitHub, Status: StatusInsufficientPermissions, Detail: truncateDetail(apiErr.Error()), CheckedAt: now}
+			default:
+				return HealthResult{Kind: KindGitHub, Status: StatusUnreachable, Detail: truncateDetail(apiErr.Error()), CheckedAt: now}
+			}
+		}
+		return HealthResult{Kind: KindGitHub, Status: StatusUnreachable, Detail: "GitHub App installation lookup failed", CheckedAt: now}
+	}
+	if inst.Suspended {
+		return HealthResult{Kind: KindGitHub, Status: StatusExpired, Detail: "GitHub App installation is suspended", CheckedAt: now}
+	}
+	return HealthResult{Kind: KindGitHub, Status: StatusValid, CheckedAt: now}
+}
+
+// checkClaude reads the Claude token the same way AgentCredentials does; an absent token is
+// NotHeld rather than a failing check, since a Worker that never runs Claude nodes legitimately
+// holds none.
+func (l *local) checkClaude(ctx context.Context) HealthResult {
+	now := l.now()
+	claude, err := l.fileOrEnv("claude-oauth-token", "CLAUDE_CODE_OAUTH_TOKEN")
+	if err != nil {
+		return HealthResult{Kind: KindClaude, Status: StatusExpired, Detail: truncateDetail(err.Error()), CheckedAt: now}
+	}
+	if claude == "" {
+		return HealthResult{Kind: KindClaude, Status: StatusNotHeld, CheckedAt: now}
+	}
+	if l.anthropicChecker == nil {
+		return HealthResult{Kind: KindClaude, Status: StatusUnreachable, Detail: "no Anthropic checker configured", CheckedAt: now}
+	}
+	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+	defer cancel()
+	status, detail := l.anthropicChecker.Check(cctx, claude)
+	return HealthResult{Kind: KindClaude, Status: status, Detail: truncateDetail(detail), CheckedAt: now}
+}
+
+// checkRegistryHealth reads the registry login the same way AgentCredentials does, via the
+// registry() helper; an anonymous pull (no credential at all) is NotHeld, while an incomplete set
+// is Expired naming what is missing -- registry() already builds that message.
+func (l *local) checkRegistryHealth(ctx context.Context) HealthResult {
+	now := l.now()
+	reg, err := l.registry()
+	if err != nil {
+		return HealthResult{Kind: KindRegistry, Status: StatusExpired, Detail: truncateDetail(err.Error()), CheckedAt: now}
+	}
+	if reg == nil {
+		return HealthResult{Kind: KindRegistry, Status: StatusNotHeld, CheckedAt: now}
+	}
+	if l.registryChecker == nil {
+		return HealthResult{Kind: KindRegistry, Status: StatusUnreachable, Detail: "no registry checker configured", CheckedAt: now}
+	}
+	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+	defer cancel()
+	status, detail := l.registryChecker(cctx, reg.Host, reg.Username, reg.Password)
+	return HealthResult{Kind: KindRegistry, Status: status, Detail: truncateDetail(detail), CheckedAt: now}
 }

@@ -258,6 +258,42 @@ func TestInstallationRequiresBothIdentifiers(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestInstallationDecodesSuspendedAt(t *testing.T) {
+	key := newRSAKey(t)
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"account":{"login":"acme"},"permissions":{},"suspended_at":"2026-10-11T09:00:00Z"}`)
+	})
+
+	inst, err := c.Installation(context.Background(), "42", "99", pkcs1PEM(key), time.Now())
+
+	require.NoError(t, err)
+	assert.True(t, inst.Suspended)
+}
+
+func TestInstallationNullSuspendedAtIsNotSuspended(t *testing.T) {
+	key := newRSAKey(t)
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"account":{"login":"acme"},"permissions":{},"suspended_at":null}`)
+	})
+
+	inst, err := c.Installation(context.Background(), "42", "99", pkcs1PEM(key), time.Now())
+
+	require.NoError(t, err)
+	assert.False(t, inst.Suspended)
+}
+
+func TestInstallationOmittedSuspendedAtIsNotSuspended(t *testing.T) {
+	key := newRSAKey(t)
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"account":{"login":"acme"},"permissions":{}}`)
+	})
+
+	inst, err := c.Installation(context.Background(), "42", "99", pkcs1PEM(key), time.Now())
+
+	require.NoError(t, err)
+	assert.False(t, inst.Suspended)
+}
+
 func TestInstallationWithoutAnAccountLoginIsAnError(t *testing.T) {
 	key := newRSAKey(t)
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {

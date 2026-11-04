@@ -695,6 +695,110 @@ func TestCloseIssueRejectsAnInvalidSlugWithoutARequest(t *testing.T) {
 	assert.False(t, called, "an invalid slug must never reach the server")
 }
 
+func TestUserReturnsTheScopesHeaderWhenPresent(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/user", r.URL.Path)
+		requireGitHubHeaders(t, r, "t")
+		w.Header().Set("X-OAuth-Scopes", "repo, read:org")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	got, err := c.User(context.Background(), "t")
+
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, got.Status)
+	assert.Equal(t, "repo, read:org", got.Scopes)
+	assert.True(t, got.ScopesPresent)
+}
+
+func TestUserReportsTheScopesHeaderAbsent(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	got, err := c.User(context.Background(), "t")
+
+	require.NoError(t, err)
+	assert.Empty(t, got.Scopes)
+	assert.False(t, got.ScopesPresent, "a fine-grained PAT sends no X-OAuth-Scopes header at all")
+}
+
+func TestUserDistinguishesAnEmptyHeaderFromAnAbsentOne(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-OAuth-Scopes", "")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	got, err := c.User(context.Background(), "t")
+
+	require.NoError(t, err)
+	assert.True(t, got.ScopesPresent, "the header was sent, even though its value is empty")
+}
+
+func TestUserReturnsTheStatusForTheCallerToClassify(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+			})
+
+			got, err := c.User(context.Background(), "t")
+
+			require.NoError(t, err, "only a transport failure is a Go error")
+			assert.Equal(t, status, got.Status)
+		})
+	}
+}
+
+func TestRepositorySuccessIsNil(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/repos/acme/app", r.URL.Path)
+		requireGitHubHeaders(t, r, "t")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	err := c.Repository(context.Background(), "t", "acme/app")
+
+	require.NoError(t, err)
+}
+
+func TestRepository404IsAPIErrorWithOwnerRepo(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	err := c.Repository(context.Background(), "t", "acme/missing")
+
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusNotFound, apiErr.Status)
+	assert.Equal(t, "acme/missing", apiErr.OwnerRepo)
+}
+
+func TestRepositoryOtherNonSuccessIsAPIError(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	err := c.Repository(context.Background(), "t", "acme/app")
+
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusInternalServerError, apiErr.Status)
+}
+
+func TestRepositoryRejectsAnInvalidSlugWithoutARequest(t *testing.T) {
+	called := false
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { called = true })
+
+	err := c.Repository(context.Background(), "t", "not-a-slug")
+
+	require.Error(t, err)
+	assert.False(t, called)
+}
+
 func TestCloseIssueRejectsANonPositiveNumberWithoutARequest(t *testing.T) {
 	called := false
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { called = true })

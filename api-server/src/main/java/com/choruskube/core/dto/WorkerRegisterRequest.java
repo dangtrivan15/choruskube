@@ -1,10 +1,15 @@
 package com.choruskube.core.dto;
 
+import com.choruskube.core.model.CredentialKind;
 import com.choruskube.core.model.WorkerCredentialSource;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * @param hostname identifies the Worker process for operator display and revocation
@@ -18,16 +23,34 @@ import java.util.UUID;
  * @param credentialSource which credential mode the Worker runs in. Required: this is a hard
  *     cutover, so a missing, blank, or unrecognized value is refused with no default rather than
  *     assuming either mode on the Worker's behalf.
+ * @param credentialHealth the Worker's latest self-check of every credential it holds, or reports
+ *     holding none of. Required, with exactly one entry per {@link CredentialKind}: this is the
+ *     same hard cutover as {@code credentialSource}, so a Worker built before this field existed
+ *     cannot register.
  */
 public record WorkerRegisterRequest(
         @NotBlank String hostname,
         @NotNull UUID instanceId,
         Map<String, String> capabilities,
-        WorkerCredentialSource credentialSource) {
+        WorkerCredentialSource credentialSource,
+        List<WorkerCredentialHealth> credentialHealth) {
+
+    private static final Set<CredentialKind> ALL_KINDS = Set.of(CredentialKind.values());
 
     public WorkerRegisterRequest {
         if (credentialSource == null) {
             throw new IllegalArgumentException("credentialSource is required");
+        }
+        if (credentialHealth == null) {
+            throw new IllegalArgumentException("credentialHealth is required");
+        }
+        if (credentialHealth.stream().anyMatch(Objects::isNull)) {
+            throw new IllegalArgumentException("credentialHealth must not contain a null entry");
+        }
+        Set<CredentialKind> kinds =
+                credentialHealth.stream().map(WorkerCredentialHealth::kind).collect(Collectors.toSet());
+        if (kinds.size() != credentialHealth.size() || !kinds.equals(ALL_KINDS)) {
+            throw new IllegalArgumentException("credentialHealth must have exactly one entry per credential kind");
         }
     }
 }

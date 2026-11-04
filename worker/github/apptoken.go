@@ -25,10 +25,12 @@ type InstallationToken struct {
 
 // Installation is an App installation's account and the permissions GitHub granted it — read
 // before a mint, so the mint can be narrowed to what that account owns and that installation
-// grants.
+// grants. Suspended is decoded from a non-null suspended_at: a suspended installation mints
+// nothing, so a health check must surface it without attempting one.
 type Installation struct {
 	Account     string
 	Permissions map[string]string
+	Suspended   bool
 }
 
 // TokenRequest is what a mint actually asks GitHub for: bare repository names (GitHub resolves
@@ -66,6 +68,7 @@ func (c *Client) Installation(ctx context.Context, appID, installationID string,
 			Login string `json:"login"`
 		} `json:"account"`
 		Permissions map[string]string `json:"permissions"`
+		SuspendedAt *string           `json:"suspended_at"`
 	}
 	if err := json.Unmarshal(resp.body, &wire); err != nil {
 		return Installation{}, fmt.Errorf("decode installation response: %w", err)
@@ -73,7 +76,7 @@ func (c *Client) Installation(ctx context.Context, appID, installationID string,
 	if wire.Account.Login == "" {
 		return Installation{}, errors.New("installation response has no account login")
 	}
-	return Installation{Account: wire.Account.Login, Permissions: wire.Permissions}, nil
+	return Installation{Account: wire.Account.Login, Permissions: wire.Permissions, Suspended: wire.SuspendedAt != nil}, nil
 }
 
 // InstallationToken exchanges a JWT signed with the App's private key for a token narrowed to

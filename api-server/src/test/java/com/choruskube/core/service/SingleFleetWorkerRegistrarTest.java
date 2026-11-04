@@ -3,10 +3,15 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.choruskube.core.dto.WorkerCredentialHealth;
 import com.choruskube.core.dto.WorkerRegisterRequest;
 import com.choruskube.core.dto.WorkerRegisterResponse;
 import com.choruskube.core.exception.ForbiddenException;
+import com.choruskube.core.model.CredentialHealthStatus;
+import com.choruskube.core.model.CredentialKind;
 import com.choruskube.core.model.WorkerCredentialSource;
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -17,8 +22,18 @@ class SingleFleetWorkerRegistrarTest {
 
     private final SingleFleetWorkerRegistrar registrar = new SingleFleetWorkerRegistrar("ns-1", "queue-1", TOKEN);
 
+    /** Every kind reported not held, the honest report for a Worker this test never gives one to. */
+    private static List<WorkerCredentialHealth> notHeldHealth() {
+        Instant now = Instant.now();
+        return List.of(
+                new WorkerCredentialHealth(CredentialKind.GITHUB, CredentialHealthStatus.NOT_HELD, null, now),
+                new WorkerCredentialHealth(CredentialKind.CLAUDE, CredentialHealthStatus.NOT_HELD, null, now),
+                new WorkerCredentialHealth(CredentialKind.REGISTRY, CredentialHealthStatus.NOT_HELD, null, now));
+    }
+
     private static WorkerRegisterRequest request(String hostname) {
-        return new WorkerRegisterRequest(hostname, UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE);
+        return new WorkerRegisterRequest(
+                hostname, UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE, notHeldHealth());
     }
 
     @Test
@@ -111,7 +126,11 @@ class SingleFleetWorkerRegistrarTest {
                 .register(
                         "tok",
                         new WorkerRegisterRequest(
-                                "host", UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE));
+                                "host",
+                                UUID.randomUUID(),
+                                Map.of(),
+                                WorkerCredentialSource.CONTROL_PLANE,
+                                notHeldHealth()));
 
         assertThat(response.internalToken()).isEmpty();
     }
@@ -124,10 +143,13 @@ class SingleFleetWorkerRegistrarTest {
     @Test
     void register_acceptsEitherDeclaredCredentialSourceWithNoDifferenceInTheResponse() {
         WorkerRegisterResponse local = registrar.register(
-                TOKEN, new WorkerRegisterRequest("host-1", UUID.randomUUID(), Map.of(), WorkerCredentialSource.LOCAL));
+                TOKEN,
+                new WorkerRegisterRequest(
+                        "host-1", UUID.randomUUID(), Map.of(), WorkerCredentialSource.LOCAL, notHeldHealth()));
         WorkerRegisterResponse controlPlane = registrar.register(
                 TOKEN,
-                new WorkerRegisterRequest("host-2", UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE));
+                new WorkerRegisterRequest(
+                        "host-2", UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE, notHeldHealth()));
 
         assertThat(local.temporalNamespace()).isEqualTo(controlPlane.temporalNamespace());
         assertThat(local.taskQueue()).isEqualTo(controlPlane.taskQueue());

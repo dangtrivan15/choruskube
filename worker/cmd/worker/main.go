@@ -40,6 +40,7 @@ func main() {
 	cfg.CredentialSource = credentialSource
 	cfg.CredentialsDir = os.Getenv("CREDENTIALS_DIR")
 	cfg.GitHubAPIURL = os.Getenv("GITHUB_API_URL")
+	cfg.AnthropicAPIURL = os.Getenv("ANTHROPIC_API_URL")
 
 	// worker.Run requires an Executor, so a binary that cannot construct one must fail fast here.
 	executorType, err := executorTypeOf(os.Getenv("EXECUTOR_TYPE"))

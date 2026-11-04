@@ -87,6 +87,8 @@ func (p *localTaskIssueProvider) AgentCredentials(context.Context, uuid.UUID, cr
 	return credential.Agent{}, nil
 }
 
+func (p *localTaskIssueProvider) CheckHealth(context.Context) []credential.HealthResult { return nil }
+
 type taskIssueRig struct {
 	acts   *Activities
 	gh     *taskIssueGitHub

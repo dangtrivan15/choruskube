@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -173,19 +174,102 @@ func writeApp(t *testing.T, dir, appID, installationID, pem string) {
 	writeFile(t, filepath.Join(dir, "github-app", "private-key.pem"), pem)
 }
 
+// -----------------------------------------------------------------------------------
+// Health-check fakes. Most tests below are not about health checking, so NewLocal is handed a
+// default checker (200/no scopes header/success) that a test overrides only when it is
+// specifically about a health-check outcome.
+// -----------------------------------------------------------------------------------
+
+// fakeGitHubChecker stands in for *github.Client's User and Repository health-check methods.
+type fakeGitHubChecker struct {
+	mu sync.Mutex
+
+	userStatus        int
+	userScopes        string
+	userScopesPresent bool
+	userErr           error
+	userCalls         int
+
+	// repoErr maps an ownerRepo to the error Repository returns for it; absent means success.
+	repoErr   map[string]error
+	repoCalls []string
+}
+
+func (f *fakeGitHubChecker) User(context.Context, string) (github.UserCheck, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.userCalls++
+	if f.userErr != nil {
+		return github.UserCheck{}, f.userErr
+	}
+	return github.UserCheck{Status: f.userStatus, Scopes: f.userScopes, ScopesPresent: f.userScopesPresent}, nil
+}
+
+func (f *fakeGitHubChecker) Repository(_ context.Context, _ string, ownerRepo string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repoCalls = append(f.repoCalls, ownerRepo)
+	if err, ok := f.repoErr[ownerRepo]; ok {
+		return err
+	}
+	return nil
+}
+
+func (f *fakeGitHubChecker) repositoryCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.repoCalls)
+}
+
+// defaultGHChecker answers every User call as a valid, fine-grained-shaped PAT (200, no scopes
+// header) and every Repository call as reachable -- the shape a test not about health checking
+// needs so it never has to think about the checker at all.
+func defaultGHChecker() *fakeGitHubChecker {
+	return &fakeGitHubChecker{userStatus: http.StatusOK}
+}
+
+// fakeAnthropicChecker stands in for *anthropic.Client.
+type fakeAnthropicChecker struct {
+	mu        sync.Mutex
+	status    Status
+	detail    string
+	calls     int
+	lastToken string
+}
+
+func (f *fakeAnthropicChecker) Check(_ context.Context, token string) (Status, string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.lastToken = token
+	return f.status, f.detail
+}
+
+func defaultAnthropicChecker() *fakeAnthropicChecker {
+	return &fakeAnthropicChecker{status: StatusValid}
+}
+
+// defaultRegistryChecker answers every call as valid -- a test not about registry health
+// checking never has to think about it.
+var defaultRegistryChecker RegistryChecker = func(context.Context, string, string, string) (Status, string) {
+	return StatusValid, ""
+}
+
 func TestLocalPATFile(t *testing.T) {
 	clearEnv(t)
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken\n")
 	scopes := scopesOf("acme/widgets")
 
-	p := NewLocal(dir, &fakeMinter{}, scopes, newClock().now)
+	p := NewLocal(dir, &fakeMinter{}, scopes, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 	tok, err := p.GitHubToken(context.Background(), uuid.New())
 
 	require.NoError(t, err)
 	assert.Equal(t, "ghp_filetoken", tok.Value, "surrounding whitespace must not reach an Authorization header")
 	assert.True(t, tok.ExpiresAt.IsZero(), "a PAT has no expiry the Provider knows of")
-	assert.Zero(t, scopes.callCount(), "a PAT must never trigger a scope call")
+	// A PAT never mints, so the scope call here is solely the run's-first-token reachability
+	// check, not a narrowing input -- it must never fire a second time for a repeat call.
+	assert.Equal(t, 1, scopes.callCount(), "the first call checks the run's repositories are reachable")
 }
 
 func TestLocalAppMintsAndCaches(t *testing.T) {
@@ -195,7 +279,7 @@ func TestLocalAppMintsAndCaches(t *testing.T) {
 	clock := newClock()
 	minter := &fakeMinter{ttl: 60 * time.Minute}
 	scopes := scopesOf("acme/widgets")
-	p := NewLocal(dir, minter, scopes, clock.now)
+	p := NewLocal(dir, minter, scopes, clock.now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 	runID := uuid.New()
 
 	first, err := p.GitHubToken(context.Background(), runID)
@@ -225,7 +309,7 @@ func TestLocalAppTokenStillCachedBeforeTheMargin(t *testing.T) {
 	writeApp(t, dir, "1", "2", "pem")
 	clock := newClock()
 	minter := &fakeMinter{ttl: 60 * time.Minute}
-	p := NewLocal(dir, minter, scopesOf("acme/widgets"), clock.now)
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), clock.now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 	runID := uuid.New()
 
 	_, err := p.GitHubToken(context.Background(), runID)
@@ -242,7 +326,7 @@ func TestLocalAppTokenWithoutExpiryIsNotCached(t *testing.T) {
 	dir := t.TempDir()
 	writeApp(t, dir, "1", "2", "pem")
 	minter := &fakeMinter{} // zero ttl: the response carries no expires_at
-	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now)
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 	runID := uuid.New()
 
 	_, err := p.GitHubToken(context.Background(), runID)
@@ -258,7 +342,7 @@ func TestLocalAppRotatedCredentialsInvalidateTheCache(t *testing.T) {
 	dir := t.TempDir()
 	writeApp(t, dir, "1", "2", "pem-one")
 	minter := &fakeMinter{ttl: 60 * time.Minute}
-	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now)
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 	runID := uuid.New()
 
 	_, err := p.GitHubToken(context.Background(), runID)
@@ -279,7 +363,7 @@ func TestLocalAppMintFailureIsReturnedAndNotCached(t *testing.T) {
 	writeApp(t, dir, "1", "2", "SECRET-PEM-BODY")
 	boom := errors.New("GitHub API returned HTTP 502")
 	minter := &fakeMinter{ttl: time.Hour, err: boom}
-	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now)
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 	runID := uuid.New()
 
 	_, err := p.GitHubToken(context.Background(), runID)
@@ -302,7 +386,7 @@ func TestLocalAppConcurrentCallsMintOnce(t *testing.T) {
 	writeApp(t, dir, "1", "2", "pem")
 	minter := &fakeMinter{ttl: time.Hour}
 	runID := uuid.New()
-	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now)
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
@@ -322,7 +406,7 @@ func TestLocalEnvFallback(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("GITHUB_PAT", "ghp_envtoken")
 
-	p := NewLocal(t.TempDir(), &fakeMinter{}, scopesOf(), newClock().now) // dir exists, holds nothing
+	p := NewLocal(t.TempDir(), &fakeMinter{}, scopesOf(), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker) // dir exists, holds nothing
 	tok, err := p.GitHubToken(context.Background(), uuid.New())
 
 	require.NoError(t, err)
@@ -333,7 +417,7 @@ func TestLocalEnvFallbackWithNoDirectoryConfigured(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("GITHUB_PAT", "ghp_envtoken")
 
-	p := NewLocal("", &fakeMinter{}, scopesOf(), newClock().now)
+	p := NewLocal("", &fakeMinter{}, scopesOf(), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 	tok, err := p.GitHubToken(context.Background(), uuid.New())
 
 	require.NoError(t, err)
@@ -350,7 +434,7 @@ func TestLocalEnvFallbackMintsFromAnAppKeyFile(t *testing.T) {
 	t.Setenv("GITHUB_APP_PRIVATE_KEY_PATH", keyPath)
 	minter := &fakeMinter{ttl: time.Hour}
 
-	p := NewLocal(t.TempDir(), minter, scopesOf("acme/widgets"), newClock().now)
+	p := NewLocal(t.TempDir(), minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 	_, err := p.GitHubToken(context.Background(), uuid.New())
 
 	require.NoError(t, err)
@@ -365,7 +449,7 @@ func TestLocalMountedFileBeatsEnv(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
 
-	tok, err := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now).GitHubToken(context.Background(), uuid.New())
+	tok, err := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).GitHubToken(context.Background(), uuid.New())
 
 	require.NoError(t, err)
 	assert.Equal(t, "ghp_filetoken", tok.Value, "the mounted folder is the deliberate setting; env is only a fallback")
@@ -376,7 +460,7 @@ func TestLocalRereadsRotatedFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "github-pat")
 	writeFile(t, path, "ghp_old")
-	p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now)
+	p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 
 	first, err := p.GitHubToken(context.Background(), uuid.New())
 	require.NoError(t, err)
@@ -394,7 +478,7 @@ func TestLocalBlankFileFallsThroughToEnv(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "github-pat"), " \n")
 
-	tok, err := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now).GitHubToken(context.Background(), uuid.New())
+	tok, err := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).GitHubToken(context.Background(), uuid.New())
 
 	require.NoError(t, err)
 	assert.Equal(t, "ghp_envtoken", tok.Value)
@@ -406,7 +490,7 @@ func TestLocalPartialAppNamesTheMissingFile(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "github-app", "app-id"), "1")
 	writeFile(t, filepath.Join(dir, "github-app", "installation-id"), "2")
 
-	_, err := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now).GitHubToken(context.Background(), uuid.New())
+	_, err := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).GitHubToken(context.Background(), uuid.New())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "private-key.pem")
@@ -415,7 +499,7 @@ func TestLocalPartialAppNamesTheMissingFile(t *testing.T) {
 func TestLocalNothingConfigured(t *testing.T) {
 	clearEnv(t)
 
-	_, err := NewLocal(t.TempDir(), &fakeMinter{}, scopesOf(), newClock().now).GitHubToken(context.Background(), uuid.New())
+	_, err := NewLocal(t.TempDir(), &fakeMinter{}, scopesOf(), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).GitHubToken(context.Background(), uuid.New())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "CREDENTIALS_DIR")
@@ -428,7 +512,7 @@ func TestLocalUnreadableFileNamesThePathNotTheContent(t *testing.T) {
 	// A directory where the file should be: ReadFile fails with something other than not-exist.
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "github-pat"), 0o755))
 
-	_, err := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now).GitHubToken(context.Background(), uuid.New())
+	_, err := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).GitHubToken(context.Background(), uuid.New())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "github-pat")
@@ -443,7 +527,7 @@ func TestLocalApp_ScopeFetchedOnEveryAppTokenRequest_NeverForAPat(t *testing.T) 
 	dir := t.TempDir()
 	writeApp(t, dir, "1", "2", "pem")
 	scopes := scopesOf("acme/widgets")
-	p := NewLocal(dir, &fakeMinter{ttl: time.Hour}, scopes, newClock().now)
+	p := NewLocal(dir, &fakeMinter{ttl: time.Hour}, scopes, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 
 	_, err := p.GitHubToken(context.Background(), uuid.New())
 	require.NoError(t, err)
@@ -464,7 +548,7 @@ func TestLocalApp_TwoRunsWithDifferentScopes_MintTwiceAndEachCachesItsOwn(t *tes
 		perms: runPermissions,
 	}
 	// One provider for both runs: interleaved requests must not evict each other's token.
-	p := NewLocal(dir, minter, scopes, newClock().now)
+	p := NewLocal(dir, minter, scopes, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 
 	tokA1, err := p.GitHubToken(context.Background(), runA)
 	require.NoError(t, err)
@@ -488,7 +572,7 @@ func TestLocalApp_SameScopeAcrossRuns_MintsOnce(t *testing.T) {
 	dir := t.TempDir()
 	writeApp(t, dir, "1", "2", "pem")
 	minter := &fakeMinter{ttl: time.Hour}
-	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now)
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 
 	_, err := p.GitHubToken(context.Background(), uuid.New())
 	require.NoError(t, err)
@@ -504,7 +588,7 @@ func TestLocalApp_ScopeCallError_ReturnsErrorAndMintsNothing(t *testing.T) {
 	writeApp(t, dir, "1", "2", "pem")
 	minter := &fakeMinter{ttl: time.Hour}
 	scopeErr := errors.New("scope route unreachable")
-	p := NewLocal(dir, minter, &fakeScopes{err: scopeErr}, newClock().now)
+	p := NewLocal(dir, minter, &fakeScopes{err: scopeErr}, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 
 	_, err := p.GitHubToken(context.Background(), uuid.New())
 
@@ -519,7 +603,7 @@ func TestLocalApp_NilScopes_IsAnError(t *testing.T) {
 	dir := t.TempDir()
 	writeApp(t, dir, "1", "2", "pem")
 	minter := &fakeMinter{ttl: time.Hour}
-	p := NewLocal(dir, minter, nil, newClock().now)
+	p := NewLocal(dir, minter, nil, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 
 	_, err := p.GitHubToken(context.Background(), uuid.New())
 
@@ -532,7 +616,7 @@ func TestLocalApp_EmptyScope_IsAnError_ZeroInstallationAndZeroMint(t *testing.T)
 	dir := t.TempDir()
 	writeApp(t, dir, "1", "2", "pem")
 	minter := &fakeMinter{ttl: time.Hour}
-	p := NewLocal(dir, minter, scopesOf(), newClock().now)
+	p := NewLocal(dir, minter, scopesOf(), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 
 	_, err := p.GitHubToken(context.Background(), uuid.New())
 
@@ -546,7 +630,7 @@ func TestLocalApp_AllForeignScope_IsErrNoReachableRepository_ZeroMints(t *testin
 	dir := t.TempDir()
 	writeApp(t, dir, "1", "2", "pem")
 	minter := &fakeMinter{ttl: time.Hour}
-	p := NewLocal(dir, minter, scopesOf("other/tools"), newClock().now)
+	p := NewLocal(dir, minter, scopesOf("other/tools"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 
 	_, err := p.GitHubToken(context.Background(), uuid.New())
 
@@ -560,7 +644,7 @@ func TestLocalApp_TwoMintsWithinTTL_OneInstallationLookup(t *testing.T) {
 	dir := t.TempDir()
 	writeApp(t, dir, "1", "2", "pem")
 	minter := &fakeMinter{ttl: time.Hour}
-	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now)
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 
 	_, err := p.GitHubToken(context.Background(), uuid.New())
 	require.NoError(t, err)
@@ -576,7 +660,7 @@ func TestLocalApp_InstallationLookupExpiresAfterItsTTL(t *testing.T) {
 	writeApp(t, dir, "1", "2", "pem")
 	clock := newClock()
 	minter := &fakeMinter{ttl: time.Hour}
-	p := NewLocal(dir, minter, scopesOf("acme/widgets"), clock.now)
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), clock.now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 
 	_, err := p.GitHubToken(context.Background(), uuid.New())
 	require.NoError(t, err)
@@ -592,7 +676,7 @@ func TestLocalApp_422_NamesRequestedReposAndAccount_NextCallRefetchesInstallatio
 	dir := t.TempDir()
 	writeApp(t, dir, "1", "2", "pem")
 	minter := &fakeMinter{ttl: time.Hour, err: &github.APIError{Status: 422}}
-	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now)
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
 
 	_, err := p.GitHubToken(context.Background(), uuid.New())
 
@@ -620,7 +704,7 @@ func TestLocalAgentCredentials(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "registry", "username"), "puller\n")
 	writeFile(t, filepath.Join(dir, "registry", "password"), "pull-secret\n")
 
-	agent, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
+	agent, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
 
 	require.NoError(t, err)
 	assert.Equal(t, "sk-ant-oat-file", agent.ClaudeOAuthToken)
@@ -635,7 +719,7 @@ func TestLocalAgentCredentialsEnvFallback(t *testing.T) {
 	t.Setenv("REGISTRY_USERNAME", "puller")
 	t.Setenv("REGISTRY_PASSWORD", "pull-secret")
 
-	agent, err := NewLocal(t.TempDir(), &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
+	agent, err := NewLocal(t.TempDir(), &fakeMinter{}, nil, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
 
 	require.NoError(t, err)
 	assert.Equal(t, "sk-ant-oat-env", agent.ClaudeOAuthToken)
@@ -648,7 +732,7 @@ func TestLocalAgentCredentialsTokenOnlyLeavesRegistryNil(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "claude-oauth-token"), "sk-ant-oat-file")
 
-	agent, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
+	agent, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
 
 	require.NoError(t, err)
 	assert.Nil(t, agent.Registry)
@@ -660,7 +744,7 @@ func TestLocalAgentCredentialsTokenOnlyLeavesRegistryNil(t *testing.T) {
 func TestLocalAgentCredentialsNoClaudeTokenForAClaudeNodeIsAnError(t *testing.T) {
 	clearEnv(t)
 
-	_, err := NewLocal(t.TempDir(), &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
+	_, err := NewLocal(t.TempDir(), &fakeMinter{}, nil, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNoClaudeToken))
@@ -677,7 +761,7 @@ func TestLocalAgentCredentialsIgnoresWhatPrepareAttached(t *testing.T) {
 		ClaudeOAuthToken: "sk-ant-attached",
 		Registry:         &Registry{Host: "attached.example.test", Username: "a", Password: "b"},
 	}
-	agent, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), attached, true)
+	agent, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).AgentCredentials(context.Background(), uuid.New(), attached, true)
 
 	require.NoError(t, err)
 	assert.Equal(t, "sk-ant-own", agent.ClaudeOAuthToken)
@@ -691,7 +775,7 @@ func TestLocalAgentCredentialsRegistryOnlyStillNeedsAClaudeToken(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "registry", "username"), "puller")
 	writeFile(t, filepath.Join(dir, "registry", "password"), "pull-secret")
 
-	_, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
+	_, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNoClaudeToken))
@@ -705,7 +789,7 @@ func TestLocalAgentCredentialsScriptNodeGetsNoClaudeToken(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "registry", "username"), "puller")
 	writeFile(t, filepath.Join(dir, "registry", "password"), "pull-secret")
 
-	agent, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, false)
+	agent, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).AgentCredentials(context.Background(), uuid.New(), Agent{}, false)
 
 	require.NoError(t, err)
 	assert.Empty(t, agent.ClaudeOAuthToken)
@@ -716,7 +800,7 @@ func TestLocalAgentCredentialsScriptNodeGetsNoClaudeToken(t *testing.T) {
 func TestLocalAgentCredentialsScriptNodeNeedsNoToken(t *testing.T) {
 	clearEnv(t)
 
-	agent, err := NewLocal(t.TempDir(), &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, false)
+	agent, err := NewLocal(t.TempDir(), &fakeMinter{}, nil, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).AgentCredentials(context.Background(), uuid.New(), Agent{}, false)
 
 	require.NoError(t, err)
 	assert.Empty(t, agent.ClaudeOAuthToken)
@@ -728,9 +812,588 @@ func TestLocalAgentCredentialsPartialRegistryIsAnError(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "registry", "host"), "registry.example.test")
 
-	_, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
+	_, err := NewLocal(dir, &fakeMinter{}, nil, newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).AgentCredentials(context.Background(), uuid.New(), Agent{}, true)
 
 	require.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), "registry/username") && strings.Contains(err.Error(), "registry/password"),
 		"the error must name what is missing: %v", err)
+}
+
+// -----------------------------------------------------------------------------------
+// CheckHealth: GitHub App
+// -----------------------------------------------------------------------------------
+
+func githubResult(t *testing.T, results []HealthResult) HealthResult {
+	t.Helper()
+	for _, r := range results {
+		if r.Kind == KindGitHub {
+			return r
+		}
+	}
+	t.Fatal("no github result in CheckHealth's report")
+	return HealthResult{}
+}
+
+func TestCheckHealthApp_Valid(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeApp(t, dir, "1", "2", "pem")
+	minter := &fakeMinter{installationSet: true, installation: github.Installation{Account: "acme"}}
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
+
+	got := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusValid, got.Status)
+	assert.Zero(t, minter.calls(), "a health check must never mint a token")
+	assert.Equal(t, 1, minter.installationCalls())
+}
+
+func TestCheckHealthApp_SuspendedIsExpired(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeApp(t, dir, "1", "2", "pem")
+	minter := &fakeMinter{installationSet: true, installation: github.Installation{Account: "acme", Suspended: true}}
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
+
+	got := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusExpired, got.Status)
+	assert.NotEmpty(t, got.Detail)
+	assert.Zero(t, minter.calls())
+}
+
+func TestCheckHealthApp_401And404AreExpired(t *testing.T) {
+	for _, status := range []int{401, 404} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			clearEnv(t)
+			dir := t.TempDir()
+			writeApp(t, dir, "1", "2", "pem")
+			minter := &fakeMinter{installationErr: &github.APIError{Status: status}}
+			p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
+
+			got := githubResult(t, p.CheckHealth(context.Background()))
+
+			assert.Equal(t, StatusExpired, got.Status)
+			assert.Zero(t, minter.calls())
+		})
+	}
+}
+
+func TestCheckHealthApp_403IsInsufficientPermissions(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeApp(t, dir, "1", "2", "pem")
+	minter := &fakeMinter{installationErr: &github.APIError{Status: 403}}
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
+
+	got := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusInsufficientPermissions, got.Status)
+}
+
+func TestCheckHealthApp_NetworkErrorOrTimeoutIsUnreachable(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeApp(t, dir, "1", "2", "pem")
+	minter := &fakeMinter{installationErr: errors.New("dial tcp: i/o timeout")}
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
+
+	got := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusUnreachable, got.Status)
+}
+
+func TestCheckHealthApp_5xxIsUnreachable(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeApp(t, dir, "1", "2", "pem")
+	minter := &fakeMinter{installationErr: &github.APIError{Status: 500}}
+	p := NewLocal(dir, minter, scopesOf("acme/widgets"), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker)
+
+	got := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusUnreachable, got.Status)
+}
+
+// -----------------------------------------------------------------------------------
+// CheckHealth: PAT
+// -----------------------------------------------------------------------------------
+
+func TestCheckHealthPAT_ValidWithNoScopesHeader(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := &fakeGitHubChecker{userStatus: http.StatusOK}
+	p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+
+	got := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusValid, got.Status)
+}
+
+func TestCheckHealthPAT_ValidWithRepoScope(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := &fakeGitHubChecker{userStatus: http.StatusOK, userScopes: "repo, read:org", userScopesPresent: true}
+	p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+
+	got := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusValid, got.Status)
+}
+
+func TestCheckHealthPAT_401IsExpired(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := &fakeGitHubChecker{userStatus: http.StatusUnauthorized}
+	p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+
+	got := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusExpired, got.Status)
+}
+
+func TestCheckHealthPAT_403IsInsufficientPermissions(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := &fakeGitHubChecker{userStatus: http.StatusForbidden}
+	p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+
+	got := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusInsufficientPermissions, got.Status)
+}
+
+func TestCheckHealthPAT_MissingRepoScopeIsInsufficientPermissions(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := &fakeGitHubChecker{userStatus: http.StatusOK, userScopes: "read:org, gist", userScopesPresent: true}
+	p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+
+	got := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusInsufficientPermissions, got.Status)
+}
+
+func TestCheckHealthPAT_5xxIsUnreachable(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := &fakeGitHubChecker{userStatus: http.StatusInternalServerError}
+	p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+
+	got := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusUnreachable, got.Status)
+}
+
+func TestCheckHealthPAT_NetworkErrorIsUnreachable(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := &fakeGitHubChecker{userErr: errors.New("network error")}
+	p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+
+	got := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusUnreachable, got.Status)
+}
+
+func TestCheckHealthGitHub_NotHeldWhenNothingConfigured(t *testing.T) {
+	clearEnv(t)
+
+	got := githubResult(t, NewLocal(t.TempDir(), &fakeMinter{}, scopesOf(), newClock().now,
+		defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusNotHeld, got.Status)
+}
+
+func TestCheckHealthGitHub_PartialCredentialIsExpiredNamingWhatIsMissing(t *testing.T) {
+	t.Run("App files", func(t *testing.T) {
+		clearEnv(t)
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "github-app", "app-id"), "1")
+		minter := &fakeMinter{}
+
+		got := githubResult(t, NewLocal(dir, minter, scopesOf(), newClock().now,
+			defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).CheckHealth(context.Background()))
+
+		assert.Equal(t, StatusExpired, got.Status)
+		assert.Contains(t, got.Detail, "github-app/installation-id")
+		assert.Contains(t, got.Detail, "github-app/private-key.pem")
+		assert.Zero(t, minter.installationCalls(), "an incomplete credential is never sent to GitHub")
+	})
+	t.Run("App environment", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("GITHUB_APP_ID", "1")
+
+		got := githubResult(t, NewLocal(t.TempDir(), &fakeMinter{}, scopesOf(), newClock().now,
+			defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).CheckHealth(context.Background()))
+
+		assert.Equal(t, StatusExpired, got.Status)
+		assert.Contains(t, got.Detail, "GITHUB_APP_INSTALLATION_ID")
+		assert.Contains(t, got.Detail, "GITHUB_APP_PRIVATE_KEY_PATH")
+	})
+}
+
+// barrierCheckers answer VALID only once all three kinds' checks are in flight at the same time,
+// and UNREACHABLE when ctx ends first -- which is what checking the kinds one after another does.
+type barrierCheckers struct {
+	arrived sync.WaitGroup
+	allIn   chan struct{}
+}
+
+func newBarrierCheckers() *barrierCheckers {
+	b := &barrierCheckers{allIn: make(chan struct{})}
+	b.arrived.Add(3)
+	go func() {
+		b.arrived.Wait()
+		close(b.allIn)
+	}()
+	return b
+}
+
+func (b *barrierCheckers) wait(ctx context.Context) Status {
+	b.arrived.Done()
+	select {
+	case <-b.allIn:
+		return StatusValid
+	case <-ctx.Done():
+		return StatusUnreachable
+	}
+}
+
+func (b *barrierCheckers) User(ctx context.Context, _ string) (github.UserCheck, error) {
+	if b.wait(ctx) != StatusValid {
+		return github.UserCheck{}, ctx.Err()
+	}
+	return github.UserCheck{Status: http.StatusOK}, nil
+}
+
+func (b *barrierCheckers) Repository(context.Context, string, string) error { return nil }
+
+func (b *barrierCheckers) Check(ctx context.Context, _ string) (Status, string) {
+	return b.wait(ctx), ""
+}
+
+func (b *barrierCheckers) registry(ctx context.Context, _, _, _ string) (Status, string) {
+	return b.wait(ctx), ""
+}
+
+func TestCheckHealthChecksEveryKindConcurrently(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	writeFile(t, filepath.Join(dir, "claude-oauth-token"), "sk-ant-token")
+	writeFile(t, filepath.Join(dir, "registry", "host"), "registry.example.com")
+	writeFile(t, filepath.Join(dir, "registry", "username"), "robot")
+	writeFile(t, filepath.Join(dir, "registry", "password"), "secret")
+	b := newBarrierCheckers()
+	p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, b, b, b.registry)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	results := p.CheckHealth(ctx)
+
+	require.Len(t, results, 3)
+	for _, r := range results {
+		assert.Equal(t, StatusValid, r.Status, "%s: the startup check must wait one read timeout, not one per kind", r.Kind)
+	}
+	assert.Equal(t, []Kind{KindGitHub, KindClaude, KindRegistry},
+		[]Kind{results[0].Kind, results[1].Kind, results[2].Kind}, "the report keeps one fixed order")
+}
+
+// -----------------------------------------------------------------------------------
+// CheckHealth: Claude
+// -----------------------------------------------------------------------------------
+
+func claudeResult(t *testing.T, results []HealthResult) HealthResult {
+	t.Helper()
+	for _, r := range results {
+		if r.Kind == KindClaude {
+			return r
+		}
+	}
+	t.Fatal("no claude result in CheckHealth's report")
+	return HealthResult{}
+}
+
+func TestCheckHealthClaude_NotHeldWhenAbsent(t *testing.T) {
+	clearEnv(t)
+
+	got := claudeResult(t, NewLocal(t.TempDir(), &fakeMinter{}, scopesOf(), newClock().now,
+		defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusNotHeld, got.Status)
+}
+
+func TestCheckHealthClaude_FollowsTheCheckersOutcome(t *testing.T) {
+	for _, status := range []Status{StatusValid, StatusExpired, StatusInsufficientPermissions, StatusUnreachable} {
+		t.Run(string(status), func(t *testing.T) {
+			clearEnv(t)
+			dir := t.TempDir()
+			writeFile(t, filepath.Join(dir, "claude-oauth-token"), "sk-ant-oat-file")
+			anthropicChecker := &fakeAnthropicChecker{status: status, detail: "detail"}
+			p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, defaultGHChecker(), anthropicChecker, defaultRegistryChecker)
+
+			got := claudeResult(t, p.CheckHealth(context.Background()))
+
+			assert.Equal(t, status, got.Status)
+			assert.Equal(t, 1, anthropicChecker.calls)
+			assert.Equal(t, "sk-ant-oat-file", anthropicChecker.lastToken)
+		})
+	}
+}
+
+// -----------------------------------------------------------------------------------
+// CheckHealth: registry
+// -----------------------------------------------------------------------------------
+
+func registryResult(t *testing.T, results []HealthResult) HealthResult {
+	t.Helper()
+	for _, r := range results {
+		if r.Kind == KindRegistry {
+			return r
+		}
+	}
+	t.Fatal("no registry result in CheckHealth's report")
+	return HealthResult{}
+}
+
+func TestCheckHealthRegistry_NotHeldWhenAbsent(t *testing.T) {
+	clearEnv(t)
+
+	got := registryResult(t, NewLocal(t.TempDir(), &fakeMinter{}, scopesOf(), newClock().now,
+		defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusNotHeld, got.Status)
+}
+
+func TestCheckHealthRegistry_IncompleteCredentialIsExpiredNamingWhatIsMissing(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "registry", "host"), "registry.example.test")
+
+	got := registryResult(t, NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now,
+		defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusExpired, got.Status)
+	assert.Contains(t, got.Detail, "registry/username")
+}
+
+func TestCheckHealthRegistry_FollowsTheCheckersOutcome(t *testing.T) {
+	for _, status := range []Status{StatusValid, StatusExpired, StatusUnreachable} {
+		t.Run(string(status), func(t *testing.T) {
+			clearEnv(t)
+			dir := t.TempDir()
+			writeFile(t, filepath.Join(dir, "registry", "host"), "registry.example.test")
+			writeFile(t, filepath.Join(dir, "registry", "username"), "puller")
+			writeFile(t, filepath.Join(dir, "registry", "password"), "pull-secret")
+			var gotHost, gotUser, gotPass string
+			checker := RegistryChecker(func(_ context.Context, host, username, password string) (Status, string) {
+				gotHost, gotUser, gotPass = host, username, password
+				return status, "detail"
+			})
+			p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, defaultGHChecker(), defaultAnthropicChecker(), checker)
+
+			got := registryResult(t, p.CheckHealth(context.Background()))
+
+			assert.Equal(t, status, got.Status)
+			assert.Equal(t, "registry.example.test", gotHost)
+			assert.Equal(t, "puller", gotUser)
+			assert.Equal(t, "pull-secret", gotPass)
+		})
+	}
+}
+
+// -----------------------------------------------------------------------------------
+// CheckHealth: rotation
+// -----------------------------------------------------------------------------------
+
+func TestCheckHealthPAT_RotatedCredentialIsPickedUpByTheNextCall(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "github-pat")
+	writeFile(t, path, "ghp_old")
+	gh := &fakeGitHubChecker{userStatus: http.StatusUnauthorized}
+	p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+
+	first := githubResult(t, p.CheckHealth(context.Background()))
+	require.Equal(t, StatusExpired, first.Status)
+
+	gh.mu.Lock()
+	gh.userStatus = http.StatusOK
+	gh.mu.Unlock()
+	writeFile(t, path, "ghp_new")
+	second := githubResult(t, p.CheckHealth(context.Background()))
+
+	assert.Equal(t, StatusValid, second.Status)
+}
+
+// -----------------------------------------------------------------------------------
+// PAT reachability on a run's first token
+// -----------------------------------------------------------------------------------
+
+func TestLocalPAT_FirstTokenFailsNamingTheUnreachableRepository(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := &fakeGitHubChecker{userStatus: http.StatusOK, repoErr: map[string]error{
+		"acme/missing": &github.APIError{Status: 404, OwnerRepo: "acme/missing"},
+	}}
+	scopes := scopesOf("acme/widgets", "acme/missing")
+	p := NewLocal(dir, &fakeMinter{}, scopes, newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+
+	_, err := p.GitHubToken(context.Background(), uuid.New())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "acme/missing (HTTP 404)")
+	assert.NotContains(t, err.Error(), "acme/widgets")
+}
+
+func TestLocalPAT_FirstTokenFailureTellsARefusalFromAFailedCheck(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := &fakeGitHubChecker{userStatus: http.StatusOK, repoErr: map[string]error{
+		"acme/missing": &github.APIError{Status: 404, OwnerRepo: "acme/missing"},
+		"acme/slow":    context.DeadlineExceeded,
+	}}
+	p := NewLocal(dir, &fakeMinter{}, scopesOf("acme/slow", "acme/missing"), newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+
+	_, err := p.GitHubToken(context.Background(), uuid.New())
+
+	require.Error(t, err)
+	assert.Equal(t, "this PAT cannot reach acme/missing (HTTP 404), acme/slow (could not check: context deadline exceeded)", err.Error())
+}
+
+func TestLocalPAT_SecondCallForTheSameRunAfterSuccessMakesNoRepositoryRead(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := defaultGHChecker()
+	scopes := scopesOf("acme/widgets")
+	p := NewLocal(dir, &fakeMinter{}, scopes, newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+	runID := uuid.New()
+
+	_, err := p.GitHubToken(context.Background(), runID)
+	require.NoError(t, err)
+	require.Equal(t, 1, gh.repositoryCallCount())
+	require.Equal(t, 1, scopes.callCount())
+
+	_, err = p.GitHubToken(context.Background(), runID)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, gh.repositoryCallCount(), "a run already proven reachable must not be re-read")
+	assert.Equal(t, 1, scopes.callCount(), "a verified run must not re-fetch its scope either")
+}
+
+func TestLocalPAT_AFailureIsNotCached(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := &fakeGitHubChecker{userStatus: http.StatusOK, repoErr: map[string]error{
+		"acme/widgets": errors.New("unreachable"),
+	}}
+	scopes := scopesOf("acme/widgets")
+	p := NewLocal(dir, &fakeMinter{}, scopes, newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+	runID := uuid.New()
+
+	_, err := p.GitHubToken(context.Background(), runID)
+	require.Error(t, err)
+
+	gh.mu.Lock()
+	gh.repoErr = nil
+	gh.mu.Unlock()
+	_, err = p.GitHubToken(context.Background(), runID)
+
+	require.NoError(t, err, "a run that previously failed must be re-checked, not permanently refused")
+	assert.Equal(t, 2, gh.repositoryCallCount())
+}
+
+func TestLocalPAT_DifferentRunsEachVerifyIndependently(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := defaultGHChecker()
+	scopes := scopesOf("acme/widgets")
+	p := NewLocal(dir, &fakeMinter{}, scopes, newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+
+	_, err := p.GitHubToken(context.Background(), uuid.New())
+	require.NoError(t, err)
+	_, err = p.GitHubToken(context.Background(), uuid.New())
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, gh.repositoryCallCount(), "each run checks its own reachability")
+	assert.Equal(t, 2, scopes.callCount())
+}
+
+func TestLocalPAT_TheVerifiedRunSetEvictsItsOldestRunWhenFull(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := defaultGHChecker()
+	p := NewLocal(dir, &fakeMinter{}, scopesOf("acme/widgets"), newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+	l := p.(*local)
+	oldest, newest := uuid.New(), uuid.New()
+	l.markRunVerified(oldest)
+	for i := 0; i < maxVerifiedRuns-1; i++ {
+		l.markRunVerified(uuid.New())
+	}
+	require.True(t, l.runVerified(oldest), "a full set still holds its oldest run")
+
+	l.markRunVerified(newest)
+
+	assert.False(t, l.runVerified(oldest), "the oldest run is evicted first")
+	assert.True(t, l.runVerified(newest))
+	assert.Len(t, l.verifiedRuns, maxVerifiedRuns)
+	assert.Len(t, l.verifiedOrder, maxVerifiedRuns)
+	_, err := p.GitHubToken(context.Background(), oldest)
+	require.NoError(t, err)
+	assert.Equal(t, 1, gh.repositoryCallCount(), "an evicted run is verified again on its next token")
+}
+
+// -----------------------------------------------------------------------------------
+// No leaks: a health result, and GitHubToken's own errors, must never contain a credential.
+// -----------------------------------------------------------------------------------
+
+func TestCheckHealthAndGitHubTokenNeverLeakACredential(t *testing.T) {
+	const pat = "ghp_SUPER_SECRET_PAT_VALUE"
+	const claude = "sk-ant-oat-SUPER-SECRET-CLAUDE-VALUE"
+	const registryPassword = "SUPER-SECRET-REGISTRY-PASSWORD"
+	secrets := []string{pat, claude, registryPassword}
+
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), pat)
+	writeFile(t, filepath.Join(dir, "claude-oauth-token"), claude)
+	writeFile(t, filepath.Join(dir, "registry", "host"), "registry.example.test")
+	writeFile(t, filepath.Join(dir, "registry", "username"), "puller")
+	writeFile(t, filepath.Join(dir, "registry", "password"), registryPassword)
+
+	gh := &fakeGitHubChecker{userStatus: http.StatusUnauthorized, repoErr: map[string]error{"acme/widgets": errors.New("unreachable")}}
+	anthropicChecker := &fakeAnthropicChecker{status: StatusExpired, detail: "Anthropic API returned HTTP 401"}
+	registryChecker := RegistryChecker(func(context.Context, string, string, string) (Status, string) {
+		return StatusExpired, "registry rejected the credential (401)"
+	})
+	scopes := scopesOf("acme/widgets")
+	p := NewLocal(dir, &fakeMinter{}, scopes, newClock().now, gh, anthropicChecker, registryChecker)
+
+	results := p.CheckHealth(context.Background())
+	for _, r := range results {
+		for _, secret := range secrets {
+			assert.NotContains(t, r.Detail, secret, "%s detail must never contain a credential", r.Kind)
+		}
+	}
+
+	_, tokenErr := p.GitHubToken(context.Background(), uuid.New())
+	if tokenErr != nil {
+		for _, secret := range secrets {
+			assert.NotContains(t, tokenErr.Error(), secret, "GitHubToken's error must never contain a credential")
+		}
+	}
 }

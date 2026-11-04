@@ -113,6 +113,7 @@ func TestFleetSourcePassesTheCredentialSourceToRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	provider.(*TokenFleetProvider).attachHealth(noHealthReport)
 	if _, err := provider.Fleets(context.Background()); err != nil {
 		t.Fatalf("unexpected error registering: %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	credprov "github.com/dangtrivan15/choruskube/worker/credential"
 )
 
 // TokenFleetProvider obtains this Worker's Fleet by registering with a Fleet token.
@@ -35,6 +38,16 @@ type TokenFleetProvider struct {
 	// credentialSource is the CredentialSource this Worker resolved to, reported at every
 	// registration call so the API server can tell the two modes apart.
 	credentialSource string
+	// healthSource supplies the latest credential-health report, consulted on every
+	// registration call. Set once by attachHealth before the first call; Fleets refuses to
+	// register without it, since the server now requires the report on every call.
+	healthSource func() []credprov.HealthResult
+}
+
+// attachHealth wires this provider to the latest credential-health report, consulted on every
+// registration call. The server now requires every registration to carry one.
+func (p *TokenFleetProvider) attachHealth(source func() []credprov.HealthResult) {
+	p.healthSource = source
 }
 
 func NewTokenFleetProvider(apiServerURL, fleetToken string, capabilities map[string]string, credentialSource string, hc *http.Client) *TokenFleetProvider {
@@ -65,6 +78,13 @@ type registerResponse struct {
 }
 
 func (p *TokenFleetProvider) Fleets(ctx context.Context) (Registration, error) {
+	// A missing report is refused here rather than sent as an empty list: the server now
+	// requires one on every call, and a Worker that forgot to wire a health source should fail
+	// loudly before spending a request on it.
+	if p.healthSource == nil {
+		return Registration{}, errors.New("no credential-health source attached: call attachHealth before registering")
+	}
+
 	// Ensure the registration call has a deadline. If ctx lacks one, add 30 seconds.
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
@@ -81,6 +101,7 @@ func (p *TokenFleetProvider) Fleets(ctx context.Context) (Registration, error) {
 		"instanceId":       p.instanceID,
 		"capabilities":     p.capabilities,
 		"credentialSource": p.credentialSource,
+		"credentialHealth": healthWireList(p.healthSource()),
 	})
 	if err != nil {
 		return Registration{}, fmt.Errorf("encode registration: %w", err)
@@ -126,4 +147,27 @@ func (p *TokenFleetProvider) Fleets(ctx context.Context) (Registration, error) {
 		}},
 		InternalToken: internalToken,
 	}, nil
+}
+
+// healthWireEntry is one credentialHealth list entry on the wire: {"kind","status","detail","checkedAt"}.
+type healthWireEntry struct {
+	Kind      credprov.Kind   `json:"kind"`
+	Status    credprov.Status `json:"status"`
+	Detail    string          `json:"detail"`
+	CheckedAt string          `json:"checkedAt"`
+}
+
+// healthWireList converts a health report to its wire shape, checkedAt as RFC3339 UTC -- the
+// format the Java DTO's Instant deserializer expects.
+func healthWireList(results []credprov.HealthResult) []healthWireEntry {
+	out := make([]healthWireEntry, len(results))
+	for i, r := range results {
+		out[i] = healthWireEntry{
+			Kind:      r.Kind,
+			Status:    r.Status,
+			Detail:    r.Detail,
+			CheckedAt: r.CheckedAt.UTC().Format(time.RFC3339),
+		}
+	}
+	return out
 }

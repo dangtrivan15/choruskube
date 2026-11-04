@@ -6,7 +6,24 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	credprov "github.com/dangtrivan15/choruskube/worker/credential"
 )
+
+// noHealthReport is the health source most registration tests attach: a provider's registration
+// behaviour, not the report's content, is what they test.
+func noHealthReport() []credprov.HealthResult {
+	return credprov.NotHeldReport(time.Now())
+}
+
+// registeringProvider builds a *TokenFleetProvider with a health source already attached, so a
+// test not about the report itself can call Fleets without thinking about it.
+func registeringProvider(apiServerURL, fleetToken string, capabilities map[string]string, credentialSource string, hc *http.Client) *TokenFleetProvider {
+	p := NewTokenFleetProvider(apiServerURL, fleetToken, capabilities, credentialSource, hc)
+	p.attachHealth(noHealthReport)
+	return p
+}
 
 func TestTokenFleetProviderReturnsOneFleet(t *testing.T) {
 	var gotAuth, gotPath string
@@ -20,7 +37,7 @@ func TestTokenFleetProviderReturnsOneFleet(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background())
+	reg, err := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -59,7 +76,7 @@ func TestTokenFleetProviderReusesOneInstanceIDPerProcess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
+	p := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
 	_, _ = p.Fleets(context.Background())
 	_, _ = p.Fleets(context.Background())
 
@@ -76,7 +93,7 @@ func TestTokenFleetProviderRejectsNon2xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := NewTokenFleetProvider(srv.URL, "bad", nil, "", srv.Client()).Fleets(context.Background())
+	_, err := registeringProvider(srv.URL, "bad", nil, "", srv.Client()).Fleets(context.Background())
 	if err == nil {
 		t.Fatal("want an error for 403, got nil")
 	}
@@ -89,7 +106,7 @@ func TestTokenFleetProviderReturnsTheMintedInternalToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background())
+	reg, err := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,7 +125,7 @@ func TestTokenFleetProviderFallsBackToTheFleetTokenBeforeAnyMint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reg, err := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background())
+	reg, err := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,7 +152,7 @@ func TestTokenFleetProviderPropagatesABlankAfterAMint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
+	p := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
 	first, err := p.Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error on the first registration: %v", err)
@@ -164,7 +181,7 @@ func TestTokenFleetProviderFallsBackOnEveryBlankFromAServerThatNeverMints(t *tes
 	}))
 	defer srv.Close()
 
-	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
+	p := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
 	for call := 1; call <= 2; call++ {
 		reg, err := p.Fleets(context.Background())
 		if err != nil {
@@ -186,7 +203,7 @@ func TestTokenFleetProviderSendsConfiguredCapabilities(t *testing.T) {
 	defer srv.Close()
 
 	caps := map[string]string{"docker": "true"}
-	if _, err := NewTokenFleetProvider(srv.URL, "ckf_secret", caps, "", srv.Client()).Fleets(context.Background()); err != nil {
+	if _, err := registeringProvider(srv.URL, "ckf_secret", caps, "", srv.Client()).Fleets(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	sent, ok := gotBody["capabilities"].(map[string]any)
@@ -204,7 +221,7 @@ func TestTokenFleetProviderSendsTheDeclaredCredentialSource(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, CredentialSourceLocal, srv.Client())
+	p := registeringProvider(srv.URL, "ckf_secret", nil, CredentialSourceLocal, srv.Client())
 	if _, err := p.Fleets(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -233,10 +250,76 @@ func TestTokenFleetProviderSendsBlankCredentialSourceWhenUnset(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background()); err != nil {
+	if _, err := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotBody["credentialSource"] != "" {
 		t.Fatalf("credentialSource = %v, want a blank -- no silent default", gotBody["credentialSource"])
+	}
+}
+
+// The server now requires a credentialHealth report on every registration call, so the body must
+// carry one -- every kind, not just some -- on both the first call and a renewal.
+func TestTokenFleetProviderSendsCredentialHealthOnFirstCallAndRenewal(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"jwt"}`))
+	}))
+	defer srv.Close()
+
+	now := time.Date(2026, 11, 4, 9, 0, 0, 0, time.UTC)
+	results := []credprov.HealthResult{
+		{Kind: credprov.KindGitHub, Status: credprov.StatusValid, CheckedAt: now},
+		{Kind: credprov.KindClaude, Status: credprov.StatusExpired, Detail: "token expired", CheckedAt: now},
+		{Kind: credprov.KindRegistry, Status: credprov.StatusNotHeld, CheckedAt: now},
+	}
+	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
+	p.attachHealth(func() []credprov.HealthResult { return results })
+
+	for _, label := range []string{"first call", "renewal"} {
+		if _, err := p.Fleets(context.Background()); err != nil {
+			t.Fatalf("%s: unexpected error: %v", label, err)
+		}
+		health, ok := gotBody["credentialHealth"].([]any)
+		if !ok || len(health) != 3 {
+			t.Fatalf("%s: credentialHealth = %v, want 3 entries", label, gotBody["credentialHealth"])
+		}
+		entry, ok := health[0].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: credentialHealth[0] = %v, want an object", label, health[0])
+		}
+		if entry["kind"] != "github" || entry["status"] != "VALID" {
+			t.Fatalf("%s: credentialHealth[0] = %v, want kind=github status=VALID", label, entry)
+		}
+		if entry["checkedAt"] != "2026-11-04T09:00:00Z" {
+			t.Fatalf("%s: checkedAt = %v, want an RFC3339 UTC timestamp", label, entry["checkedAt"])
+		}
+		claude, ok := health[1].(map[string]any)
+		if !ok || claude["detail"] != "token expired" {
+			t.Fatalf("%s: credentialHealth[1] = %v, want detail=token expired", label, health[1])
+		}
+	}
+}
+
+// A TokenFleetProvider with no health source attached refuses to register rather than send an
+// empty report: the server now requires one on every call.
+func TestTokenFleetProviderWithoutAHealthSourceRefusesToRegister(t *testing.T) {
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
+	_, err := p.Fleets(context.Background())
+
+	if err == nil {
+		t.Fatal("want an error when no health source is attached, got nil")
+	}
+	if hit {
+		t.Fatal("want no HTTP request made when no health source is attached")
 	}
 }

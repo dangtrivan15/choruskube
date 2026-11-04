@@ -37,9 +37,14 @@ class WorkerRegistrationControllerTest extends BaseTest {
 
     private static final String TOKEN = "ckf_self_hosted_secret";
 
+    private static final String NOT_HELD_HEALTH = "\"credentialHealth\":["
+            + "{\"kind\":\"github\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"2026-11-04T00:00:00Z\"},"
+            + "{\"kind\":\"claude\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"2026-11-04T00:00:00Z\"},"
+            + "{\"kind\":\"registry\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"2026-11-04T00:00:00Z\"}]";
+
     private static final String BODY =
             "{\"hostname\":\"oss-worker-1\",\"instanceId\":\"11111111-1111-1111-1111-111111111111\","
-                    + "\"credentialSource\":\"control-plane\"}";
+                    + "\"credentialSource\":\"control-plane\"," + NOT_HELD_HEALTH + "}";
 
     @Autowired
     private MockMvc mockMvc;
@@ -52,7 +57,7 @@ class WorkerRegistrationControllerTest extends BaseTest {
 
     private static String bodyWithCredentialSource(String instanceId, String credentialSource) {
         return "{\"hostname\":\"oss-worker-1\",\"instanceId\":\"" + instanceId + "\",\"credentialSource\":\""
-                + credentialSource + "\"}";
+                + credentialSource + "\"," + NOT_HELD_HEALTH + "}";
     }
 
     @Test
@@ -154,6 +159,34 @@ class WorkerRegistrationControllerTest extends BaseTest {
                         .header("Authorization", "Bearer " + TOKEN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(bodyWithCredentialSource("44444444-4444-4444-4444-444444444444", "bogus")))
+                .andExpect(status().isBadRequest());
+    }
+
+    /** A Worker binary built before the health report existed cannot register at all; there is no default. */
+    @Test
+    void register_missingCredentialHealth_returns400() throws Exception {
+        String bodyWithoutHealth =
+                "{\"hostname\":\"oss-worker-1\",\"instanceId\":\"55555555-5555-5555-5555-555555555555\","
+                        + "\"credentialSource\":\"control-plane\"}";
+
+        mockMvc.perform(post("/worker/register")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bodyWithoutHealth))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void register_malformedCredentialHealth_returns400() throws Exception {
+        String malformedHealth =
+                "{\"hostname\":\"oss-worker-1\",\"instanceId\":\"66666666-6666-6666-6666-666666666666\","
+                        + "\"credentialSource\":\"control-plane\",\"credentialHealth\":["
+                        + "{\"kind\":\"github\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"2026-11-04T00:00:00Z\"}]}";
+
+        mockMvc.perform(post("/worker/register")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(malformedHealth))
                 .andExpect(status().isBadRequest());
     }
 }
