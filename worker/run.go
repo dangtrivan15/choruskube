@@ -13,10 +13,12 @@ import (
 	tworker "go.temporal.io/sdk/worker"
 
 	"github.com/dangtrivan15/choruskube/worker/activity"
+	"github.com/dangtrivan15/choruskube/worker/anthropic"
 	"github.com/dangtrivan15/choruskube/worker/callback"
 	credprov "github.com/dangtrivan15/choruskube/worker/credential"
 	"github.com/dangtrivan15/choruskube/worker/executor"
 	"github.com/dangtrivan15/choruskube/worker/github"
+	"github.com/dangtrivan15/choruskube/worker/registry"
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
 
@@ -39,9 +41,53 @@ func newCredentialProvider(cfg Config, api interface {
 	credprov.ScopeClient
 }) credprov.Provider {
 	if cfg.CredentialSource == CredentialSourceLocal {
-		return credprov.NewLocal(cfg.CredentialsDir, github.New(cfg.GitHubAPIURL), api, time.Now)
+		ghClient := github.New(cfg.GitHubAPIURL)
+		return credprov.NewLocal(cfg.CredentialsDir, ghClient, api, time.Now, ghClient, anthropic.New(cfg.AnthropicAPIURL), registry.Check)
 	}
 	return credprov.NewControlPlane(api)
+}
+
+// lateBoundAPI implements credential.TokenClient and credential.ScopeClient by delegating to a
+// *workload.Client that exists only once registration has produced the token it authenticates
+// with. The credential provider is built, and its startup health check run, before the first
+// registration call -- so attachHealth and the first Fleets call both happen before any run needs
+// a token through this binding, which is the only reason it is safe to leave api nil until bind
+// is called.
+type lateBoundAPI struct {
+	mu  sync.RWMutex
+	api interface {
+		credprov.TokenClient
+		credprov.ScopeClient
+	}
+}
+
+func (b *lateBoundAPI) bind(api interface {
+	credprov.TokenClient
+	credprov.ScopeClient
+}) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.api = api
+}
+
+func (b *lateBoundAPI) GitHubToken(ctx context.Context, runID uuid.UUID) (string, error) {
+	b.mu.RLock()
+	api := b.api
+	b.mu.RUnlock()
+	if api == nil {
+		return "", errors.New("GitHub token requested before this Worker finished registering")
+	}
+	return api.GitHubToken(ctx, runID)
+}
+
+func (b *lateBoundAPI) GitHubTokenScope(ctx context.Context, runID uuid.UUID) ([]string, map[string]string, error) {
+	b.mu.RLock()
+	api := b.api
+	b.mu.RUnlock()
+	if api == nil {
+		return nil, nil, errors.New("GitHub token scope requested before this Worker finished registering")
+	}
+	return api.GitHubTokenScope(ctx, runID)
 }
 
 // runBinding tells the pod token route which run an execution belongs to: from the pending cache
@@ -491,6 +537,19 @@ func Run(ctx context.Context, cfg Config) error {
 		return err
 	}
 	cfg = cfg.withDefaults()
+
+	// The provider is built, and its startup health check run, before the first Fleets call: a
+	// TokenFleetProvider's registration now carries that check's report, so it must exist before
+	// registration happens. Its scope client binds to the real workload client only once
+	// registration produces the credential that client authenticates with -- see lateBoundAPI.
+	apiBinding := &lateBoundAPI{}
+	provider := newCredentialProvider(cfg, apiBinding)
+	monitor := newHealthMonitor(provider, healthCheckInterval)
+	monitor.checkNow(ctx)
+	if tfp, ok := cfg.Provider.(*TokenFleetProvider); ok {
+		tfp.attachHealth(monitor.latest)
+	}
+
 	reg, err := cfg.Provider.Fleets(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve fleets: %w", err)
@@ -507,6 +566,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	credentials := newCredentialCache(reg.InternalToken)
 	wc := workload.NewClient(cfg.APIServerURL, credentials.get, nil)
+	apiBinding.bind(wc)
 
 	// Activities gets a HashCache so the callback server started below can verify an agent's
 	// completion POST without a network round trip to re-resolve it.
@@ -520,7 +580,6 @@ func Run(ctx context.Context, cfg Config) error {
 	// package's 30s-timeout default; http.DefaultClient has no timeout and must not be used.
 	acts.CallbackURL = cfg.CallbackURL
 	acts.APIServerURL = cfg.APIServerURL
-	provider := newCredentialProvider(cfg, wc)
 	acts.SetCredentials(provider)
 	acts.SetGitHub(github.New(cfg.GitHubAPIURL))
 
@@ -571,13 +630,17 @@ func Run(ctx context.Context, cfg Config) error {
 
 	// Renew before tokens expire. Without this the Worker keeps polling with a lapsed
 	// credential, and — because revocation is implemented by refusing to reissue — revoking
-	// a Worker would have no effect at all. wg.Wait below guarantees this goroutine has
-	// fully exited before Run returns, so it can never outlive the process that started it.
+	// a Worker would have no effect at all. wg.Wait below guarantees both goroutines have
+	// fully exited before Run returns, so neither can outlive the process that started it.
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		renewLoop(ctx, cfg.Provider, tokens, credentials, loopInterval(fleets), sup)
+	}()
+	go func() {
+		defer wg.Done()
+		monitor.run(ctx)
 	}()
 
 	<-ctx.Done()

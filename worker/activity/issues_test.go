@@ -41,6 +41,8 @@ func (p *issueProvider) AgentCredentials(context.Context, uuid.UUID, credential.
 	return credential.Agent{}, nil
 }
 
+func (p *issueProvider) CheckHealth(context.Context) []credential.HealthResult { return nil }
+
 // issueStub is a stateful GitHub stand-in for the issue endpoints. It remembers what has been
 // created across calls, so a listing made after a create finds it -- the only way a retry can be
 // proven to find what an earlier attempt already filed instead of filing it again.

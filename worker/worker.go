@@ -85,6 +85,9 @@ type Config struct {
 	// GitHubAPIURL is the GitHub API root for the Worker's own GitHub calls, including minting
 	// App tokens in the local source.
 	GitHubAPIURL string
+	// AnthropicAPIURL is the Anthropic API root the local source's credential health check
+	// reads a Claude token against.
+	AnthropicAPIURL string
 }
 
 const (
@@ -93,8 +96,9 @@ const (
 	// CredentialSourceLocal reads credentials from CredentialsDir, falling back to the environment.
 	CredentialSourceLocal = "local"
 
-	defaultCredentialsDir = "/etc/choruskube/credentials"
-	defaultGitHubAPIURL   = "https://api.github.com"
+	defaultCredentialsDir  = "/etc/choruskube/credentials"
+	defaultGitHubAPIURL    = "https://api.github.com"
+	defaultAnthropicAPIURL = "https://api.anthropic.com"
 )
 
 // Validate reports the first missing required field. Run calls it; callers building a
@@ -134,6 +138,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.GitHubAPIURL == "" {
 		c.GitHubAPIURL = defaultGitHubAPIURL
+	}
+	if c.AnthropicAPIURL == "" {
+		c.AnthropicAPIURL = defaultAnthropicAPIURL
 	}
 	return c
 }

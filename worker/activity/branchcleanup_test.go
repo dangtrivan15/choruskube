@@ -323,6 +323,8 @@ func (blankTokenProvider) AgentCredentials(context.Context, uuid.UUID, credentia
 	return credential.Agent{}, nil
 }
 
+func (blankTokenProvider) CheckHealth(context.Context) []credential.HealthResult { return nil }
+
 func TestCleanupRunBranches_BlankTokenFails(t *testing.T) {
 	r := newBranchCleanupRig(t)
 	r.acts.SetCredentials(blankTokenProvider{})

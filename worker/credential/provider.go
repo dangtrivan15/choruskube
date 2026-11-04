@@ -49,4 +49,9 @@ type Provider interface {
 	// runsClaude set and no Claude token to launch with, it returns an error wrapping
 	// ErrNoClaudeToken that names where the token belongs.
 	AgentCredentials(ctx context.Context, runID uuid.UUID, attached Agent, runsClaude bool) (Agent, error)
+
+	// CheckHealth checks every credential kind this Provider might hold, needing no run. It
+	// never returns an error: a failing check is itself one of the HealthResults, classified as
+	// Unreachable or Expired rather than aborting the whole report.
+	CheckHealth(ctx context.Context) []HealthResult
 }

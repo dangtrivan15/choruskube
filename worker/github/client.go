@@ -177,6 +177,44 @@ func (c *Client) IssuesSince(ctx context.Context, token, ownerRepo string, since
 	return issues, nil
 }
 
+// UserCheck is GET /user's outcome for a PAT health check. ScopesPresent distinguishes "GitHub
+// sent no X-OAuth-Scopes header at all" from "GitHub sent the header with an empty value" --
+// classic PATs carry the header, fine-grained PATs never do, and the two must read differently.
+type UserCheck struct {
+	Status        int
+	Scopes        string
+	ScopesPresent bool
+}
+
+// User reads GET /user with Bearer auth, for a PAT health check. Only a transport-level failure
+// (network, timeout) is a Go error; any HTTP status is returned for the caller to classify.
+func (c *Client) User(ctx context.Context, token string) (UserCheck, error) {
+	resp, err := c.send(ctx, http.MethodGet, "/user", token, nil)
+	if err != nil {
+		return UserCheck{}, err
+	}
+	values := resp.header.Values("X-OAuth-Scopes")
+	return UserCheck{Status: resp.status, Scopes: resp.header.Get("X-OAuth-Scopes"), ScopesPresent: len(values) > 0}, nil
+}
+
+// Repository reads GET /repos/{owner}/{repo} with Bearer auth, to check whether a PAT can reach
+// it. A 404 or any other non-2xx becomes *APIError with OwnerRepo set; only a transport-level
+// failure is a different error.
+func (c *Client) Repository(ctx context.Context, token, ownerRepo string) error {
+	repo, err := repoPath(ownerRepo)
+	if err != nil {
+		return err
+	}
+	resp, err := c.send(ctx, http.MethodGet, "/repos/"+repo, token, nil)
+	if err != nil {
+		return err
+	}
+	if resp.status != http.StatusOK {
+		return &APIError{Status: resp.status, OwnerRepo: ownerRepo}
+	}
+	return nil
+}
+
 // CreateIssue opens a new issue. A refusal (no permission, archived or missing repo, validation
 // failure) returns *RefusedError; anything else, including a rate limit, returns *APIError.
 func (c *Client) CreateIssue(ctx context.Context, token, ownerRepo, title, body string) (Issue, error) {

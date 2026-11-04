@@ -2167,6 +2167,8 @@ func (f *fakeCredentials) AgentCredentials(
 	return f.agent, nil
 }
 
+func (f *fakeCredentials) CheckHealth(context.Context) []credential.HealthResult { return nil }
+
 // passThroughCredentials is a credential.Provider for a test that is not about credentials: it
 // returns exactly what prepare attached, with no Claude-token check, so the test neither gains a
 // token nor exercises the check the provider contract now requires.
@@ -2181,6 +2183,8 @@ func (passThroughCredentials) AgentCredentials(
 ) (credential.Agent, error) {
 	return attached, nil
 }
+
+func (passThroughCredentials) CheckHealth(context.Context) []credential.HealthResult { return nil }
 
 // stubTokenClient is a credential.TokenClient a test never expects to be called: these tests
 // exercise the control-plane provider's AgentCredentials, not its GitHubToken.
@@ -2298,7 +2302,7 @@ func TestExecuteLocally_LocalWorkerWithoutClaudeTokenFailsTheNodeBeforeLaunch(t 
 	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
-	acts.SetCredentials(credential.NewLocal(t.TempDir(), nil, nil, nil))
+	acts.SetCredentials(credential.NewLocal(t.TempDir(), nil, nil, nil, nil, nil, nil))
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{NodeExecutionID: uuid.New(), RunID: runID, TemplateNodeID: uuid.New()},

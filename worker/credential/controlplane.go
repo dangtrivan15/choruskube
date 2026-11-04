@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -46,4 +47,10 @@ func (p *controlPlane) AgentCredentials(_ context.Context, runID uuid.UUID, atta
 		attached.ClaudeOAuthToken = ""
 	}
 	return attached, nil
+}
+
+// CheckHealth makes no call: a Worker holding no credentials has nothing to check, and the
+// control plane that mints its tokens already checks what it holds on its own schedule.
+func (p *controlPlane) CheckHealth(_ context.Context) []HealthResult {
+	return NotHeldReport(time.Now())
 }

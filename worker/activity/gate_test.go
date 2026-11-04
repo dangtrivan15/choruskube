@@ -44,6 +44,8 @@ func (f *fakeGateProvider) AgentCredentials(context.Context, uuid.UUID, credenti
 	return credential.Agent{}, nil
 }
 
+func (f *fakeGateProvider) CheckHealth(context.Context) []credential.HealthResult { return nil }
+
 type gateRequest struct{ method, path, body string }
 
 // gateGitHub is a GitHub stand-in that fails the test on any request it has no route for, so a

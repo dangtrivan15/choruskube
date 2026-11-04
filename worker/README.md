@@ -48,6 +48,10 @@ binary built before this field existed cannot register until it is upgraded. Thi
 exactly one Fleet, whose mode is a fact about the deployment rather than something to learn
 from whichever Worker registers, so it keeps no record of what any one Worker declared.
 
+Registration also carries the Worker's latest credential-health report (see
+[Credential health](#credential-health)) — another required field with no default, on the same
+hard-cutover terms as `CREDENTIAL_SOURCE`.
+
 Use this path when you want one place to change the answer, or when you intend to grow into a
 deployment that has more than one Fleet.
 
@@ -70,9 +74,10 @@ differs satisfies the startup guard — which only asks that it is set — and t
 with a 403, which is the failure the guard exists to prevent. Leaving the server's side unset
 admits no Worker on either path.
 
-This path never calls `/worker/register`, so `CREDENTIAL_SOURCE` is never reported anywhere;
-`local` here reads `CREDENTIALS_DIR` exactly as it does on the registration path. Registration
-takes priority over these static settings whenever both are configured.
+This path never calls `/worker/register`, so `CREDENTIAL_SOURCE` is never reported anywhere, and
+neither is a credential-health report — there is nowhere for either to go. `local` here reads
+`CREDENTIALS_DIR` exactly as it does on the registration path. Registration takes priority over
+these static settings whenever both are configured.
 
 Use this path when the answer is already known and constant, and a round-trip to ask for it
 would only return what you configured.
@@ -94,6 +99,7 @@ would only return what you configured.
 | `CREDENTIAL_SOURCE` | yes | `control-plane` or `local` — where GitHub and agent credentials come from; see [Credentials](#credentials). No default: a missing or unrecognized value fails startup, since guessing wrong would send a Worker meant to hold its own credentials to the API server for them, or the reverse. `local` is for a single tenant's own Fleet only. Reported at every registration call so the api-server can tell the two modes apart. |
 | `CREDENTIALS_DIR` | no | Folder the `local` source reads. Default `/etc/choruskube/credentials`. |
 | `GITHUB_API_URL` | no | GitHub API root for the Worker's own GitHub calls (gate compares and merges, run-branch cleanup, roadmap issue filing and closing). Default `https://api.github.com`. |
+| `ANTHROPIC_API_URL` | no | Anthropic API root the `local` source's credential health check reads a Claude token against. Default `https://api.anthropic.com`. |
 
 `TEMPORAL_TLS_DISABLED` is opt-in so a deployment against a TLS Temporal cannot lose TLS by
 omission. It is only needed when a Fleet carries a credential: the Temporal SDK turns TLS on
@@ -158,6 +164,32 @@ with `User-Agent: choruskube-worker`.
 A `local` Worker launches only with what it holds; an AI node with no Claude token fails before
 launch with a message naming this folder. A `control-plane` Worker launches with what the
 api-server attaches and fails the node the same way when none is attached.
+
+### Credential health
+
+A Worker holding its own credentials checks each one it holds — the GitHub App or PAT, the
+Claude token, and the registry login — at startup, before the first registration call, and then
+every 5 minutes without a run. Each check is the lightest authenticated read its service offers:
+an App is checked by looking up its installation with the App's own key, minting nothing; a PAT
+by `GET /user`; a Claude token by `GET /v1/models`; a registry login by a Docker Registry v2
+auth ping. Every read is bounded by a 10-second timeout, so the startup check — and the first
+registration it precedes — waits at most that long. A failing check is logged and never fails
+registration or a run, and a credential rotated in the folder in place is picked up by the next
+check.
+
+Each result names the credential kind, a status, a short detail, and when it was checked. The
+status is one of `VALID`, `EXPIRED` (any rejected credential), `INSUFFICIENT_PERMISSIONS`,
+`UNREACHABLE` (the check itself could not be made — a network error, a timeout, or an
+unexpected server error), or `NOT_HELD` (this Worker holds nothing of that kind). A
+`control-plane` Worker holds nothing and reports every kind `NOT_HELD`, with no outbound call at
+all. A result never carries any part of a secret.
+
+Repository reachability is a property of a run, not of the credential alone, so it is checked
+separately: on a run's first use of a PAT, the Worker reads each of the run's repositories once
+and fails the step naming any it cannot reach. An App credential gets no separate check — its
+mint is already narrowed to the run's repositories, and GitHub's own refusal when one falls
+outside the installation's selection already names every repository requested (see
+[Credentials](#credentials) above).
 
 ### GitHub work outside a run
 

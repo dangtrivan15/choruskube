@@ -16,6 +16,22 @@
       }
     },
     {
+      "priority": 2,
+      "request": {
+        "method": "GET",
+        "url": "/user",
+        "headers": {
+          "Authorization": { "and": [{ "contains": "Bearer " }, { "contains": "EXPIRED" }] },
+          "User-Agent": { "equalTo": "choruskube-worker" }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": { "Content-Type": "application/json" },
+        "body": "{\"message\":\"Bad credentials\"}"
+      }
+    },
+    {
       "priority": 5,
       "request": {
         "method": "GET",
@@ -29,6 +45,25 @@
           "X-OAuth-Scopes": "repo, read:org"
         },
         "body": "{\"login\":\"e2e-test-user\",\"id\":1}"
+      }
+    },
+    {
+      "priority": 6,
+      "request": {
+        "method": "GET",
+        "url": "/user",
+        "headers": {
+          "Authorization": { "contains": "Bearer " },
+          "User-Agent": { "equalTo": "choruskube-worker" }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "X-OAuth-Scopes": "repo"
+        },
+        "body": "{\"login\":\"e2e-test-worker\",\"id\":2}"
       }
     },
     {
