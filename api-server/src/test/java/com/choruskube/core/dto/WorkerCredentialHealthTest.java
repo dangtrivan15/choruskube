@@ -58,6 +58,25 @@ class WorkerCredentialHealthTest {
     }
 
     @Test
+    void detailAtTheCapInCodePoints_isAcceptedEvenWhenItsUtf16LengthIsLonger() {
+        // The Worker truncates to 256 runes; a supplementary character is one rune but two UTF-16
+        // units, so counting String#length() would refuse a detail the Worker already capped.
+        String atCap = "\uD83D\uDD11".repeat(WorkerCredentialHealth.MAX_DETAIL_LENGTH);
+
+        assertThat(new WorkerCredentialHealth(CredentialKind.GITHUB, CredentialHealthStatus.VALID, atCap, NOW).detail())
+                .isEqualTo(atCap);
+    }
+
+    @Test
+    void detailOverTheCapInCodePoints_throws() {
+        String tooLong = "\uD83D\uDD11".repeat(WorkerCredentialHealth.MAX_DETAIL_LENGTH + 1);
+
+        assertThatThrownBy(() ->
+                        new WorkerCredentialHealth(CredentialKind.GITHUB, CredentialHealthStatus.VALID, tooLong, NOW))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void detailOverTheCap_throws() {
         String tooLong = "x".repeat(WorkerCredentialHealth.MAX_DETAIL_LENGTH + 1);
 

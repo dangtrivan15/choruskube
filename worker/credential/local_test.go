@@ -1012,6 +1012,101 @@ func TestCheckHealthGitHub_NotHeldWhenNothingConfigured(t *testing.T) {
 	assert.Equal(t, StatusNotHeld, got.Status)
 }
 
+func TestCheckHealthGitHub_PartialCredentialIsExpiredNamingWhatIsMissing(t *testing.T) {
+	t.Run("App files", func(t *testing.T) {
+		clearEnv(t)
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "github-app", "app-id"), "1")
+		minter := &fakeMinter{}
+
+		got := githubResult(t, NewLocal(dir, minter, scopesOf(), newClock().now,
+			defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).CheckHealth(context.Background()))
+
+		assert.Equal(t, StatusExpired, got.Status)
+		assert.Contains(t, got.Detail, "github-app/installation-id")
+		assert.Contains(t, got.Detail, "github-app/private-key.pem")
+		assert.Zero(t, minter.installationCalls(), "an incomplete credential is never sent to GitHub")
+	})
+	t.Run("App environment", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("GITHUB_APP_ID", "1")
+
+		got := githubResult(t, NewLocal(t.TempDir(), &fakeMinter{}, scopesOf(), newClock().now,
+			defaultGHChecker(), defaultAnthropicChecker(), defaultRegistryChecker).CheckHealth(context.Background()))
+
+		assert.Equal(t, StatusExpired, got.Status)
+		assert.Contains(t, got.Detail, "GITHUB_APP_INSTALLATION_ID")
+		assert.Contains(t, got.Detail, "GITHUB_APP_PRIVATE_KEY_PATH")
+	})
+}
+
+// barrierCheckers answer VALID only once all three kinds' checks are in flight at the same time,
+// and UNREACHABLE when ctx ends first -- which is what checking the kinds one after another does.
+type barrierCheckers struct {
+	arrived sync.WaitGroup
+	allIn   chan struct{}
+}
+
+func newBarrierCheckers() *barrierCheckers {
+	b := &barrierCheckers{allIn: make(chan struct{})}
+	b.arrived.Add(3)
+	go func() {
+		b.arrived.Wait()
+		close(b.allIn)
+	}()
+	return b
+}
+
+func (b *barrierCheckers) wait(ctx context.Context) Status {
+	b.arrived.Done()
+	select {
+	case <-b.allIn:
+		return StatusValid
+	case <-ctx.Done():
+		return StatusUnreachable
+	}
+}
+
+func (b *barrierCheckers) User(ctx context.Context, _ string) (github.UserCheck, error) {
+	if b.wait(ctx) != StatusValid {
+		return github.UserCheck{}, ctx.Err()
+	}
+	return github.UserCheck{Status: http.StatusOK}, nil
+}
+
+func (b *barrierCheckers) Repository(context.Context, string, string) error { return nil }
+
+func (b *barrierCheckers) Check(ctx context.Context, _ string) (Status, string) {
+	return b.wait(ctx), ""
+}
+
+func (b *barrierCheckers) registry(ctx context.Context, _, _, _ string) (Status, string) {
+	return b.wait(ctx), ""
+}
+
+func TestCheckHealthChecksEveryKindConcurrently(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	writeFile(t, filepath.Join(dir, "claude-oauth-token"), "sk-ant-token")
+	writeFile(t, filepath.Join(dir, "registry", "host"), "registry.example.com")
+	writeFile(t, filepath.Join(dir, "registry", "username"), "robot")
+	writeFile(t, filepath.Join(dir, "registry", "password"), "secret")
+	b := newBarrierCheckers()
+	p := NewLocal(dir, &fakeMinter{}, scopesOf(), newClock().now, b, b, b.registry)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	results := p.CheckHealth(ctx)
+
+	require.Len(t, results, 3)
+	for _, r := range results {
+		assert.Equal(t, StatusValid, r.Status, "%s: the startup check must wait one read timeout, not one per kind", r.Kind)
+	}
+	assert.Equal(t, []Kind{KindGitHub, KindClaude, KindRegistry},
+		[]Kind{results[0].Kind, results[1].Kind, results[2].Kind}, "the report keeps one fixed order")
+}
+
 // -----------------------------------------------------------------------------------
 // CheckHealth: Claude
 // -----------------------------------------------------------------------------------
@@ -1156,7 +1251,24 @@ func TestLocalPAT_FirstTokenFailsNamingTheUnreachableRepository(t *testing.T) {
 	_, err := p.GitHubToken(context.Background(), uuid.New())
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "acme/missing")
+	assert.Contains(t, err.Error(), "acme/missing (HTTP 404)")
+	assert.NotContains(t, err.Error(), "acme/widgets")
+}
+
+func TestLocalPAT_FirstTokenFailureTellsARefusalFromAFailedCheck(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := &fakeGitHubChecker{userStatus: http.StatusOK, repoErr: map[string]error{
+		"acme/missing": &github.APIError{Status: 404, OwnerRepo: "acme/missing"},
+		"acme/slow":    context.DeadlineExceeded,
+	}}
+	p := NewLocal(dir, &fakeMinter{}, scopesOf("acme/slow", "acme/missing"), newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+
+	_, err := p.GitHubToken(context.Background(), uuid.New())
+
+	require.Error(t, err)
+	assert.Equal(t, "this PAT cannot reach acme/missing (HTTP 404), acme/slow (could not check: context deadline exceeded)", err.Error())
 }
 
 func TestLocalPAT_SecondCallForTheSameRunAfterSuccessMakesNoRepositoryRead(t *testing.T) {
@@ -1218,6 +1330,31 @@ func TestLocalPAT_DifferentRunsEachVerifyIndependently(t *testing.T) {
 
 	assert.Equal(t, 2, gh.repositoryCallCount(), "each run checks its own reachability")
 	assert.Equal(t, 2, scopes.callCount())
+}
+
+func TestLocalPAT_TheVerifiedRunSetEvictsItsOldestRunWhenFull(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "github-pat"), "ghp_filetoken")
+	gh := defaultGHChecker()
+	p := NewLocal(dir, &fakeMinter{}, scopesOf("acme/widgets"), newClock().now, gh, defaultAnthropicChecker(), defaultRegistryChecker)
+	l := p.(*local)
+	oldest, newest := uuid.New(), uuid.New()
+	l.markRunVerified(oldest)
+	for i := 0; i < maxVerifiedRuns-1; i++ {
+		l.markRunVerified(uuid.New())
+	}
+	require.True(t, l.runVerified(oldest), "a full set still holds its oldest run")
+
+	l.markRunVerified(newest)
+
+	assert.False(t, l.runVerified(oldest), "the oldest run is evicted first")
+	assert.True(t, l.runVerified(newest))
+	assert.Len(t, l.verifiedRuns, maxVerifiedRuns)
+	assert.Len(t, l.verifiedOrder, maxVerifiedRuns)
+	_, err := p.GitHubToken(context.Background(), oldest)
+	require.NoError(t, err)
+	assert.Equal(t, 1, gh.repositoryCallCount(), "an evicted run is verified again on its next token")
 }
 
 // -----------------------------------------------------------------------------------

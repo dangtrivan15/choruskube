@@ -204,16 +204,26 @@ func (l *local) verifyRunRepositories(ctx context.Context, runID uuid.UUID, pat 
 		var unreachable []string
 		for _, repo := range repositories {
 			if err := l.checkRepositoryReachable(ctx, pat, repo); err != nil {
-				unreachable = append(unreachable, repo)
+				unreachable = append(unreachable, fmt.Sprintf("%s (%s)", repo, reachabilityReason(err)))
 			}
 		}
 		if len(unreachable) > 0 {
 			sort.Strings(unreachable)
-			return fmt.Errorf("this PAT cannot reach %v", unreachable)
+			return fmt.Errorf("this PAT cannot reach %s", strings.Join(unreachable, ", "))
 		}
 	}
 	l.markRunVerified(runID)
 	return nil
+}
+
+// reachabilityReason separates a repository GitHub refused from one this Worker could not ask
+// about at all, so an operator does not read an outage as a missing grant.
+func reachabilityReason(err error) string {
+	var apiErr *github.APIError
+	if errors.As(err, &apiErr) {
+		return fmt.Sprintf("HTTP %d", apiErr.Status)
+	}
+	return "could not check: " + err.Error()
 }
 
 func (l *local) checkRepositoryReachable(ctx context.Context, pat, repo string) error {
@@ -500,8 +510,21 @@ func (l *local) dirLabel() string {
 
 // CheckHealth re-reads the credentials folder and env on every call, the same as GitHubToken, so
 // a credential rotated in place is picked up by the next check rather than cached from startup.
+// The kinds are checked concurrently, so the startup check that precedes the first registration
+// waits at most one healthCheckTimeout rather than one per kind.
 func (l *local) CheckHealth(ctx context.Context) []HealthResult {
-	return []HealthResult{l.checkGitHub(ctx), l.checkClaude(ctx), l.checkRegistryHealth(ctx)}
+	checks := []func(context.Context) HealthResult{l.checkGitHub, l.checkClaude, l.checkRegistryHealth}
+	out := make([]HealthResult, len(checks))
+	var wg sync.WaitGroup
+	for i, check := range checks {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out[i] = check(ctx)
+		}()
+	}
+	wg.Wait()
+	return out
 }
 
 func (l *local) checkGitHub(ctx context.Context) HealthResult {
@@ -560,10 +583,9 @@ func hasScope(header, want string) bool {
 	return false
 }
 
-// checkPAT classifies a PAT health check the same way the cloud API's own PAT check does: 401
-// expired, 403 insufficient permissions, any other non-2xx (including 5xx) unreachable, and on
-// success a missing scopes header is read as a fine-grained PAT (valid) while a present header
-// without "repo" is insufficient permissions.
+// checkPAT classifies a PAT the same way an API server's own PAT check does: 401 expired, 403
+// insufficient permissions, any other non-2xx unreachable. On success a missing scopes header is a
+// fine-grained PAT (valid), and a present header without "repo" is insufficient permissions.
 func (l *local) checkPAT(ctx context.Context, pat string, now time.Time) HealthResult {
 	if l.ghChecker == nil {
 		return HealthResult{Kind: KindGitHub, Status: StatusUnreachable, Detail: "no GitHub checker configured", CheckedAt: now}

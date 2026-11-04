@@ -2,8 +2,8 @@ package credential
 
 import "time"
 
-// Kind is a credential a Worker may hold, named the same way across every status report: the
-// Go sender, the API server's wire DTO, and the cloud's stored rows all agree on these strings.
+// Kind is a credential a Worker may hold. These strings must equal the API server's
+// CredentialKind wire values: a mismatch makes it refuse every registration with 400.
 type Kind string
 
 const (
@@ -16,8 +16,9 @@ const (
 // has to guess which entry is missing from an incomplete list.
 var allKinds = []Kind{KindGitHub, KindClaude, KindRegistry}
 
-// Status is the outcome of checking one credential. The first four are the ones the cloud API's
-// own credential checks already store; NotHeld is the one new value a Worker's self-check adds.
+// Status is the outcome of checking one credential, with the API server's CredentialHealthStatus
+// wire values. The first four are the statuses an API server's own credential checks store;
+// NotHeld is the one a Worker's self-check adds.
 type Status string
 
 const (
@@ -28,9 +29,9 @@ const (
 	StatusNotHeld                 Status = "NOT_HELD"
 )
 
-// MaxHealthDetail caps HealthResult.Detail at this many runes. It must agree with the Java
-// WorkerCredentialHealth record's cap: a detail truncated to a different length on each side
-// would make the two disagree about what a Worker actually sent.
+// MaxHealthDetail caps HealthResult.Detail at this many runes. It must equal the API server's
+// WorkerCredentialHealth cap, which counts code points the same way: a detail longer there than
+// here refuses the Worker's registration with 400.
 const MaxHealthDetail = 256
 
 // HealthResult is one credential kind's latest check. Detail never carries any part of a secret:

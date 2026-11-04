@@ -101,7 +101,20 @@ func TestRunFirstRegistrationCarriesAFullReport_ControlPlane(t *testing.T) {
 // reaching local.CheckHealth rather than controlPlane.CheckHealth. An empty credentials
 // directory means every kind is still reported NOT_HELD, but by a different code path -- and,
 // critically, with no outbound network call, since nothing is configured to check.
+// clearLocalCredentialEnv unsets every variable the local source falls back to, so a credential
+// in the developer's own shell can neither change these outcomes nor be sent anywhere.
+func clearLocalCredentialEnv(t *testing.T) {
+	t.Helper()
+	for _, n := range []string{
+		"GITHUB_PAT", "GITHUB_APP_ID", "GITHUB_APP_INSTALLATION_ID", "GITHUB_APP_PRIVATE_KEY_PATH",
+		"CLAUDE_CODE_OAUTH_TOKEN", "REGISTRY_HOST", "REGISTRY_USERNAME", "REGISTRY_PASSWORD",
+	} {
+		t.Setenv(n, "")
+	}
+}
+
 func TestRunFirstRegistrationCarriesAFullReport_Local(t *testing.T) {
+	clearLocalCredentialEnv(t)
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -222,9 +235,7 @@ func TestNewCredentialProviderControlPlane_CheckHealthReportsAllNotHeld(t *testi
 }
 
 func TestNewCredentialProviderLocal_CheckHealthWorksWithNothingConfigured(t *testing.T) {
-	for _, n := range []string{"GITHUB_PAT", "GITHUB_APP_ID", "CLAUDE_CODE_OAUTH_TOKEN"} {
-		t.Setenv(n, "")
-	}
+	clearLocalCredentialEnv(t)
 	cfg := Config{CredentialSource: CredentialSourceLocal, CredentialsDir: t.TempDir()}.withDefaults()
 	provider := newCredentialProvider(cfg, &stubTokenClient{})
 

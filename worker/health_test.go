@@ -52,6 +52,7 @@ func TestHealthMonitorCheckNowFillsTheReport(t *testing.T) {
 
 	got := m.latest()
 	require.Len(t, got, 3)
+	assert.Equal(t, provider.results, got, "latest keeps the provider's order")
 }
 
 func TestHealthMonitorCheckNowIsBoundedByItsCallersContext(t *testing.T) {
@@ -97,10 +98,19 @@ func TestHealthMonitorLogsAStatusChangeOnce(t *testing.T) {
 	m.checkNow(context.Background())
 	firstLen := buf.Len()
 	require.Greater(t, firstLen, 0, "a change into a non-valid status must be logged")
+	assert.Contains(t, buf.String(), "WARN")
+	assert.Contains(t, buf.String(), "token expired")
 
 	// Same status again: no new log line.
 	m.checkNow(context.Background())
 	assert.Equal(t, firstLen, buf.Len(), "an unchanged status must not be logged again")
+
+	// Recovery: logged once more, at Info.
+	provider.results = []credprov.HealthResult{{Kind: credprov.KindGitHub, Status: credprov.StatusValid, CheckedAt: now}}
+	m.checkNow(context.Background())
+	assert.Contains(t, buf.String()[firstLen:], "INFO")
+	require.Len(t, m.latest(), 1)
+	assert.Equal(t, credprov.StatusValid, m.latest()[0].Status)
 }
 
 func TestHealthMonitorLatestReturnsACopy(t *testing.T) {

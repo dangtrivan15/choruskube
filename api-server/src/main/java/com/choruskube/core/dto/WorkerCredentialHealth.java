@@ -17,7 +17,10 @@ import java.time.Instant;
 public record WorkerCredentialHealth(
         CredentialKind kind, CredentialHealthStatus status, String detail, Instant checkedAt) {
 
-    /** Must equal the Go Worker's {@code credential.MaxHealthDetail} — the two sides of one wire contract. */
+    /**
+     * Must equal the Go Worker's {@code credential.MaxHealthDetail}, and is counted the same way, in
+     * code points: a cap the Worker meets but this side exceeds refuses its registration with 400.
+     */
     public static final int MAX_DETAIL_LENGTH = 256;
 
     public WorkerCredentialHealth {
@@ -30,7 +33,7 @@ public record WorkerCredentialHealth(
         if (checkedAt == null) {
             throw new IllegalArgumentException("checkedAt is required");
         }
-        if (detail != null && detail.length() > MAX_DETAIL_LENGTH) {
+        if (detail != null && detail.codePointCount(0, detail.length()) > MAX_DETAIL_LENGTH) {
             throw new IllegalArgumentException("detail must be at most " + MAX_DETAIL_LENGTH + " characters");
         }
     }

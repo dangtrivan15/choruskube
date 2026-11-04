@@ -172,10 +172,10 @@ Claude token, and the registry login — at startup, before the first registrati
 every 5 minutes without a run. Each check is the lightest authenticated read its service offers:
 an App is checked by looking up its installation with the App's own key, minting nothing; a PAT
 by `GET /user`; a Claude token by `GET /v1/models`; a registry login by a Docker Registry v2
-auth ping. Every read is bounded by a 10-second timeout, so the startup check — and the first
-registration it precedes — waits at most that long. A failing check is logged and never fails
-registration or a run, and a credential rotated in the folder in place is picked up by the next
-check.
+auth ping. The kinds are checked concurrently and every read is bounded by a 10-second timeout,
+so the startup check — and the first registration it precedes — waits at most that long. A
+failing check is logged and never fails registration or a run, and a credential rotated in the
+folder in place is picked up by the next check.
 
 Each result names the credential kind, a status, a short detail, and when it was checked. The
 status is one of `VALID`, `EXPIRED` (any rejected credential), `INSUFFICIENT_PERMISSIONS`,
@@ -186,10 +186,11 @@ all. A result never carries any part of a secret.
 
 Repository reachability is a property of a run, not of the credential alone, so it is checked
 separately: on a run's first use of a PAT, the Worker reads each of the run's repositories once
-and fails the step naming any it cannot reach. An App credential gets no separate check — its
-mint is already narrowed to the run's repositories, and GitHub's own refusal when one falls
-outside the installation's selection already names every repository requested (see
-[Credentials](#credentials) above).
+and fails the step naming any it cannot reach, with GitHub's status or why it could not check.
+An App credential gets no separate check — its mint is already narrowed to the run's
+repositories, and when GitHub refuses that mint because one falls outside the installation's
+selection, the Worker's error lists every repository requested, since GitHub's refusal names
+none (see [Credentials](#credentials) above).
 
 ### GitHub work outside a run
 

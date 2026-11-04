@@ -1,9 +1,7 @@
-// Package registry checks a container registry login the way a Worker's credential health check
-// needs: the lightest authenticated read the Docker Registry v2 API offers, with no pull and no
-// push. The algorithm mirrors OrgRegistryCredentialService#checkRegistryHealth in the cloud API
-// server so the two sides classify a registry's answer identically; this version always dials
-// https and carries no SSRF guard, because it checks a registry the Worker's own operator
-// configured rather than one a tenant supplied.
+// Package registry checks a container registry login with the lightest authenticated read the
+// Docker Registry v2 API offers, with no pull and no push. It always dials https and carries no
+// SSRF guard, because it checks a registry the Worker's own operator configured, never one a
+// tenant supplied.
 package registry
 
 import (
@@ -34,10 +32,9 @@ var client = &http.Client{Timeout: 10 * time.Second}
 
 // Check pings host's Docker Registry v2 API with Basic auth, following a Bearer challenge to its
 // token realm (with one retry carrying a pull scope, for a credential scoped to specific
-// repositories) when the direct ping asks for it. Outcomes match
-// OrgRegistryCredentialService#checkRegistryHealth in the cloud API server: 200 valid; a
-// rejection (401, or the token endpoint's 401/403) expired; anything else, including a network
-// error or timeout, unreachable.
+// repositories). The outcomes are an API server's own registry check's, so a status means the
+// same whichever side checked: 200 valid; a rejection (401, or the token endpoint's 401/403)
+// expired; anything else, including a network error or timeout, unreachable.
 func Check(ctx context.Context, host, username, password string) (credential.Status, string) {
 	basic := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
 	pingURL := "https://" + host + "/v2/"

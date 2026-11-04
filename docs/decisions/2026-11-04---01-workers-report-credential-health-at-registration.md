@@ -28,8 +28,9 @@ nothing; only a Worker that registers has anything to report.
   authorized only for specific repositories. None of these ever logs or returns any part of the
   credential itself.
 - **When.** At startup, before the first registration call, and then on a fixed five-minute
-  interval without a run. Every read carries its own bounded timeout, so the startup check — and
-  the registration it precedes — waits at most that long. A timeout or any other network failure
+  interval without a run. The kinds are checked concurrently and every read carries its own
+  bounded timeout, so the startup check — and the registration it precedes — waits at most that
+  long. A timeout or any other network failure
   is reported `UNREACHABLE`, never `EXPIRED`: the credential might be fine, the check just
   couldn't reach the service to find out. A failing check never fails registration or a run, and a
   credential rotated in place is picked up by the next check.

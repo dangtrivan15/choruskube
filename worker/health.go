@@ -2,7 +2,7 @@ package worker
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -21,6 +21,7 @@ type healthMonitor struct {
 	interval time.Duration
 
 	mu      sync.Mutex
+	order   []credprov.Kind
 	results map[credprov.Kind]credprov.HealthResult
 }
 
@@ -29,22 +30,24 @@ func newHealthMonitor(p credprov.Provider, interval time.Duration) *healthMonito
 }
 
 // checkNow runs Provider.CheckHealth synchronously and folds every result into the latest report,
-// logging any status change: Info for a change into or within VALID/NOT_HELD, Warn for a change
-// into anything else. CheckHealth itself never returns an error (see credprov.Provider), so
-// there is nothing here for a caller to propagate.
+// logging any status change: Info for a change into VALID or NOT_HELD, Warn for any other status.
+// CheckHealth never returns an error (see credprov.Provider), so there is nothing to propagate.
 func (m *healthMonitor) checkNow(ctx context.Context) {
 	for _, r := range m.provider.CheckHealth(ctx) {
 		m.mu.Lock()
 		prev, had := m.results[r.Kind]
+		if !had {
+			m.order = append(m.order, r.Kind)
+		}
 		m.results[r.Kind] = r
 		m.mu.Unlock()
 		if had && prev.Status == r.Status {
 			continue
 		}
 		if r.Status == credprov.StatusValid || r.Status == credprov.StatusNotHeld {
-			log.Printf("credential health: %s is %s", r.Kind, r.Status)
+			slog.Info("credential health changed", "kind", r.Kind, "status", r.Status)
 		} else {
-			log.Printf("credential health WARNING: %s is %s: %s", r.Kind, r.Status, r.Detail)
+			slog.Warn("credential health changed", "kind", r.Kind, "status", r.Status, "detail", r.Detail)
 		}
 	}
 }
@@ -63,14 +66,14 @@ func (m *healthMonitor) run(ctx context.Context) {
 	}
 }
 
-// latest is a copy of the last report, one entry per kind checked so far (empty before the first
-// checkNow).
+// latest is a copy of the last report, one entry per kind checked so far in the order the provider
+// first reported them (empty before the first checkNow).
 func (m *healthMonitor) latest() []credprov.HealthResult {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]credprov.HealthResult, 0, len(m.results))
-	for _, r := range m.results {
-		out = append(out, r)
+	out := make([]credprov.HealthResult, len(m.order))
+	for i, k := range m.order {
+		out[i] = m.results[k]
 	}
 	return out
 }
