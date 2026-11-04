@@ -21,8 +21,20 @@ class WorkerRegisterRequestJsonTest {
 
     private static final String INSTANCE_ID = "11111111-1111-1111-1111-111111111111";
 
+    private static final String CHECKED_AT = "2026-11-04T00:00:00Z";
+
+    private static final String VALID_HEALTH = ",\"credentialHealth\":["
+            + "{\"kind\":\"github\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT + "\"},"
+            + "{\"kind\":\"claude\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT + "\"},"
+            + "{\"kind\":\"registry\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT + "\"}]";
+
     private String bodyWith(String credentialSourceField) {
-        return "{\"hostname\":\"h\",\"instanceId\":\"" + INSTANCE_ID + "\"" + credentialSourceField + "}";
+        return bodyWith(credentialSourceField, VALID_HEALTH);
+    }
+
+    private String bodyWith(String credentialSourceField, String credentialHealthField) {
+        return "{\"hostname\":\"h\",\"instanceId\":\"" + INSTANCE_ID + "\"" + credentialSourceField
+                + credentialHealthField + "}";
     }
 
     @Test
@@ -53,6 +65,7 @@ class WorkerRegisterRequestJsonTest {
 
         assertThat(request.credentialSource()).isEqualTo(WorkerCredentialSource.LOCAL);
         assertThat(request.instanceId()).isEqualTo(UUID.fromString(INSTANCE_ID));
+        assertThat(request.credentialHealth()).hasSize(3);
     }
 
     @Test
@@ -73,11 +86,118 @@ class WorkerRegisterRequestJsonTest {
 
     @Test
     void unrelatedUnknownProperty_isIgnoredNotAnError() throws Exception {
-        String body = "{\"hostname\":\"h\",\"instanceId\":\"" + INSTANCE_ID + "\",\"credentialSource\":\"local\","
-                + "\"somethingThisServerDoesNotKnow\":\"value\"}";
+        String body = "{\"hostname\":\"h\",\"instanceId\":\"" + INSTANCE_ID + "\",\"credentialSource\":\"local\""
+                + VALID_HEALTH + ",\"somethingThisServerDoesNotKnow\":\"value\"}";
 
         WorkerRegisterRequest request = mapper.readValue(body, WorkerRegisterRequest.class);
 
         assertThat(request.credentialSource()).isEqualTo(WorkerCredentialSource.LOCAL);
+    }
+
+    @Test
+    void missingCredentialHealth_fails() {
+        assertThatThrownBy(() ->
+                        mapper.readValue(bodyWith(",\"credentialSource\":\"local\"", ""), WorkerRegisterRequest.class))
+                .isInstanceOf(ValueInstantiationException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void nullCredentialHealth_fails() {
+        assertThatThrownBy(() -> mapper.readValue(
+                        bodyWith(",\"credentialSource\":\"local\"", ",\"credentialHealth\":null"),
+                        WorkerRegisterRequest.class))
+                .isInstanceOf(ValueInstantiationException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void credentialHealthMissingAKind_fails() {
+        String health = ",\"credentialHealth\":["
+                + "{\"kind\":\"github\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT
+                + "\"},"
+                + "{\"kind\":\"claude\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT
+                + "\"}]";
+
+        assertThatThrownBy(() -> mapper.readValue(
+                        bodyWith(",\"credentialSource\":\"local\"", health), WorkerRegisterRequest.class))
+                .isInstanceOf(ValueInstantiationException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void credentialHealthDuplicatesAKind_fails() {
+        String health = ",\"credentialHealth\":["
+                + "{\"kind\":\"github\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT
+                + "\"},"
+                + "{\"kind\":\"github\",\"status\":\"VALID\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT
+                + "\"},"
+                + "{\"kind\":\"claude\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT
+                + "\"}]";
+
+        assertThatThrownBy(() -> mapper.readValue(
+                        bodyWith(",\"credentialSource\":\"local\"", health), WorkerRegisterRequest.class))
+                .isInstanceOf(ValueInstantiationException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void credentialHealthUnknownKind_fails() {
+        String health = ",\"credentialHealth\":["
+                + "{\"kind\":\"bogus\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT
+                + "\"}]";
+
+        assertThatThrownBy(() -> mapper.readValue(
+                        bodyWith(",\"credentialSource\":\"local\"", health), WorkerRegisterRequest.class))
+                .isInstanceOf(com.fasterxml.jackson.core.JsonProcessingException.class);
+    }
+
+    @Test
+    void credentialHealthUnknownStatus_fails() {
+        String health = ",\"credentialHealth\":["
+                + "{\"kind\":\"github\",\"status\":\"BOGUS\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT
+                + "\"}]";
+
+        assertThatThrownBy(() -> mapper.readValue(
+                        bodyWith(",\"credentialSource\":\"local\"", health), WorkerRegisterRequest.class))
+                .isInstanceOf(com.fasterxml.jackson.core.JsonProcessingException.class);
+    }
+
+    @Test
+    void credentialHealthMissingCheckedAt_fails() {
+        String health = ",\"credentialHealth\":["
+                + "{\"kind\":\"github\",\"status\":\"NOT_HELD\",\"detail\":\"\"},"
+                + "{\"kind\":\"claude\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT + "\"},"
+                + "{\"kind\":\"registry\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT
+                + "\"}]";
+
+        assertThatThrownBy(() -> mapper.readValue(
+                        bodyWith(",\"credentialSource\":\"local\"", health), WorkerRegisterRequest.class))
+                .isInstanceOf(ValueInstantiationException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void credentialHealthDetailOverTheCap_fails() {
+        String tooLong = "x".repeat(WorkerCredentialHealth.MAX_DETAIL_LENGTH + 1);
+        String health = ",\"credentialHealth\":["
+                + "{\"kind\":\"github\",\"status\":\"UNREACHABLE\",\"detail\":\"" + tooLong + "\",\"checkedAt\":\""
+                + CHECKED_AT + "\"},"
+                + "{\"kind\":\"claude\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT + "\"},"
+                + "{\"kind\":\"registry\",\"status\":\"NOT_HELD\",\"detail\":\"\",\"checkedAt\":\"" + CHECKED_AT
+                + "\"}]";
+
+        assertThatThrownBy(() -> mapper.readValue(
+                        bodyWith(",\"credentialSource\":\"local\"", health), WorkerRegisterRequest.class))
+                .isInstanceOf(ValueInstantiationException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void validCredentialHealth_roundTrips() throws Exception {
+        WorkerRegisterRequest request =
+                mapper.readValue(bodyWith(",\"credentialSource\":\"control-plane\""), WorkerRegisterRequest.class);
+
+        assertThat(request.credentialHealth()).hasSize(3);
     }
 }

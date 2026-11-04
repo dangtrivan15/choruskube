@@ -47,13 +47,21 @@ nothing; only a Worker that registers has anything to report.
 
 ## Why the App check reads the installation rather than mints
 
-A control plane's own App-credential check mints a metadata-only token and discards it, because
-it already has a narrowed-mint code path to reuse and no cheaper authenticated call available to
-it. The Worker's own check has no such step to reuse — minting at all would be new machinery added
-solely for a health check — and reading the installation directly gives it something a mint
-response does not: whether the installation is suspended, which a suspended installation's own
-mint attempt would eventually surface as a rejection anyway, just one network round-trip later and
-without naming the actual cause.
+[2026-10-18---01](2026-10-18---01-minted-app-tokens-narrowed-to-the-run.md) rejected reading the
+installation for a control plane's own App-credential check, reasoning that "a suspended
+installation still answers that lookup with success, so the check would lose the 401/403 status
+it classifies a revoked credential by" — at the time, nothing read the lookup's response body for
+anything but the account and granted permissions. That concern still holds for the control plane,
+which keeps minting a metadata-only token and discarding it, since it already has a narrowed-mint
+code path to reuse and no cheaper authenticated call available to it.
+
+The Worker's own check is a different trade: it has no narrowed-mint step to reuse — minting at
+all would be new machinery added solely for a health check — and the installation lookup's
+response carries a `suspended_at` field the control plane's own check never needed to read. Acting
+on that field directly, rather than only on the HTTP status, is what lets this check surface a
+suspended installation without minting anything: the same information a suspended installation's
+own mint attempt would eventually surface as a rejection anyway, just one network round-trip later
+and without naming the actual cause.
 
 ## Why repository reachability is checked on a run's first token, not here
 
