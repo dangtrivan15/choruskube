@@ -208,7 +208,6 @@ services:
       ORCHESTRATOR_SECRET: choruskube-orchestrator
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
-      TEMPORAL_TASK_QUEUE: choruskube
       OBJECT_STORE_ENDPOINT: http://object-storage:9000
       OBJECT_STORE_ACCESS_KEY: objectstore-dev
       OBJECT_STORE_SECRET_KEY: objectstore-dev-secret

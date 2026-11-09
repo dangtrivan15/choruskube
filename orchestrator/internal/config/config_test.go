@@ -59,7 +59,7 @@ func TestEnvOrDefaultInt_ReturnsFallbackForNonNumeric(t *testing.T) {
 func TestLoad_ReturnsDefaults(t *testing.T) {
 	for _, key := range []string{
 		"API_SERVER_URL", "ORCHESTRATOR_SECRET",
-		"TEMPORAL_ADDRESS", "TEMPORAL_NAMESPACE", "TEMPORAL_TASK_QUEUE",
+		"TEMPORAL_ADDRESS", "TEMPORAL_NAMESPACE",
 		"HEALTH_PORT",
 		"OBJECT_STORE_ENDPOINT", "OBJECT_STORE_BUCKET", "OBJECT_STORE_ACCESS_KEY", "OBJECT_STORE_SECRET_KEY",
 	} {
@@ -72,7 +72,6 @@ func TestLoad_ReturnsDefaults(t *testing.T) {
 	assert.Equal(t, "", cfg.OrchestratorSecret)
 	assert.Equal(t, "localhost:7233", cfg.Temporal.Address)
 	assert.Equal(t, "choruskube", cfg.Temporal.Namespace)
-	assert.Equal(t, "choruskube", cfg.Temporal.TaskQueue)
 	assert.Equal(t, 8080, cfg.HealthPort)
 	assert.Equal(t, "http://localhost:9000", cfg.ObjectStore.Endpoint)
 	assert.Equal(t, "choruskube", cfg.ObjectStore.Bucket)

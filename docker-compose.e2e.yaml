@@ -264,7 +264,6 @@ services:
       ORCHESTRATOR_SECRET: choruskube-orchestrator
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: default
-      TEMPORAL_TASK_QUEUE: choruskube
       OBJECT_STORE_ENDPOINT: http://object-storage:9000
       OBJECT_STORE_ACCESS_KEY: objectstore-dev
       OBJECT_STORE_SECRET_KEY: objectstore-dev-secret
@@ -318,6 +317,9 @@ services:
       DOCKER_HOST: unix:///var/run/docker.sock
       DOCKER_NETWORK: choruskube-e2e
       DOCKER_STAGING_DIR: *agent-staging-dir
+      # Short enough that workload-lifetime.spec.ts's ~7min poll budget covers the heartbeat-timeout
+      # floor (Bounds.Retention) on this stack's short node timeouts.
+      WORKLOAD_RETENTION: 30s
       # test-only: the Worker's own GitHub calls (gate compare/merge, run-branch cleanup, roadmap issue filing, and closing a done Task's issue) reach WireMock, not api.github.com.
       GITHUB_API_URL: http://wiremock:8080
       # Required, no default: the api-server hands the Worker each run's GitHub token, so no credential files.

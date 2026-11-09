@@ -35,7 +35,7 @@ func newBranchCleanupFixture(t *testing.T, handler http.HandlerFunc) branchClean
 	}))
 	t.Cleanup(server.Close)
 	return branchCleanupFixture{
-		acts:  NewActivities(apiclient.NewAuthenticatedClient(server.URL, "orchestrator-secret"), nil, nil, nil),
+		acts:  NewActivities(apiclient.NewAuthenticatedClient(server.URL, "orchestrator-secret"), nil, nil),
 		runID: uuid.New(),
 		hits:  &hits,
 	}
@@ -116,7 +116,7 @@ func TestPlanBranchCleanup_ServerErrorsStayRetryable(t *testing.T) {
 func TestCleanupRunBranches_IsRegisteredButNeverRunsHere(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestActivityEnvironment()
-	env.RegisterActivity(NewActivities(nil, nil, nil, nil))
+	env.RegisterActivity(NewActivities(nil, nil, nil))
 
 	_, err := env.ExecuteActivity("CleanupRunBranches", BranchCleanupParams{RunID: uuid.New()})
 

@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/google/uuid"
 	"go.temporal.io/sdk/client"
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/activity"
@@ -18,7 +17,6 @@ import (
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/namespaces"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/objectstore"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/prompt"
-	"github.com/dangtrivan15/choruskube/orchestrator/internal/reconciler"
 )
 
 func main() {
@@ -60,7 +58,7 @@ func main() {
 
 	// --- Activities ---
 	resolver := prompt.NewResolver()
-	activities := activity.NewActivities(apiClient, resolver, cfg, objectStoreClient)
+	activities := activity.NewActivities(apiClient, resolver, objectStoreClient)
 
 	// --- Temporal workflow workers, one per namespace ---
 	sup := namespaces.NewSupervisor(cfg.Temporal.Address, activities)
@@ -94,45 +92,9 @@ func main() {
 		}
 	}()
 
-	// --- Orphaned Resource Reconciler ---
-	rec := reconciler.New(&reconcilerAPIAdapter{client: apiClient}, reconciler.DefaultConfig())
-	go rec.Start(ctx)
-	log.Println("Orphaned resource reconciler started")
-
 	fmt.Println("Orchestrator ready")
 	<-ctx.Done()
 
 	log.Println("Shutting down")
 	server.Shutdown(context.Background())
-}
-
-// --- Adapters ---
-
-// reconcilerAPIAdapter adapts *apiclient.Client to the reconciler.APIClient interface.
-type reconcilerAPIAdapter struct {
-	client *apiclient.Client
-}
-
-func (a *reconcilerAPIAdapter) GetWorkflowRunStatus(ctx context.Context, runID uuid.UUID) (string, error) {
-	return a.client.GetWorkflowRunStatus(ctx, runID)
-}
-
-func (a *reconcilerAPIAdapter) TerminateWorkload(ctx context.Context, executionID uuid.UUID) error {
-	return a.client.TerminateWorkload(ctx, executionID)
-}
-
-func (a *reconcilerAPIAdapter) ListWorkloads(ctx context.Context) ([]reconciler.WorkloadInfo, error) {
-	workloads, err := a.client.ListWorkloads(ctx)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]reconciler.WorkloadInfo, len(workloads))
-	for i, wl := range workloads {
-		result[i] = reconciler.WorkloadInfo{
-			NodeExecutionID: wl.NodeExecutionID,
-			RunID:           wl.RunID,
-			ExecutionHandle: wl.ExecutionHandle,
-		}
-	}
-	return result, nil
 }

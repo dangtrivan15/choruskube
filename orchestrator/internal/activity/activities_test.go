@@ -14,7 +14,6 @@ import (
 	"go.temporal.io/sdk/temporal"
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/apiclient"
-	"github.com/dangtrivan15/choruskube/orchestrator/internal/config"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/prompt"
 )
 
@@ -37,7 +36,7 @@ func TestCreateNodeExecution(t *testing.T) {
 	defer apiServer.Close()
 
 	client := apiclient.NewClient(apiServer.URL)
-	activities := NewActivities(client, prompt.NewResolver(), testConfig(), nil)
+	activities := NewActivities(client, prompt.NewResolver(), nil)
 
 	result, err := activities.CreateNodeExecution(withWorkflowRunID(t, runID), CreateNodeExecParams{
 		WorkflowRunID:  runID,
@@ -59,7 +58,7 @@ func TestCreateNodeExecution_429_ReturnsNonRetryableError(t *testing.T) {
 	defer apiServer.Close()
 
 	client := apiclient.NewClient(apiServer.URL)
-	activities := NewActivities(client, prompt.NewResolver(), testConfig(), nil)
+	activities := NewActivities(client, prompt.NewResolver(), nil)
 
 	_, err := activities.CreateNodeExecution(withWorkflowRunID(t, runID), CreateNodeExecParams{
 		WorkflowRunID:  runID,
@@ -86,7 +85,7 @@ func TestCreateNodeExecution_500_ReturnsRetryableError(t *testing.T) {
 	defer apiServer.Close()
 
 	client := apiclient.NewClient(apiServer.URL)
-	activities := NewActivities(client, prompt.NewResolver(), testConfig(), nil)
+	activities := NewActivities(client, prompt.NewResolver(), nil)
 
 	_, err := activities.CreateNodeExecution(withWorkflowRunID(t, runID), CreateNodeExecParams{
 		WorkflowRunID:  runID,
@@ -108,7 +107,7 @@ func TestWriteExecutionLog(t *testing.T) {
 	defer apiServer.Close()
 
 	client := apiclient.NewClient(apiServer.URL)
-	acts := NewActivities(client, nil, nil, nil)
+	acts := NewActivities(client, nil, nil)
 
 	runID := uuid.New()
 	err := acts.WriteExecutionLog(withWorkflowRunID(t, runID), WriteExecutionLogParams{
@@ -126,7 +125,7 @@ func TestUpdateNodeExecutionStatus(t *testing.T) {
 	defer apiServer.Close()
 
 	client := apiclient.NewClient(apiServer.URL)
-	acts := NewActivities(client, nil, nil, nil)
+	acts := NewActivities(client, nil, nil)
 
 	errMsg := "heartbeat timeout"
 	runID := uuid.New()
@@ -144,7 +143,7 @@ func TestUpdateWorkflowRunStatus(t *testing.T) {
 	defer apiServer.Close()
 
 	client := apiclient.NewClient(apiServer.URL)
-	acts := NewActivities(client, nil, nil, nil)
+	acts := NewActivities(client, nil, nil)
 
 	runID := uuid.New()
 	err := acts.UpdateWorkflowRunStatus(withWorkflowRunID(t, runID), UpdateRunStatusParams{
@@ -165,7 +164,7 @@ func TestSetNodeDecision(t *testing.T) {
 	defer apiServer.Close()
 
 	client := apiclient.NewClient(apiServer.URL)
-	acts := NewActivities(client, nil, nil, nil)
+	acts := NewActivities(client, nil, nil)
 
 	runID := uuid.New()
 	err := acts.SetNodeDecision(withWorkflowRunID(t, runID), SetNodeDecisionParams{
@@ -187,7 +186,7 @@ func TestUpdateNodeExecutionStatus_WithArtifactRefs(t *testing.T) {
 	defer apiServer.Close()
 
 	client := apiclient.NewClient(apiServer.URL)
-	acts := NewActivities(client, nil, nil, nil)
+	acts := NewActivities(client, nil, nil)
 
 	refs := `{"report.pdf":"orgs/myorg/runs/abc/out/report.pdf"}`
 	result := "done"
@@ -240,7 +239,7 @@ func TestLoadReviewHistoryJSON_PreservesFeedbackText(t *testing.T) {
 	defer apiServer.Close()
 
 	client := apiclient.NewClient(apiServer.URL)
-	acts := NewActivities(client, nil, nil, nil)
+	acts := NewActivities(client, nil, nil)
 
 	jsonStr, err := acts.LoadReviewHistoryJSON(withWorkflowRunID(t, runID), LoadReviewHistoryJSONParams{
 		RunID:     runID,
@@ -257,10 +256,4 @@ func TestLoadReviewHistoryJSON_PreservesFeedbackText(t *testing.T) {
 	require.Len(t, decoded, 2)
 	assert.Equal(t, "", decoded[1]["Result"])
 	assert.NotContains(t, jsonStr, `"Result":null`)
-}
-
-func testConfig() *config.Config {
-	return &config.Config{
-		APIServerURL: "http://localhost:8080",
-	}
 }

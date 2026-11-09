@@ -1,5 +1,6 @@
 package com.choruskube.core.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -137,23 +138,21 @@ public class InternalRunControllerTest extends BaseTest {
     }
 
     @Test
-    void getRunStatus_returnsPendingByDefault() throws Exception {
-        mockMvc.perform(get("/internal/runs/" + run.getId() + "/status"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("pending"));
+    void getRunStatus_isMethodNotAllowed() throws Exception {
+        // The GET route was removed with the orchestrator reconciler, its only caller; PUT on
+        // this path stays, so the method is merely unsupported, not the whole path unmapped.
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/status")).andExpect(status().isMethodNotAllowed());
     }
 
     @Test
-    void getRunStatus_returnsRunningAfterUpdate() throws Exception {
+    void updateRunStatus_persistsThroughRepository() throws Exception {
         Map<String, Object> body = Map.of("status", "running");
         mockMvc.perform(put("/internal/runs/" + run.getId() + "/status")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(body)))
                 .andExpect(status().isNoContent());
 
-        mockMvc.perform(get("/internal/runs/" + run.getId() + "/status"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("running"));
+        assertThat(runRepo.findById(run.getId()).orElseThrow().getStatus()).isEqualTo(WorkflowRunStatus.running);
     }
 
     @Test

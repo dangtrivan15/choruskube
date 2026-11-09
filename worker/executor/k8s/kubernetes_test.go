@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -15,12 +16,14 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes/scheme"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	fakerest "k8s.io/client-go/rest/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	coreexec "github.com/dangtrivan15/choruskube/worker/executor"
 )
@@ -50,6 +53,7 @@ func TestKubernetesExecutor_Execute_CreatesJobAndSecrets(t *testing.T) {
 		Identity: coreexec.ExecutionIdentity{
 			ServiceAccount: "choruskube-agent",
 		},
+		Bounds: testBounds,
 	}
 
 	result, err := exec.Execute(context.Background(), params)
@@ -109,6 +113,10 @@ func TestKubernetesExecutor_ResolveJobSecretHash(t *testing.T) {
 // executor is single-namespace, so it is a Config field, not a per-call parameter.
 const testNamespace = "test-org-ns"
 
+// testBounds is an arbitrary positive Bounds for tests that don't exercise deadline/TTL/floor
+// behavior directly -- Execute refuses a zero ActivityTimeout, so every fixture needs one.
+var testBounds = coreexec.Bounds{ActivityTimeout: 10 * time.Minute, HeartbeatTimeout: time.Minute}
+
 func newTestParams() coreexec.ExecutionParams {
 	return coreexec.ExecutionParams{
 		RunID:           uuid.New(),
@@ -121,6 +129,7 @@ func newTestParams() coreexec.ExecutionParams {
 		Identity: coreexec.ExecutionIdentity{
 			ServiceAccount: "choruskube-agent",
 		},
+		Bounds: testBounds,
 	}
 }
 
@@ -217,7 +226,53 @@ func TestKubernetesExecutor_Execute_RegistryCredentials_CreatesPullSecretAndMoun
 // The finished-Job GC TTL must outlive the orchestrator's node heartbeat timeout (capped at 15m
 // = 900s in dag_executor.go), or a crashed agent's Pod is reaped before post-timeout FetchPodLogs
 // runs and the failure reaches operators as a bare heartbeat timeout. Guards against lowering it.
-func TestKubernetesExecutor_Execute_JobTTLOutlivesHeartbeatTimeout(t *testing.T) {
+func TestKubernetesExecutor_Execute_SetsDeadlineAndRetentionFromBounds(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		Namespace:           testNamespace,
+		AgentServiceAccount: "choruskube-agent",
+		Retention:           10 * time.Minute,
+	})
+
+	params := newTestParams()
+	params.Bounds = coreexec.Bounds{ActivityTimeout: 5 * time.Minute, HeartbeatTimeout: time.Minute}
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, job.Spec.ActiveDeadlineSeconds)
+	assert.Equal(t, int64((5*time.Minute+coreexec.LogGrace)/time.Second), *job.Spec.ActiveDeadlineSeconds)
+	require.NotNil(t, job.Spec.TTLSecondsAfterFinished)
+	assert.Equal(t, int32((10*time.Minute)/time.Second), *job.Spec.TTLSecondsAfterFinished)
+}
+
+func TestKubernetesExecutor_Execute_RetentionFloorsAtHeartbeatPlusGrace(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		Namespace:           testNamespace,
+		AgentServiceAccount: "choruskube-agent",
+		// Below the 15m heartbeat timeout + LogGrace floor.
+		Retention: time.Minute,
+	})
+
+	params := newTestParams()
+	params.Bounds = coreexec.Bounds{ActivityTimeout: 5 * time.Minute, HeartbeatTimeout: 15 * time.Minute}
+
+	result, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, job.Spec.TTLSecondsAfterFinished)
+	assert.Equal(t, int32((15*time.Minute+coreexec.LogGrace)/time.Second), *job.Spec.TTLSecondsAfterFinished,
+		"a configured retention below the heartbeat timeout plus grace is stamped as that floor")
+}
+
+func TestKubernetesExecutor_Execute_RefusesZeroActivityTimeout(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 
 	exec := NewKubernetesExecutor(fakeClient, Config{
@@ -225,14 +280,140 @@ func TestKubernetesExecutor_Execute_JobTTLOutlivesHeartbeatTimeout(t *testing.T)
 		AgentServiceAccount: "choruskube-agent",
 	})
 
-	result, err := exec.Execute(context.Background(), newTestParams())
+	params := newTestParams()
+	params.Bounds = coreexec.Bounds{}
+
+	_, err := exec.Execute(context.Background(), params)
+	require.Error(t, err)
+
+	jobs, err := fakeClient.BatchV1().Jobs(testNamespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, jobs.Items)
+	cms, err := fakeClient.CoreV1().ConfigMaps(testNamespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, cms.Items)
+	secrets, err := fakeClient.CoreV1().Secrets(testNamespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, secrets.Items)
+}
+
+// failOwnerRefUpdate makes the fake clientset's "update" verb fail for the named resource kind
+// (configmaps or secrets) once, so the ownership write Execute performs after creating the Job
+// errors as a real cluster's rejected Update would.
+func failOwnerRefUpdate(fakeClient *fake.Clientset, resource string, match func(obj runtime.Object) bool) {
+	fakeClient.PrependReactor("update", resource, func(action k8stesting.Action) (bool, runtime.Object, error) {
+		update, ok := action.(k8stesting.UpdateAction)
+		if !ok {
+			return false, nil, nil
+		}
+		if !match(update.GetObject()) {
+			return false, nil, nil
+		}
+		return true, nil, errors.New("simulated update failure")
+	})
+}
+
+func TestKubernetesExecutor_Execute_FailedConfigMapOwnerRefUpdate_LeavesNothingBehind(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	failOwnerRefUpdate(fakeClient, "configmaps", func(obj runtime.Object) bool {
+		_, ok := obj.(*corev1.ConfigMap)
+		return ok
+	})
+
+	exec := NewKubernetesExecutor(fakeClient, Config{Namespace: testNamespace, AgentServiceAccount: "choruskube-agent"})
+
+	_, err := exec.Execute(context.Background(), newTestParams())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "configmap")
+
+	assertNoLeftoverWorkloadObjects(t, fakeClient)
+}
+
+func TestKubernetesExecutor_Execute_FailedSecretOwnerRefUpdate_LeavesNothingBehind(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	failOwnerRefUpdate(fakeClient, "secrets", func(obj runtime.Object) bool {
+		secret, ok := obj.(*corev1.Secret)
+		return ok && strings.HasPrefix(secret.Name, jobSecretPrefix)
+	})
+
+	exec := NewKubernetesExecutor(fakeClient, Config{Namespace: testNamespace, AgentServiceAccount: "choruskube-agent"})
+
+	_, err := exec.Execute(context.Background(), newTestParams())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "secret")
+
+	assertNoLeftoverWorkloadObjects(t, fakeClient)
+}
+
+func TestKubernetesExecutor_Execute_FailedRegcredOwnerRefUpdate_LeavesNothingBehind(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	failOwnerRefUpdate(fakeClient, "secrets", func(obj runtime.Object) bool {
+		secret, ok := obj.(*corev1.Secret)
+		return ok && strings.HasPrefix(secret.Name, regcredPrefix)
+	})
+
+	exec := NewKubernetesExecutor(fakeClient, Config{Namespace: testNamespace, AgentServiceAccount: "choruskube-agent"})
+
+	params := newTestParams()
+	params.Credentials.Registry = &coreexec.RegistryCredentials{Host: "registry.example.com", Username: "u", Password: "p"}
+
+	_, err := exec.Execute(context.Background(), params)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "secret")
+
+	assertNoLeftoverWorkloadObjects(t, fakeClient)
+}
+
+// assertNoLeftoverWorkloadObjects asserts that a failed launch's unwind removed everything it
+// created: no ConfigMap, Secret, or Job survives it in testNamespace.
+func assertNoLeftoverWorkloadObjects(t *testing.T, fakeClient *fake.Clientset) {
+	t.Helper()
+	cms, err := fakeClient.CoreV1().ConfigMaps(testNamespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, cms.Items, "no ConfigMap should survive a failed launch")
+
+	secrets, err := fakeClient.CoreV1().Secrets(testNamespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, secrets.Items, "no Secret should survive a failed launch")
+
+	jobs, err := fakeClient.BatchV1().Jobs(testNamespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, jobs.Items, "no Job should survive a failed launch")
+}
+
+func TestKubernetesExecutor_Execute_OwnerReferenceOnEverySecretAndConfigMap(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+
+	exec := NewKubernetesExecutor(fakeClient, Config{Namespace: testNamespace, AgentServiceAccount: "choruskube-agent"})
+
+	params := newTestParams()
+	params.Credentials.Registry = &coreexec.RegistryCredentials{Host: "registry.example.com", Username: "u", Password: "p"}
+
+	result, err := exec.Execute(context.Background(), params)
 	require.NoError(t, err)
 
 	job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
 	require.NoError(t, err)
-	require.NotNil(t, job.Spec.TTLSecondsAfterFinished)
-	assert.Greater(t, *job.Spec.TTLSecondsAfterFinished, int32(900),
-		"Job TTL must exceed the 15m heartbeat timeout so a crashed Pod survives to FetchPodLogs")
+
+	cms, err := fakeClient.CoreV1().ConfigMaps(testNamespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, cms.Items, 1)
+	assertOwnedByJob(t, cms.Items[0].OwnerReferences, job)
+
+	secrets, err := fakeClient.CoreV1().Secrets(testNamespace).List(context.Background(), metav1.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, secrets.Items, 2, "job-secret and regcred")
+	for _, s := range secrets.Items {
+		assertOwnedByJob(t, s.OwnerReferences, job)
+	}
+}
+
+func assertOwnedByJob(t *testing.T, refs []metav1.OwnerReference, job *batchv1.Job) {
+	t.Helper()
+	require.Len(t, refs, 1)
+	assert.Equal(t, "Job", refs[0].Kind)
+	assert.Equal(t, job.Name, refs[0].Name)
+	assert.Equal(t, job.UID, refs[0].UID)
 }
 
 func TestKubernetesExecutor_Execute_PinsConfiguredAgentResources(t *testing.T) {

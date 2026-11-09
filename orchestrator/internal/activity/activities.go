@@ -14,7 +14,6 @@ import (
 	"go.temporal.io/sdk/temporal"
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/apiclient"
-	"github.com/dangtrivan15/choruskube/orchestrator/internal/config"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/objectstore"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/prompt"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/state"
@@ -23,12 +22,11 @@ import (
 type Activities struct {
 	client            *apiclient.Client
 	resolver          *prompt.Resolver
-	config            *config.Config
 	objectStoreClient objectstore.ObjectStore
 }
 
-func NewActivities(client *apiclient.Client, resolver *prompt.Resolver, cfg *config.Config, objectStoreClient objectstore.ObjectStore) *Activities {
-	return &Activities{client: client, resolver: resolver, config: cfg, objectStoreClient: objectStoreClient}
+func NewActivities(client *apiclient.Client, resolver *prompt.Resolver, objectStoreClient objectstore.ObjectStore) *Activities {
+	return &Activities{client: client, resolver: resolver, objectStoreClient: objectStoreClient}
 }
 
 // --- Run authority guard ---

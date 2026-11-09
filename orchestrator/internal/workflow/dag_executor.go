@@ -90,9 +90,10 @@ type nodeTracker struct {
 
 // failNodeAndRun stamps the node and its run terminal with one reason. Returning an error
 // from DAGExecutorWorkflow skips the run-status write at the end of it, and nothing else
-// closes the run — the reconciler only terminates workloads for runs already terminal, and
-// no component reads workflow status back from Temporal — so without this the run sits at
-// "running" forever and the reason reaches no page an operator looks at.
+// closes the run — the workload's own deadline bounds how long its agent runs, but reclaiming
+// the workload is not the same as closing the run, and no component reads workflow status
+// back from Temporal — so without this the run sits at "running" forever and the reason
+// reaches no page an operator looks at.
 func failNodeAndRun(ctx, dbCtx workflow.Context, runID, execID uuid.UUID, reason string) {
 	var activities *activity.Activities
 	workflow.ExecuteActivity(dbCtx, activities.UpdateNodeExecutionStatus,
@@ -1190,7 +1191,8 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						if cleanErr := workflow.ExecuteActivity(workloadCtx, activities.DeleteAgentJob,
 							activity.DeleteAgentJobParams{RunID: params.RunID, NodeExecutionID: tracker.execID},
 						).Get(ctx, nil); cleanErr != nil {
-							// Non-fatal: log and continue; the reconciler is the safety net.
+							// Non-fatal: log and continue; the workload's own deadline and
+							// retention reclaim it even if this delete never lands.
 							logger.Warn("DeleteAgentJob failed after node timeout",
 								"nodeID", completion.nodeID,
 								"execID", tracker.execID,

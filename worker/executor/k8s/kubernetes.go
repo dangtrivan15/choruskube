@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	batchv1 "k8s.io/api/batch/v1"
@@ -51,11 +52,6 @@ const (
 	// logLimitBytes keeps GetLogs' return under the callback payload's upstream size ceiling.
 	logLimitBytes = 64 * 1024
 
-	// Hard lower bound: must exceed the orchestrator's node heartbeat timeout (capped at 15m in
-	// dag_executor.go), or a crashed agent's Pod is GC'd before post-timeout FetchPodLogs runs and
-	// the crash logs vanish. Upper bound is node ephemeral disk: this also reaps successful Pods.
-	ttlSecondsAfterFinished = int32(3600)
-
 	podTemplateDataKey = "template.yaml"
 )
 
@@ -85,6 +81,10 @@ type Config struct {
 	// sidecar keeps the template's resources except a per-execution ExecutionParams.DindMemoryRequest.
 	// No memory limit is configured anywhere: each container's is derivedMemoryLimit of its request.
 	AgentResources coreexec.AgentResources
+
+	// Retention is how long a finished Job is kept before its TTLSecondsAfterFinished removes it,
+	// floored per launch by coreexec.Bounds.Retention against that node's own heartbeat timeout.
+	Retention time.Duration
 }
 
 // podTemplateStore is the agent PodTemplate cache and its lock, shared by pointer across
@@ -130,6 +130,12 @@ func (k *KubernetesExecutor) WithNamespace(ns string) *KubernetesExecutor {
 // config.json, a Secret for JOB_SECRET (and the Claude OAuth token when present), an optional
 // registry pull Secret, then the Job, owner-ref'ing the ConfigMap/Secret(s) to it for GC.
 func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.ExecutionParams) (coreexec.ExecutionResult, error) {
+	// Refused before anything is created: an unbounded Job would never reach its own
+	// ActiveDeadlineSeconds/TTLSecondsAfterFinished, so nothing short of a human ever reclaims it.
+	if params.Bounds.ActivityTimeout <= 0 {
+		return coreexec.ExecutionResult{}, fmt.Errorf("execute: activity timeout must be positive, got %s", params.Bounds.ActivityTimeout)
+	}
+
 	ns := k.config.Namespace
 	execIDShort := params.NodeExecutionID.String()[:8]
 
@@ -246,9 +252,20 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 			return coreexec.ExecutionResult{}, fmt.Errorf("get existing job: %w", err)
 		}
 	}
+	// Unwinds the Job itself once an ownership write below fails -- the ConfigMap/Secret(s)
+	// defers above already cover themselves. Background propagation so this call doesn't block
+	// on Pod deletion.
+	defer func() {
+		if !success {
+			propagation := metav1.DeletePropagationBackground
+			_ = k.client.BatchV1().Jobs(ns).Delete(context.WithoutCancel(ctx), jobName,
+				metav1.DeleteOptions{PropagationPolicy: &propagation})
+		}
+	}()
 
-	// Owner references so the ConfigMap and Secret(s) are GC'd with the Job. Best-effort: a failed
-	// Update here doesn't fail the launch -- Cleanup's explicit per-name deletes still reach them.
+	// Owner references so the ConfigMap and Secret(s) are GC'd with the Job. Mandatory: an
+	// ownerless Secret holding a Claude token or job secret would otherwise outlive the Job that
+	// is supposed to bound its lifetime, so a failed Update here fails the launch instead.
 	ownerRef := metav1.OwnerReference{
 		APIVersion: "batch/v1",
 		Kind:       "Job",
@@ -256,14 +273,20 @@ func (k *KubernetesExecutor) Execute(ctx context.Context, params coreexec.Execut
 		UID:        createdJob.UID,
 	}
 	createdCM.OwnerReferences = append(createdCM.OwnerReferences, ownerRef)
-	_, _ = k.client.CoreV1().ConfigMaps(ns).Update(ctx, createdCM, metav1.UpdateOptions{})
+	if _, err := k.client.CoreV1().ConfigMaps(ns).Update(ctx, createdCM, metav1.UpdateOptions{}); err != nil {
+		return coreexec.ExecutionResult{}, fmt.Errorf("set owner reference on configmap %s: %w", cmName, err)
+	}
 
 	createdSecret.OwnerReferences = append(createdSecret.OwnerReferences, ownerRef)
-	_, _ = k.client.CoreV1().Secrets(ns).Update(ctx, createdSecret, metav1.UpdateOptions{})
+	if _, err := k.client.CoreV1().Secrets(ns).Update(ctx, createdSecret, metav1.UpdateOptions{}); err != nil {
+		return coreexec.ExecutionResult{}, fmt.Errorf("set owner reference on secret %s: %w", secretName, err)
+	}
 
 	if createdRegcred != nil {
 		createdRegcred.OwnerReferences = append(createdRegcred.OwnerReferences, ownerRef)
-		_, _ = k.client.CoreV1().Secrets(ns).Update(ctx, createdRegcred, metav1.UpdateOptions{})
+		if _, err := k.client.CoreV1().Secrets(ns).Update(ctx, createdRegcred, metav1.UpdateOptions{}); err != nil {
+			return coreexec.ExecutionResult{}, fmt.Errorf("set owner reference on secret %s: %w", regcredName, err)
+		}
 	}
 
 	success = true
@@ -359,7 +382,8 @@ func (k *KubernetesExecutor) buildJob(
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            int32Ptr(0),
-			TTLSecondsAfterFinished: int32Ptr(ttlSecondsAfterFinished),
+			ActiveDeadlineSeconds:   int64Ptr(ceilSeconds(params.Bounds.Deadline())),
+			TTLSecondsAfterFinished: int32Ptr(int32(ceilSeconds(params.Bounds.Retention(k.config.Retention)))),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{labelAppKey: labelApp, labelRunID: params.RunID.String()},
@@ -865,3 +889,13 @@ func buildDockerConfigJSON(reg *coreexec.RegistryCredentials) ([]byte, error) {
 func boolPtr(b bool) *bool    { return &b }
 func int32Ptr(i int32) *int32 { return &i }
 func int64Ptr(i int64) *int64 { return &i }
+
+// ceilSeconds rounds d up to whole seconds: Kubernetes' ActiveDeadlineSeconds/
+// TTLSecondsAfterFinished are integer seconds, and rounding down would let either fire before
+// the bound it is meant to enforce has actually elapsed.
+func ceilSeconds(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	return int64((d + time.Second - 1) / time.Second)
+}

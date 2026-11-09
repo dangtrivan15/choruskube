@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -285,6 +286,57 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_CachesFullPendingCompletion(t *
 	assert.Equal(t, "org-queue", pending.TaskQueue)
 	assert.Equal(t, "choruskube-run-"+runID.String(), pending.WorkflowID)
 	assert.Equal(t, nodeExecID.String(), pending.ActivityID)
+}
+
+// TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsBounds verifies that executeLocally stamps
+// ExecutionParams.Bounds from the activity's own StartToCloseTimeout/HeartbeatTimeout, so the
+// executor can bound the workload's lifetime without any workflow involvement.
+func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsBounds(t *testing.T) {
+	nodeExecID := uuid.New()
+	runID := uuid.New()
+
+	original := activityInfo
+	activityInfo = func(context.Context) temporalactivity.Info {
+		return temporalactivity.Info{
+			WorkflowExecution:   workflow.Execution{ID: "choruskube-run-" + runID.String()},
+			StartToCloseTimeout: 10 * time.Minute,
+			HeartbeatTimeout:    90 * time.Second,
+		}
+	}
+	t.Cleanup(func() { activityInfo = original })
+
+	var executedParams executor.ExecutionParams
+	mockExec := &mockExecutor{
+		executeFn: func(ctx context.Context, params executor.ExecutionParams) (executor.ExecutionResult, error) {
+			executedParams = params
+			return executor.ExecutionResult{PodName: "agent-abc", JobSecretHash: "hash123"}, nil
+		},
+	}
+	mockClient := &mockWorkloadClient{
+		prepareFn: func(ctx context.Context, p workload.PrepareParams) (*workload.PrepareResponse, error) {
+			return &workload.PrepareResponse{Image: "ghcr.io/test/agent:latest"}, nil
+		},
+		completeFn: func(ctx context.Context, p workload.CompleteParams) error { return nil },
+	}
+
+	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
+	acts.CallbackURL = "http://worker:9090/api/v1/callback"
+	acts.APIServerURL = "http://api-server.invalid"
+	acts.SetCredentials(passThroughCredentials{})
+
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		Identity: Identity{
+			NodeExecutionID: nodeExecID,
+			RunID:           runID,
+		},
+		Node: Node{
+			ExecutorType:   "ai",
+			PromptTemplate: "irrelevant",
+		},
+	})
+	requirePending(t, err)
+
+	assert.Equal(t, executor.Bounds{ActivityTimeout: 10 * time.Minute, HeartbeatTimeout: 90 * time.Second}, executedParams.Bounds)
 }
 
 // TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryCredentials verifies the

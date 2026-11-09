@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -130,14 +131,20 @@ func skipUnlessBindMountWorks(t *testing.T) {
 	}
 }
 
+// testBounds is an arbitrary positive Bounds for tests that don't exercise deadline/retention
+// behavior directly -- Execute refuses a zero ActivityTimeout, so every fixture needs one.
+var testBounds = executor.Bounds{ActivityTimeout: 10 * time.Minute, HeartbeatTimeout: time.Minute}
+
 func newTestExecutor(t *testing.T) *DockerExecutor {
 	t.Helper()
 	exec, err := New(Config{
 		Host:       "unix:///var/run/docker.sock",
 		Network:    "bridge",
 		StagingDir: t.TempDir(),
+		Retention:  10 * time.Minute,
 	})
 	require.NoError(t, err)
+	t.Cleanup(exec.Close)
 	return exec
 }
 
@@ -158,6 +165,7 @@ func TestNew_DindImage_DefaultsWhenUnset(t *testing.T) {
 		StagingDir: t.TempDir(),
 	})
 	require.NoError(t, err)
+	t.Cleanup(exec.Close)
 	assert.Equal(t, defaultDindImage, exec.dindImage)
 }
 
@@ -170,6 +178,7 @@ func TestNew_DindImage_UsesConfigOverride(t *testing.T) {
 		DindImage:  "registry.example.com/choruskube-dind:latest",
 	})
 	require.NoError(t, err)
+	t.Cleanup(exec.Close)
 	assert.Equal(t, "registry.example.com/choruskube-dind:latest", exec.dindImage)
 }
 
@@ -180,6 +189,7 @@ func TestDockerExecutor_Execute_CreatesContainer(t *testing.T) {
 
 	params := executor.ExecutionParams{
 		RunID:           uuid.New(),
+		Bounds:          testBounds,
 		NodeExecutionID: uuid.New(),
 		NodeID:          uuid.New(),
 		Image:           "alpine:latest",
@@ -235,6 +245,7 @@ func TestDockerExecutor_ResolveJobSecretHash(t *testing.T) {
 	secret := "resolve-test-secret"
 	params := executor.ExecutionParams{
 		RunID:           uuid.New(),
+		Bounds:          testBounds,
 		NodeExecutionID: uuid.New(),
 		NodeID:          uuid.New(),
 		Image:           "alpine:latest",
@@ -269,6 +280,7 @@ func TestDockerExecutor_Execute_InjectsOnlyCallerEnv(t *testing.T) {
 	exec := newTestExecutor(t)
 	params := executor.ExecutionParams{
 		RunID:           uuid.New(),
+		Bounds:          testBounds,
 		NodeExecutionID: uuid.New(),
 		NodeID:          uuid.New(),
 		Image:           "alpine:latest",
@@ -314,6 +326,7 @@ func TestDockerExecutor_GetLogs_ReturnsContainerOutput(t *testing.T) {
 	exec := newTestExecutor(t)
 	params := executor.ExecutionParams{
 		RunID:           uuid.New(),
+		Bounds:          testBounds,
 		NodeExecutionID: uuid.New(),
 		NodeID:          uuid.New(),
 		Image:           "alpine:latest",
@@ -345,6 +358,7 @@ func TestDockerExecutor_Execute_StagesRegistryAuthConfig(t *testing.T) {
 	exec := newTestExecutor(t)
 	params := executor.ExecutionParams{
 		RunID:           uuid.New(),
+		Bounds:          testBounds,
 		NodeExecutionID: uuid.New(),
 		NodeID:          uuid.New(),
 		Image:           "alpine:latest",
@@ -399,9 +413,10 @@ func TestDockerExecutor_StartDindSidecar_ImageOverride_UsesOverride(t *testing.T
 		StagingDir: t.TempDir(),
 	})
 	require.NoError(t, err)
+	t.Cleanup(exec.Close)
 
 	execIDShort := uuid.New().String()[:8]
-	containerID, err := exec.startDindSidecar(context.Background(), execIDShort, "alpine:latest")
+	containerID, err := exec.startDindSidecar(context.Background(), execIDShort, "alpine:latest", map[string]string{labelAppKey: labelApp, labelExecID: execIDShort})
 	require.NoError(t, err)
 	defer func() {
 		_ = exec.client.ContainerRemove(context.Background(), containerID, container.RemoveOptions{Force: true})
@@ -426,9 +441,10 @@ func TestDockerExecutor_StartDindSidecar_NoOverride_FallsBackToConfiguredDefault
 		DindImage: "alpine:latest",
 	})
 	require.NoError(t, err)
+	t.Cleanup(exec.Close)
 
 	execIDShort := uuid.New().String()[:8]
-	containerID, err := exec.startDindSidecar(context.Background(), execIDShort, "")
+	containerID, err := exec.startDindSidecar(context.Background(), execIDShort, "", map[string]string{labelAppKey: labelApp, labelExecID: execIDShort})
 	require.NoError(t, err)
 	defer func() {
 		_ = exec.client.ContainerRemove(context.Background(), containerID, container.RemoveOptions{Force: true})
@@ -450,9 +466,11 @@ func TestDockerExecutor_Execute_WithDinD_SetsDockerHostEnv(t *testing.T) {
 		DindReadyTimeout: 60 * time.Second,
 	})
 	require.NoError(t, err)
+	t.Cleanup(exec.Close)
 
 	params := executor.ExecutionParams{
 		RunID:           uuid.New(),
+		Bounds:          testBounds,
 		NodeExecutionID: uuid.New(),
 		NodeID:          uuid.New(),
 		Image:           "alpine:latest",
@@ -556,6 +574,7 @@ func TestDockerExecutor_Execute_WithDinD_SidecarSeesNonRootAgentWorkspace(t *tes
 
 	params := executor.ExecutionParams{
 		RunID:           uuid.New(),
+		Bounds:          testBounds,
 		NodeExecutionID: uuid.New(),
 		NodeID:          uuid.New(),
 		Image:           agentImage,
@@ -589,9 +608,11 @@ func TestDockerExecutor_Execute_WritesConfigJSONToStagingDir(t *testing.T) {
 		StagingDir: stagingDir,
 	})
 	require.NoError(t, err)
+	t.Cleanup(exec.Close)
 
 	params := executor.ExecutionParams{
 		RunID:           uuid.New(),
+		Bounds:          testBounds,
 		NodeExecutionID: uuid.New(),
 		NodeID:          uuid.New(),
 		Image:           "alpine:latest",
@@ -620,4 +641,472 @@ func TestDockerExecutor_Execute_WritesConfigJSONToStagingDir(t *testing.T) {
 	info, err := os.Stat(entries[0])
 	require.NoError(t, err)
 	assert.NotZero(t, info.Mode().Perm()&0o044, "config.json must be readable by the non-root agent user")
+}
+
+// --- Workload-lifetime bounds: labels, cleanup independent of the agent container, janitor ---
+
+// waitForState polls until executionID's container reaches want ("running" or "exited"), or
+// fails the test after timeout.
+func waitForState(t *testing.T, exec *DockerExecutor, executionID uuid.UUID, want string, timeout time.Duration) *container.Summary {
+	t.Helper()
+	var last *container.Summary
+	require.Eventually(t, func() bool {
+		c, err := exec.findContainer(context.Background(), executionID)
+		if err != nil || c == nil {
+			return false
+		}
+		last = c
+		return c.State == want
+	}, timeout, 100*time.Millisecond, "container never reached state %q", want)
+	return last
+}
+
+func TestDockerExecutor_Execute_LabelsEveryObject(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec, err := New(Config{
+		Host:             "unix:///var/run/docker.sock",
+		Network:          "bridge",
+		StagingDir:       t.TempDir(),
+		DindReadyTimeout: 60 * time.Second,
+		Retention:        10 * time.Minute,
+	})
+	require.NoError(t, err)
+	t.Cleanup(exec.Close)
+
+	params := executor.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           "alpine:latest",
+		Command:         []string{"sleep", "30"},
+		JobSecret:       "sec",
+		ConfigJSON:      map[string]any{},
+		EnableDocker:    true,
+		Bounds:          executor.Bounds{ActivityTimeout: 5 * time.Minute, HeartbeatTimeout: time.Minute},
+	}
+	before := time.Now()
+	_, err = exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+	defer exec.Cleanup(context.Background(), params.NodeExecutionID)
+
+	execIDShort := params.NodeExecutionID.String()[:8]
+
+	c, err := exec.findContainer(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+	require.NotNil(t, c)
+
+	wantDeadline := strconv.FormatInt(before.Add(5*time.Minute+executor.LogGrace).Unix(), 10)
+	wantRetention := strconv.FormatInt(int64(10*time.Minute/time.Second), 10)
+
+	assertBoundsLabels := func(t *testing.T, labels map[string]string) {
+		t.Helper()
+		assert.Equal(t, labelApp, labels[labelAppKey])
+		assert.Equal(t, params.RunID.String(), labels[labelRunID])
+		assert.Equal(t, params.NodeExecutionID.String(), labels[labelExecID])
+		assert.NotEmpty(t, labels[labelTmpDir])
+		// Allow a couple of seconds of slack either side of before's own snapshot.
+		gotDeadline, err := strconv.ParseInt(labels[labelDeadline], 10, 64)
+		require.NoError(t, err)
+		wantDeadlineInt, _ := strconv.ParseInt(wantDeadline, 10, 64)
+		assert.InDelta(t, wantDeadlineInt, gotDeadline, 5)
+		assert.Equal(t, wantRetention, labels[labelRetention])
+	}
+
+	assertBoundsLabels(t, c.Labels)
+	assert.Equal(t, "true", c.Labels[labelHasDind])
+
+	dindName := dindNamePrefix + execIDShort
+	dindInspect, err := exec.client.ContainerInspect(context.Background(), dindName)
+	require.NoError(t, err)
+	assertBoundsLabels(t, dindInspect.Config.Labels)
+	assert.Equal(t, "true", dindInspect.Config.Labels[labelDind])
+
+	dindVol, err := exec.client.VolumeInspect(context.Background(), dindVolumePrefix+execIDShort)
+	require.NoError(t, err)
+	assertBoundsLabels(t, dindVol.Labels)
+
+	workspaceVol, err := exec.client.VolumeInspect(context.Background(), workspaceVolumePrefix+execIDShort)
+	require.NoError(t, err)
+	assertBoundsLabels(t, workspaceVol.Labels)
+}
+
+func TestDockerExecutor_Execute_RetentionFloorsAtHeartbeatPlusGrace(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec, err := New(Config{
+		Host:       "unix:///var/run/docker.sock",
+		Network:    "bridge",
+		StagingDir: t.TempDir(),
+		// Below the 15m heartbeat timeout + LogGrace floor.
+		Retention: time.Minute,
+	})
+	require.NoError(t, err)
+	t.Cleanup(exec.Close)
+
+	params := executor.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           "alpine:latest",
+		Command:         []string{"sleep", "30"},
+		JobSecret:       "sec",
+		ConfigJSON:      map[string]any{},
+		Bounds:          executor.Bounds{ActivityTimeout: 5 * time.Minute, HeartbeatTimeout: 15 * time.Minute},
+	}
+	_, err = exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+	defer exec.Cleanup(context.Background(), params.NodeExecutionID)
+
+	c, err := exec.findContainer(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+	require.NotNil(t, c)
+	assert.Equal(t, strconv.FormatInt(int64((15*time.Minute+executor.LogGrace)/time.Second), 10), c.Labels[labelRetention],
+		"a configured retention below the heartbeat timeout plus grace must be stamped as that floor")
+}
+
+func TestDockerExecutor_Execute_RefusesZeroActivityTimeout(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	stagingDir := t.TempDir()
+	exec, err := New(Config{
+		Host:       "unix:///var/run/docker.sock",
+		Network:    "bridge",
+		StagingDir: stagingDir,
+	})
+	require.NoError(t, err)
+	t.Cleanup(exec.Close)
+
+	params := executor.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           "alpine:latest",
+		Command:         []string{"sleep", "30"},
+		JobSecret:       "sec",
+		ConfigJSON:      map[string]any{},
+	}
+	_, err = exec.Execute(context.Background(), params)
+	require.Error(t, err)
+
+	c, err := exec.findContainer(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+	assert.Nil(t, c, "a refused launch must create no container")
+
+	entries, err := filepath.Glob(filepath.Join(stagingDir, "ck-config-*"))
+	require.NoError(t, err)
+	assert.Empty(t, entries, "a refused launch must create no staging dir")
+}
+
+func TestDockerExecutor_Cleanup_RemovesEverythingWhenAgentContainerAlreadyGone(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec := newTestExecutor(t)
+
+	params := executor.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           "alpine:latest",
+		Command:         []string{"sleep", "30"},
+		JobSecret:       "sec",
+		ConfigJSON:      map[string]any{},
+		EnableDocker:    true,
+		Bounds:          testBounds,
+	}
+	_, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	execIDShort := params.NodeExecutionID.String()[:8]
+
+	c, err := exec.findContainer(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+	require.NotNil(t, c)
+	tmpDir := c.Labels[labelTmpDir]
+	require.NotEmpty(t, tmpDir)
+
+	// Remove only the agent container directly, as if a prior Cleanup call partially succeeded
+	// or the container was reaped by something else -- Cleanup must not stop at a missing agent.
+	require.NoError(t, exec.client.ContainerRemove(context.Background(), c.ID, container.RemoveOptions{Force: true}))
+
+	require.NoError(t, exec.Cleanup(context.Background(), params.NodeExecutionID))
+
+	_, err = exec.client.ContainerInspect(context.Background(), dindNamePrefix+execIDShort)
+	assert.Error(t, err, "the sidecar must still be removed")
+	_, err = exec.client.VolumeInspect(context.Background(), dindVolumePrefix+execIDShort)
+	assert.Error(t, err, "the DinD data volume must still be removed")
+	_, err = exec.client.VolumeInspect(context.Background(), workspaceVolumePrefix+execIDShort)
+	assert.Error(t, err, "the workspace volume must still be removed")
+	_, statErr := os.Stat(tmpDir)
+	assert.True(t, os.IsNotExist(statErr), "the staging dir must still be removed")
+}
+
+func TestDockerExecutor_Sweep_RemovesExitedContainerPastRetention(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec := newTestExecutor(t)
+
+	params := executor.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           "alpine:latest",
+		Command:         []string{"sh", "-c", "exit 0"},
+		JobSecret:       "sec",
+		ConfigJSON:      map[string]any{},
+		EnableDocker:    true,
+		Bounds:          testBounds,
+	}
+	_, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	waitForState(t, exec, params.NodeExecutionID, container.StateExited, 15*time.Second)
+
+	c, err := exec.findContainer(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+	require.NotNil(t, c)
+	tmpDir := c.Labels[labelTmpDir]
+	execIDShort := params.NodeExecutionID.String()[:8]
+
+	// now is far enough past the container's actual exit for even a generous retention to have
+	// elapsed -- sweep need not wait on a real clock to observe that.
+	exec.sweep(context.Background(), time.Now().Add(time.Hour))
+
+	c, err = exec.findContainer(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+	assert.Nil(t, c, "the exited agent container must be swept once past its retention")
+	_, err = exec.client.VolumeInspect(context.Background(), dindVolumePrefix+execIDShort)
+	assert.Error(t, err, "its DinD volume must be swept too")
+	_, err = exec.client.VolumeInspect(context.Background(), workspaceVolumePrefix+execIDShort)
+	assert.Error(t, err, "its workspace volume must be swept too")
+	_, statErr := os.Stat(tmpDir)
+	assert.True(t, os.IsNotExist(statErr), "its staging dir must be swept too")
+}
+
+func TestDockerExecutor_Sweep_StopsAndRemovesRunningContainerPastDeadline(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec := newTestExecutor(t)
+
+	params := executor.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           "alpine:latest",
+		Command:         []string{"sleep", "300"},
+		JobSecret:       "sec",
+		ConfigJSON:      map[string]any{},
+		Bounds:          testBounds,
+	}
+	_, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+
+	waitForState(t, exec, params.NodeExecutionID, container.StateRunning, 15*time.Second)
+
+	// Sweeping with now still inside the deadline must leave a running container alone.
+	exec.sweep(context.Background(), time.Now())
+	c, err := exec.findContainer(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+	require.NotNil(t, c, "a running container inside its deadline must be left alone")
+
+	// now far past the deadline: the janitor must stop it, then remove it.
+	exec.sweep(context.Background(), time.Now().Add(time.Hour))
+	require.Eventually(t, func() bool {
+		c, err := exec.findContainer(context.Background(), params.NodeExecutionID)
+		return err == nil && c == nil
+	}, 35*time.Second, 500*time.Millisecond, "a running container past its deadline must be stopped then removed")
+}
+
+func TestDockerExecutor_Sweep_RemovesSidecarOfExitedAgentWithinRetention_KeepsAgent(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec := newTestExecutor(t)
+
+	params := executor.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           "alpine:latest",
+		Command:         []string{"sh", "-c", "exit 0"},
+		JobSecret:       "sec",
+		ConfigJSON:      map[string]any{},
+		EnableDocker:    true,
+		// A generous retention, so "now" (actual current time) stays well inside it.
+		Bounds: executor.Bounds{ActivityTimeout: 5 * time.Minute, HeartbeatTimeout: 5 * time.Minute},
+	}
+	_, err := exec.Execute(context.Background(), params)
+	require.NoError(t, err)
+	defer exec.Cleanup(context.Background(), params.NodeExecutionID)
+
+	waitForState(t, exec, params.NodeExecutionID, container.StateExited, 15*time.Second)
+	execIDShort := params.NodeExecutionID.String()[:8]
+
+	exec.sweep(context.Background(), time.Now())
+
+	c, err := exec.findContainer(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+	assert.NotNil(t, c, "the exited agent container must be kept while inside retention")
+
+	_, err = exec.client.ContainerInspect(context.Background(), dindNamePrefix+execIDShort)
+	assert.Error(t, err, "the sidecar of an exited agent must be removed even inside retention")
+}
+
+func TestDockerExecutor_Sweep_LeavesSidecarAloneDuringLaunchInProgress(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec := newTestExecutor(t)
+
+	execIDShort := uuid.New().String()[:8]
+	deadline := time.Now().Add(time.Hour)
+	labels := map[string]string{
+		labelAppKey:    labelApp,
+		labelRunID:     uuid.New().String(),
+		labelExecID:    uuid.New().String(),
+		labelTmpDir:    exec.stagingBase(),
+		labelDeadline:  strconv.FormatInt(deadline.Unix(), 10),
+		labelRetention: "60",
+	}
+	containerID, err := exec.startDindSidecar(context.Background(), execIDShort, "alpine:latest", labels)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = exec.client.ContainerRemove(context.Background(), containerID, container.RemoveOptions{Force: true})
+		_ = exec.cleanupDindResources(context.Background(), execIDShort)
+	})
+
+	// now still inside the launch's own deadline: a sidecar created ahead of its (not yet
+	// created) agent container must not be swept.
+	exec.sweep(context.Background(), time.Now())
+
+	_, err = exec.client.ContainerInspect(context.Background(), containerID)
+	assert.NoError(t, err, "a sidecar from a launch still in progress must be left alone")
+}
+
+func TestDockerExecutor_Sweep_LeavesWorkloadOutsideOwnStagingBaseAlone(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	owner := newTestExecutor(t)
+	other := newTestExecutor(t) // a different staging base
+
+	params := executor.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           "alpine:latest",
+		Command:         []string{"sh", "-c", "exit 0"},
+		JobSecret:       "sec",
+		ConfigJSON:      map[string]any{},
+		Bounds:          testBounds,
+	}
+	_, err := owner.Execute(context.Background(), params)
+	require.NoError(t, err)
+	defer owner.Cleanup(context.Background(), params.NodeExecutionID)
+
+	waitForState(t, owner, params.NodeExecutionID, container.StateExited, 15*time.Second)
+
+	// other's own staging base does not contain owner's workload's tmp-dir, so it must not act
+	// on it even when "now" is far enough past for the rule to otherwise fire.
+	other.sweep(context.Background(), time.Now().Add(time.Hour))
+
+	c, err := owner.findContainer(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+	assert.NotNil(t, c, "a workload outside the sweeping executor's own staging base must be left alone")
+}
+
+func TestDockerExecutor_Sweep_NeverTouchesObjectsWithoutTheAgentLabel(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec := newTestExecutor(t)
+
+	name := "ck-sweep-unrelated-" + uuid.New().String()[:8]
+	resp, err := exec.client.ContainerCreate(context.Background(),
+		&container.Config{Image: "alpine:latest", Cmd: []string{"sleep", "30"}},
+		&container.HostConfig{}, nil, nil, name)
+	require.NoError(t, err)
+	require.NoError(t, exec.client.ContainerStart(context.Background(), resp.ID, container.StartOptions{}))
+	t.Cleanup(func() {
+		_ = exec.client.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true})
+	})
+
+	exec.sweep(context.Background(), time.Now().Add(time.Hour))
+
+	inspect, err := exec.client.ContainerInspect(context.Background(), resp.ID)
+	require.NoError(t, err)
+	assert.True(t, inspect.State.Running, "a container without the agent label must never be touched by the janitor")
+}
+
+func TestDockerExecutor_Sweep_AfterRestart_ActsOnThePriorExecutorsLabels(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	stagingDir := t.TempDir()
+	execA, err := New(Config{Host: "unix:///var/run/docker.sock", Network: "bridge", StagingDir: stagingDir, Retention: 10 * time.Minute})
+	require.NoError(t, err)
+
+	params := executor.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           "alpine:latest",
+		Command:         []string{"sh", "-c", "exit 0"},
+		JobSecret:       "sec",
+		ConfigJSON:      map[string]any{},
+		Bounds:          testBounds,
+	}
+	_, err = execA.Execute(context.Background(), params)
+	require.NoError(t, err)
+	waitForState(t, execA, params.NodeExecutionID, container.StateExited, 15*time.Second)
+
+	// Simulates a Worker restart: the first executor's process is gone, with no in-memory
+	// state carried over -- a second executor over the same staging dir is all the next
+	// process has.
+	execA.Close()
+
+	execB, err := New(Config{Host: "unix:///var/run/docker.sock", Network: "bridge", StagingDir: stagingDir, Retention: 10 * time.Minute})
+	require.NoError(t, err)
+	t.Cleanup(execB.Close)
+
+	execB.sweep(context.Background(), time.Now().Add(time.Hour))
+
+	c, err := execB.findContainer(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+	assert.Nil(t, c, "a second executor over the same staging dir must sweep the first executor's workload by its labels")
+}
+
+func TestDockerExecutor_RestartedWorker_StillDeliversAndLeavesRunningContainerAlone(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	stagingDir := t.TempDir()
+	execA, err := New(Config{Host: "unix:///var/run/docker.sock", Network: "bridge", StagingDir: stagingDir, Retention: 10 * time.Minute})
+	require.NoError(t, err)
+
+	secret := "restart-test-secret"
+	params := executor.ExecutionParams{
+		RunID:           uuid.New(),
+		NodeExecutionID: uuid.New(),
+		NodeID:          uuid.New(),
+		Image:           "alpine:latest",
+		Command:         []string{"sleep", "60"},
+		JobSecret:       secret,
+		ConfigJSON:      map[string]any{},
+		Bounds:          testBounds,
+	}
+	_, err = execA.Execute(context.Background(), params)
+	require.NoError(t, err)
+	waitForState(t, execA, params.NodeExecutionID, container.StateRunning, 15*time.Second)
+	execA.Close()
+
+	execB, err := New(Config{Host: "unix:///var/run/docker.sock", Network: "bridge", StagingDir: stagingDir, Retention: 10 * time.Minute})
+	require.NoError(t, err)
+	t.Cleanup(execB.Close)
+	defer execB.Cleanup(context.Background(), params.NodeExecutionID)
+
+	hash, err := execB.ResolveJobSecretHash(context.Background(), uuid.Nil, params.NodeExecutionID)
+	require.NoError(t, err)
+	assert.Equal(t, executor.HashSecret(secret), hash)
+
+	execB.sweep(context.Background(), time.Now())
+
+	c, err := execB.findContainer(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+	require.NotNil(t, c, "a running container still inside its deadline must survive the restarted Worker's sweep")
+	assert.Equal(t, container.StateRunning, c.State)
 }

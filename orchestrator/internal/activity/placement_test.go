@@ -20,7 +20,7 @@ func TestCheckNodePlacementReturnsDecision(t *testing.T) {
 	defer srv.Close()
 
 	client := apiclient.NewClient(srv.URL)
-	activities := NewActivities(client, prompt.NewResolver(), testConfig(), nil)
+	activities := NewActivities(client, prompt.NewResolver(), nil)
 
 	runID := uuid.New()
 	result, err := activities.CheckNodePlacement(withWorkflowRunID(t, runID), CheckNodePlacementParams{
@@ -43,7 +43,7 @@ func TestCheckNodePlacementFailsOpenIsNotTheActivitysJob(t *testing.T) {
 	defer srv.Close()
 
 	client := apiclient.NewClient(srv.URL)
-	activities := NewActivities(client, prompt.NewResolver(), testConfig(), nil)
+	activities := NewActivities(client, prompt.NewResolver(), nil)
 
 	runID := uuid.New()
 	result, err := activities.CheckNodePlacement(withWorkflowRunID(t, runID), CheckNodePlacementParams{

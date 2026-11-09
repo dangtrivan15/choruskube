@@ -69,11 +69,6 @@ public class InternalRunController {
         service.setTraversedEdges(runId, nodeExecId, request);
     }
 
-    @GetMapping("/{runId}/status")
-    public RunStatusResponse getRunStatus(@PathVariable UUID runId) {
-        return service.getRunStatus(runId);
-    }
-
     @PutMapping("/{runId}/status")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void updateRunStatus(@PathVariable UUID runId, @RequestBody InternalUpdateRunStatusRequest request) {

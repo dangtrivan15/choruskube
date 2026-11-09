@@ -41,7 +41,7 @@ func newTaskIssueCloseActivities(t *testing.T, handler http.HandlerFunc) (*Activ
 		handler(w, r)
 	}))
 	t.Cleanup(server.Close)
-	return NewActivities(apiclient.NewAuthenticatedClient(server.URL, "orchestrator-secret"), nil, nil, nil), &hits
+	return NewActivities(apiclient.NewAuthenticatedClient(server.URL, "orchestrator-secret"), nil, nil), &hits
 }
 
 func TestTaskIDFromIssueCloseWorkflowID(t *testing.T) {
@@ -93,7 +93,7 @@ func TestGuardTaskIssueCloseRejectsAForeignTaskThroughARealActivityContext(t *te
 	var ts testsuite.WorkflowTestSuite
 	env := ts.NewTestActivityEnvironment()
 
-	acts := NewActivities(apiclient.NewClient("http://unused.invalid"), nil, nil, nil)
+	acts := NewActivities(apiclient.NewClient("http://unused.invalid"), nil, nil)
 	env.RegisterActivity(acts.RecordTaskIssueClosed)
 
 	_, err := env.ExecuteActivity(acts.RecordTaskIssueClosed, RecordTaskIssueClosedParams{TaskID: uuid.New(), IssueNumber: 7})

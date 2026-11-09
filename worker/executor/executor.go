@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -70,6 +71,62 @@ type ExecutionParams struct {
 	// requests. False caps them there, so on a shared data plane one project cannot reserve a
 	// whole node.
 	MemoryCeilingExempt bool
+
+	// Bounds carries the launching activity's own timeouts, which the executor stamps onto the
+	// workload so it can reclaim the workload without the workflow's involvement.
+	Bounds Bounds
+}
+
+// LogGrace is added to a node activity's own timeout to get a workload's deadline: the
+// workflow's failure path still needs time to read a timed-out node's logs (three 30s attempts)
+// before the workload that produced them can be reclaimed.
+const LogGrace = 2 * time.Minute
+
+// Bounds is the pair of timeouts a launching activity passes to an executor so it can bound a
+// workload's lifetime on its own, with no workflow involvement: ActivityTimeout is the node
+// activity's own StartToCloseTimeout, and HeartbeatTimeout is its HeartbeatTimeout.
+type Bounds struct {
+	ActivityTimeout  time.Duration
+	HeartbeatTimeout time.Duration
+}
+
+// Deadline is how long a workload may run before the executor stops it: the activity's own
+// timeout, plus enough grace for the workflow's failure path to read its logs first.
+func (b Bounds) Deadline() time.Duration {
+	return b.ActivityTimeout + LogGrace
+}
+
+// Retention is how long a finished workload is kept before the executor removes it: the
+// configured setting, floored so it is never shorter than the node's own heartbeat timeout plus
+// LogGrace — an agent that dies without reporting is only noticed when that timeout fires, and
+// the failure path reads its logs then.
+func (b Bounds) Retention(setting time.Duration) time.Duration {
+	floor := b.HeartbeatTimeout + LogGrace
+	if setting < floor {
+		return floor
+	}
+	return setting
+}
+
+// RetentionEnv is the Worker environment variable naming how long a finished workload is kept
+// before its executor removes it.
+const RetentionEnv = "WORKLOAD_RETENTION"
+
+// ParseRetention parses raw (typically os.Getenv(RetentionEnv)) as a Go duration: "" defaults to
+// one hour, matching today's Job TTL. Any other unparseable, zero or negative value is an error,
+// so a Worker misconfigured with one fails at startup rather than running with no retention.
+func ParseRetention(raw string) (time.Duration, error) {
+	if raw == "" {
+		return time.Hour, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s %q: %w", RetentionEnv, raw, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s must be positive, got %q", RetentionEnv, raw)
+	}
+	return d, nil
 }
 
 // AgentResources sets the agent container's CPU request and limit and its memory request; the

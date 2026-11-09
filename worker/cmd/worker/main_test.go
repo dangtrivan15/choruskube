@@ -2,10 +2,17 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// envMap builds a getenv func from a plain map, for tests that don't want to mutate the real
+// process environment via t.Setenv.
+func envMap(vars map[string]string) func(string) string {
+	return func(key string) string { return vars[key] }
+}
 
 func TestBuildExecutor_DefaultsToDocker(t *testing.T) {
 	env := map[string]string{} // EXECUTOR_TYPE unset
@@ -43,4 +50,49 @@ func TestCredentialSourceOf_RejectsAnythingElse(t *testing.T) {
 		_, err := credentialSourceOf(raw)
 		require.Error(t, err, "a typo must fail startup, not silently fall back to the control plane: %q", raw)
 	}
+}
+
+func TestK8sConfigFromEnv_RetentionFromEnv(t *testing.T) {
+	cfg, err := k8sConfigFromEnv(envMap(map[string]string{"WORKLOAD_RETENTION": "5m"}))
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Minute, cfg.Retention)
+}
+
+func TestK8sConfigFromEnv_RetentionDefaultsToOneHour(t *testing.T) {
+	cfg, err := k8sConfigFromEnv(envMap(nil))
+	require.NoError(t, err)
+	assert.Equal(t, time.Hour, cfg.Retention)
+}
+
+func TestK8sConfigFromEnv_InvalidRetentionIsAnError(t *testing.T) {
+	_, err := k8sConfigFromEnv(envMap(map[string]string{"WORKLOAD_RETENTION": "soon"}))
+	assert.Error(t, err)
+}
+
+func TestK8sConfigFromEnv_RejectsMemoryLimit(t *testing.T) {
+	_, err := k8sConfigFromEnv(envMap(map[string]string{"K8S_AGENT_MEMORY_LIMIT": "4Gi"}))
+	require.Error(t, err, "K8S_AGENT_MEMORY_LIMIT is no longer read and must fail startup, not be silently ignored")
+}
+
+func TestDockerConfigFromEnv_RetentionFromEnv(t *testing.T) {
+	cfg, err := dockerConfigFromEnv(envMap(map[string]string{"WORKLOAD_RETENTION": "5m"}))
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Minute, cfg.Retention)
+}
+
+func TestDockerConfigFromEnv_RetentionDefaultsToOneHour(t *testing.T) {
+	cfg, err := dockerConfigFromEnv(envMap(nil))
+	require.NoError(t, err)
+	assert.Equal(t, time.Hour, cfg.Retention)
+}
+
+func TestDockerConfigFromEnv_InvalidRetentionIsAnError(t *testing.T) {
+	_, err := dockerConfigFromEnv(envMap(map[string]string{"WORKLOAD_RETENTION": "soon"}))
+	assert.Error(t, err)
+}
+
+func TestDockerConfigFromEnv_StagingDirDefaultsToStablePath(t *testing.T) {
+	cfg, err := dockerConfigFromEnv(envMap(nil))
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/choruskube-agent-staging", cfg.StagingDir)
 }
