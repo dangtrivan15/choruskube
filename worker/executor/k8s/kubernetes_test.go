@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -223,9 +224,8 @@ func TestKubernetesExecutor_Execute_RegistryCredentials_CreatesPullSecretAndMoun
 	assert.Equal(t, job.Name, regcred.OwnerReferences[0].Name)
 }
 
-// The finished-Job GC TTL must outlive the orchestrator's node heartbeat timeout (capped at 15m
-// = 900s in dag_executor.go), or a crashed agent's Pod is reaped before post-timeout FetchPodLogs
-// runs and the failure reaches operators as a bare heartbeat timeout. Guards against lowering it.
+// The Job's deadline is the node activity's timeout plus LogGrace, so a timed-out node's logs are
+// still readable when the workflow fetches them; its TTL is the configured retention.
 func TestKubernetesExecutor_Execute_SetsDeadlineAndRetentionFromBounds(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 
@@ -270,6 +270,25 @@ func TestKubernetesExecutor_Execute_RetentionFloorsAtHeartbeatPlusGrace(t *testi
 	require.NotNil(t, job.Spec.TTLSecondsAfterFinished)
 	assert.Equal(t, int32((15*time.Minute+coreexec.LogGrace)/time.Second), *job.Spec.TTLSecondsAfterFinished,
 		"a configured retention below the heartbeat timeout plus grace is stamped as that floor")
+}
+
+func TestKubernetesExecutor_Execute_ClampsRetentionToInt32(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+
+	exec := NewKubernetesExecutor(fakeClient, Config{
+		Namespace:           testNamespace,
+		AgentServiceAccount: "choruskube-agent",
+		// 2^32+60 seconds: a plain int32 conversion wraps this to 60s, far below its floor.
+		Retention: (1<<32 + 60) * time.Second,
+	})
+
+	result, err := exec.Execute(context.Background(), newTestParams())
+	require.NoError(t, err)
+
+	job, err := fakeClient.BatchV1().Jobs(testNamespace).Get(context.Background(), result.PodName, metav1.GetOptions{})
+	require.NoError(t, err)
+	require.NotNil(t, job.Spec.TTLSecondsAfterFinished)
+	assert.Equal(t, int32(math.MaxInt32), *job.Spec.TTLSecondsAfterFinished)
 }
 
 func TestKubernetesExecutor_Execute_RefusesZeroActivityTimeout(t *testing.T) {

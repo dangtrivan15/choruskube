@@ -248,9 +248,11 @@ Cleanup-by-execution-id always attempts to remove all four — agent container, 
 volumes, and the staging directory — whether or not the agent container is still there to find.
 A janitor goroutine, started by `New` and stopped by `Close`, sweeps the daemon by label on a
 one-minute interval: it reclaims a group once its agent container has exited past retention, once
-a running agent container is past its deadline (stopping it first), or once there is no agent
-container left and everything else is past its deadline too. It removes a sidecar as soon as its
-agent has exited, without waiting on retention. Reading labels straight off the daemon, rather
+a running (or created but never started) agent container is past its deadline (stopping it first),
+or once there is no agent container left and everything else is past its deadline too. It removes a
+sidecar as soon as its agent has exited, without waiting on retention. A workload launched before
+these labels existed carries no deadline, and the janitor leaves it alone: remove such leftovers by
+hand once, with no run in flight. Reading labels straight off the daemon, rather
 than any in-memory state, is what lets the janitor pick back up correctly after a Worker restart,
 and what keeps it from ever touching a workload whose staging directory lies outside its own
 `DOCKER_STAGING_DIR`.

@@ -71,6 +71,75 @@ func TestRegistryAuthHeader_MatchesHost(t *testing.T) {
 	assert.Empty(t, header)
 }
 
+// --- Janitor rules (no daemon needed) ---
+
+func boundedGroup(deadline time.Time, retention time.Duration) *janitorGroup {
+	return &janitorGroup{deadline: deadline, retention: retention, hasDeadline: true, hasRetention: true}
+}
+
+func TestJanitorGroup_Reclaim(t *testing.T) {
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	ahead, behind := now.Add(time.Minute), now.Add(-time.Minute)
+	running := &container.Summary{State: container.StateRunning}
+	created := &container.Summary{State: container.StateCreated}
+	exited := &container.Summary{State: container.StateExited}
+	sidecar := &container.Summary{State: container.StateRunning}
+
+	cases := []struct {
+		name       string
+		group      *janitorGroup
+		agent      *container.Summary
+		sidecar    *container.Summary
+		finishedAt time.Time
+		want       reclaimAction
+	}{
+		{name: "no agent, deadline ahead: a launch in progress", group: boundedGroup(ahead, time.Hour), sidecar: sidecar, want: reclaimNothing},
+		{name: "no agent, deadline passed", group: boundedGroup(behind, time.Hour), sidecar: sidecar, want: reclaimAll},
+		{name: "running inside its deadline", group: boundedGroup(ahead, time.Hour), agent: running, want: reclaimNothing},
+		{name: "running past its deadline", group: boundedGroup(behind, time.Hour), agent: running, want: reclaimStopThenAll},
+		{name: "created, not yet started, inside its deadline", group: boundedGroup(ahead, 0), agent: created, want: reclaimNothing},
+		{name: "created, never started, past its deadline", group: boundedGroup(behind, 0), agent: created, want: reclaimAll},
+		{name: "exited past retention", group: boundedGroup(ahead, time.Minute), agent: exited, finishedAt: now.Add(-time.Minute), want: reclaimAll},
+		{name: "exited inside retention, with sidecar", group: boundedGroup(ahead, time.Hour), agent: exited, sidecar: sidecar, finishedAt: now.Add(-time.Minute), want: reclaimSidecar},
+		{name: "exited inside retention, sidecar already gone", group: boundedGroup(ahead, time.Hour), agent: exited, finishedAt: now.Add(-time.Minute), want: reclaimNothing},
+		{name: "running, launched before the bound labels", group: &janitorGroup{}, agent: running, want: reclaimNothing},
+		{name: "exited, launched before the bound labels", group: &janitorGroup{}, agent: exited, finishedAt: now.Add(-time.Hour), want: reclaimNothing},
+		{name: "deadline label without retention", group: &janitorGroup{deadline: behind, hasDeadline: true}, agent: running, want: reclaimNothing},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.group.agent, tc.group.sidecar = tc.agent, tc.sidecar
+			assert.Equal(t, tc.want, tc.group.reclaim(now, tc.finishedAt))
+		})
+	}
+}
+
+func TestJanitorGroup_NoteLabels(t *testing.T) {
+	g := &janitorGroup{}
+	g.noteLabels(map[string]string{labelTmpDir: "/staging/ck-config-x", labelDeadline: "1700000000", labelRetention: "240"})
+	assert.Equal(t, "/staging/ck-config-x", g.tmpDir)
+	assert.True(t, g.hasDeadline)
+	assert.Equal(t, time.Unix(1700000000, 0), g.deadline)
+	assert.True(t, g.hasRetention)
+	assert.Equal(t, 240*time.Second, g.retention)
+
+	unbounded := &janitorGroup{}
+	unbounded.noteLabels(map[string]string{labelTmpDir: "/staging/ck-config-y", labelDeadline: "soon"})
+	assert.False(t, unbounded.hasDeadline, "an unparseable deadline is no deadline")
+	assert.False(t, unbounded.hasRetention)
+}
+
+func TestIsUnderDir(t *testing.T) {
+	assert.True(t, isUnderDir("/staging/ck-config-abc-1", "/staging"))
+	assert.True(t, isUnderDir("/staging/nested/ck-config-abc-1", "/staging"))
+	assert.False(t, isUnderDir("/staging", "/staging"), "Cleanup would delete every workload's staging dir")
+	assert.False(t, isUnderDir("/staging/", "/staging"))
+	assert.False(t, isUnderDir("/staging-other/ck-config-abc-1", "/staging"))
+	assert.False(t, isUnderDir("/staging/../etc", "/staging"))
+	assert.False(t, isUnderDir("/elsewhere", "/staging"))
+	assert.False(t, isUnderDir("", "/staging"))
+}
+
 // --- Docker-daemon-backed tests ---
 
 var (
@@ -418,10 +487,7 @@ func TestDockerExecutor_StartDindSidecar_ImageOverride_UsesOverride(t *testing.T
 	execIDShort := uuid.New().String()[:8]
 	containerID, err := exec.startDindSidecar(context.Background(), execIDShort, "alpine:latest", map[string]string{labelAppKey: labelApp, labelExecID: execIDShort})
 	require.NoError(t, err)
-	defer func() {
-		_ = exec.client.ContainerRemove(context.Background(), containerID, container.RemoveOptions{Force: true})
-		_ = exec.client.VolumeRemove(context.Background(), dindVolumePrefix+execIDShort, true)
-	}()
+	defer func() { _ = exec.cleanupDindResources(context.Background(), execIDShort) }()
 
 	inspect, err := exec.client.ContainerInspect(context.Background(), containerID)
 	require.NoError(t, err)
@@ -446,10 +512,7 @@ func TestDockerExecutor_StartDindSidecar_NoOverride_FallsBackToConfiguredDefault
 	execIDShort := uuid.New().String()[:8]
 	containerID, err := exec.startDindSidecar(context.Background(), execIDShort, "", map[string]string{labelAppKey: labelApp, labelExecID: execIDShort})
 	require.NoError(t, err)
-	defer func() {
-		_ = exec.client.ContainerRemove(context.Background(), containerID, container.RemoveOptions{Force: true})
-		_ = exec.client.VolumeRemove(context.Background(), dindVolumePrefix+execIDShort, true)
-	}()
+	defer func() { _ = exec.cleanupDindResources(context.Background(), execIDShort) }()
 
 	inspect, err := exec.client.ContainerInspect(context.Background(), containerID)
 	require.NoError(t, err)
@@ -829,6 +892,10 @@ func TestDockerExecutor_Cleanup_RemovesEverythingWhenAgentContainerAlreadyGone(t
 	// or the container was reaped by something else -- Cleanup must not stop at a missing agent.
 	require.NoError(t, exec.client.ContainerRemove(context.Background(), c.ID, container.RemoveOptions{Force: true}))
 
+	gone, err := exec.findContainer(context.Background(), params.NodeExecutionID)
+	require.NoError(t, err)
+	assert.Nil(t, gone, "the sidecar shares the exec-id label but must never be taken for the agent")
+
 	require.NoError(t, exec.Cleanup(context.Background(), params.NodeExecutionID))
 
 	_, err = exec.client.ContainerInspect(context.Background(), dindNamePrefix+execIDShort)
@@ -956,13 +1023,16 @@ func TestDockerExecutor_Sweep_LeavesSidecarAloneDuringLaunchInProgress(t *testin
 
 	exec := newTestExecutor(t)
 
-	execIDShort := uuid.New().String()[:8]
+	// One execution id for both the labels and the names, so a wrongly fired Cleanup would reach
+	// this very sidecar; and a tmp-dir under the base, so the group is not skipped as foreign.
+	execID := uuid.New()
+	execIDShort := execID.String()[:8]
 	deadline := time.Now().Add(time.Hour)
 	labels := map[string]string{
 		labelAppKey:    labelApp,
 		labelRunID:     uuid.New().String(),
-		labelExecID:    uuid.New().String(),
-		labelTmpDir:    exec.stagingBase(),
+		labelExecID:    execID.String(),
+		labelTmpDir:    filepath.Join(exec.stagingBase(), "ck-config-"+execIDShort+"-launch"),
 		labelDeadline:  strconv.FormatInt(deadline.Unix(), 10),
 		labelRetention: "60",
 	}
@@ -979,6 +1049,68 @@ func TestDockerExecutor_Sweep_LeavesSidecarAloneDuringLaunchInProgress(t *testin
 
 	_, err = exec.client.ContainerInspect(context.Background(), containerID)
 	assert.NoError(t, err, "a sidecar from a launch still in progress must be left alone")
+}
+
+// createLabelledAgent creates (and, when start is set, starts) a bare agent-labelled container
+// carrying labels plus the agent and exec-id labels, standing in for an agent container whose
+// launch the test controls step by step.
+func createLabelledAgent(t *testing.T, exec *DockerExecutor, execID uuid.UUID, labels map[string]string, start bool) string {
+	t.Helper()
+	all := map[string]string{labelAppKey: labelApp, labelExecID: execID.String()}
+	for k, v := range labels {
+		all[k] = v
+	}
+	resp, err := exec.client.ContainerCreate(context.Background(),
+		&container.Config{Image: "alpine:latest", Cmd: []string{"sleep", "60"}, Labels: all},
+		&container.HostConfig{}, nil, nil, containerNamePrefix+execID.String()[:8])
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = exec.client.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true})
+	})
+	if start {
+		require.NoError(t, exec.client.ContainerStart(context.Background(), resp.ID, container.StartOptions{}))
+	}
+	return resp.ID
+}
+
+func TestDockerExecutor_Sweep_LeavesCreatedAgentAloneUntilItsDeadline(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec := newTestExecutor(t)
+	execID := uuid.New()
+	deadline := time.Now().Add(time.Hour)
+	// Created but not yet started, as between Execute's ContainerCreate and ContainerStart: its
+	// FinishedAt is the zero time, which must not read as "finished long ago".
+	id := createLabelledAgent(t, exec, execID, map[string]string{
+		labelTmpDir:    filepath.Join(exec.stagingBase(), "ck-config-"+execID.String()[:8]+"-launch"),
+		labelDeadline:  strconv.FormatInt(deadline.Unix(), 10),
+		labelRetention: "60",
+	}, false)
+
+	exec.sweep(context.Background(), time.Now())
+	_, err := exec.client.ContainerInspect(context.Background(), id)
+	require.NoError(t, err, "an agent container whose launch is still in progress must be left alone")
+
+	exec.sweep(context.Background(), deadline.Add(time.Minute))
+	_, err = exec.client.ContainerInspect(context.Background(), id)
+	assert.Error(t, err, "an agent container never started by its deadline must be removed")
+}
+
+func TestDockerExecutor_Sweep_LeavesWorkloadWithoutBoundLabelsAlone(t *testing.T) {
+	skipUnlessBindMountWorks(t)
+
+	exec := newTestExecutor(t)
+	execID := uuid.New()
+	// Labelled as a launch from before the bound labels existed: no deadline or retention.
+	id := createLabelledAgent(t, exec, execID, map[string]string{
+		labelTmpDir: filepath.Join(exec.stagingBase(), "ck-config-"+execID.String()[:8]+"-old"),
+	}, true)
+
+	exec.sweep(context.Background(), time.Now().Add(24*time.Hour))
+
+	inspect, err := exec.client.ContainerInspect(context.Background(), id)
+	require.NoError(t, err)
+	assert.True(t, inspect.State.Running, "a running agent launched before the bounds existed must not be stopped")
 }
 
 func TestDockerExecutor_Sweep_LeavesWorkloadOutsideOwnStagingBaseAlone(t *testing.T) {

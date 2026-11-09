@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"strings"
 	"sync"
@@ -381,9 +382,10 @@ func (k *KubernetesExecutor) buildJob(
 			},
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit:            int32Ptr(0),
-			ActiveDeadlineSeconds:   int64Ptr(ceilSeconds(params.Bounds.Deadline())),
-			TTLSecondsAfterFinished: int32Ptr(int32(ceilSeconds(params.Bounds.Retention(k.config.Retention)))),
+			BackoffLimit:          int32Ptr(0),
+			ActiveDeadlineSeconds: int64Ptr(ceilSeconds(params.Bounds.Deadline())),
+			// Clamped: an unclamped retention past int32 seconds wraps, possibly below its floor.
+			TTLSecondsAfterFinished: int32Ptr(int32(min(ceilSeconds(params.Bounds.Retention(k.config.Retention)), math.MaxInt32))),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{labelAppKey: labelApp, labelRunID: params.RunID.String()},

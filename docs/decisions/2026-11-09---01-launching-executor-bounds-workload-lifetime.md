@@ -6,10 +6,10 @@
 
 The orchestrator's reconciler used to reap orphaned workloads: it polled the api-server's
 run status and the workload-executor routes to find executions whose run had gone terminal, and
-terminated them. Those routes are gone, so the data plane needs a replacement for runs whose
-workflow never gets to call `DeleteAgentJob` — a crashed Worker, a rolled-back orchestrator
-replaying no further, a node that fails after its agent already reported, a quota park, a
-workflow that completes but whose removal step itself fails.
+terminated them. Those routes are gone, and the workflow's own removal step (`DeleteAgentJob`)
+runs only when a node fails, times out, pauses or is cancelled. Nothing removes a workload after
+any other outcome: a node that succeeds, a quota park, a node that fails after its agent has
+reported, a workflow that is gone, or a removal step that itself failed.
 
 Whatever replaces the reconciler has to answer who removes a workload once its node no longer
 needs it, without reintroducing the routes that just left.
@@ -35,7 +35,8 @@ retention stamped onto the workload at launch — no workflow or API-server invo
   equivalent of `ActiveDeadlineSeconds`/TTL. A janitor goroutine owned by the `DockerExecutor`
   (`New` starts it, `Close` stops it) sweeps on an interval, reading those labels straight off
   the daemon rather than any in-memory state, and reclaims a group once its state and bounds
-  call for it.
+  call for it. A group that carries no bound labels was launched before they existed, and the
+  janitor leaves it alone rather than read a missing deadline as already past.
 
 ## Alternatives considered
 
@@ -72,10 +73,14 @@ Worker's janitor touch another's files.
 - The orchestrator's reconciler, its workload-list/terminate API calls, and the API's internal
   run-status route that only the reconciler called are deleted outright, along with the dead
   `TEMPORAL_TASK_QUEUE` orchestrator setting and the unused `Activities.config` field. The
-  orchestrator's Dockerfile now declares its real health port (8080) instead of the dead 9090 the
-  reconciler's callback server used to answer on.
-- A Docker host whose Worker process never restarts keeps its abandoned workloads until something
-  restarts a Worker there (accepted, revisit only if such hosts stop being restarted) — and a launch
-  killed between creating its staging directory and labelling the first object leaves an
-  unlabelled directory neither Cleanup nor the janitor can find (accepted, revisit if such
-  directories turn up in practice).
+  orchestrator's Dockerfile now declares its real health port (8080) instead of the dead 9090 its
+  removed callback server used to answer on.
+- The bounds apply only to workloads launched after this change. A Job launched before it keeps the
+  fixed one-hour TTL it launched with but has no deadline; a Docker workload launched before it
+  carries no bound labels, so the janitor leaves it alone and a self-hosted Docker host needs a
+  one-off manual clean, with no run in flight.
+- A Docker daemon that no Worker runs on any more keeps its abandoned workloads until a Worker
+  starts there again and sweeps them (accepted, revisit only if such hosts stop being restarted)
+  — and a launch killed between creating its staging directory and labelling the first object
+  leaves an unlabelled directory neither Cleanup nor the janitor can find (accepted, revisit if
+  such directories turn up in practice).

@@ -232,11 +232,9 @@ func (d *DockerExecutor) Execute(ctx context.Context, params executor.ExecutionP
 		labelDeadline:  strconv.FormatInt(deadlineAt.Unix(), 10),
 		labelRetention: strconv.FormatInt(int64(retention/time.Second), 10),
 	}
-	if params.EnableDocker {
-		labels[labelHasDind] = "true"
-	}
 
 	if params.EnableDocker {
+		labels[labelHasDind] = "true"
 		dindStarted = true
 		dindContainerID, err := d.startDindSidecar(ctx, execIDShort, params.DindImage, labels)
 		if err != nil {
@@ -436,8 +434,8 @@ func (d *DockerExecutor) HealthCheck(ctx context.Context) error {
 
 // --- Helpers ---
 
-// findContainer looks up the container for executionID by label rather than by reconstructing
-// its name, so lookups survive a Worker restart without any in-memory state.
+// findContainer looks up the agent container for executionID by label rather than by
+// reconstructing its name, so lookups survive a Worker restart without any in-memory state.
 func (d *DockerExecutor) findContainer(ctx context.Context, executionID uuid.UUID) (*container.Summary, error) {
 	f := filters.NewArgs()
 	f.Add("label", labelExecID+"="+executionID.String())
@@ -445,10 +443,14 @@ func (d *DockerExecutor) findContainer(ctx context.Context, executionID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	if len(containers) == 0 {
-		return nil, nil
+	for i := range containers {
+		// The DinD sidecar carries the same exec-id label; returning it would serve the
+		// daemon's logs as the agent's, or read JOB_SECRET from a container that has none.
+		if containers[i].Labels[labelDind] != "true" {
+			return &containers[i], nil
+		}
 	}
-	return &containers[0], nil
+	return nil, nil
 }
 
 // startDindSidecar launches the Docker-in-Docker sidecar for a DinD-enabled execution and
@@ -692,6 +694,9 @@ type janitorGroup struct {
 	tmpDir    string
 	deadline  time.Time
 	retention time.Duration
+	// A workload launched before the bound labels existed carries neither; reading a missing
+	// deadline as zero would stop it mid-run, so reclaim leaves such a group alone.
+	hasDeadline, hasRetention bool
 }
 
 // noteLabels folds one object's labels into the group. Every object this executor creates for
@@ -700,21 +705,68 @@ func (g *janitorGroup) noteLabels(labels map[string]string) {
 	if tmpDir := labels[labelTmpDir]; tmpDir != "" {
 		g.tmpDir = tmpDir
 	}
-	if raw := labels[labelDeadline]; raw != "" {
-		if sec, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			g.deadline = time.Unix(sec, 0)
-		}
+	if sec, err := strconv.ParseInt(labels[labelDeadline], 10, 64); err == nil {
+		g.deadline = time.Unix(sec, 0)
+		g.hasDeadline = true
 	}
-	if raw := labels[labelRetention]; raw != "" {
-		if sec, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			g.retention = time.Duration(sec) * time.Second
-		}
+	if sec, err := strconv.ParseInt(labels[labelRetention], 10, 64); err == nil {
+		g.retention = time.Duration(sec) * time.Second
+		g.hasRetention = true
 	}
 }
 
+// reclaimAction is what sweep does to one execution's group.
+type reclaimAction int
+
+const (
+	reclaimNothing reclaimAction = iota
+	// reclaimSidecar removes only the DinD sidecar of an agent that has exited.
+	reclaimSidecar
+	// reclaimAll runs Cleanup for the execution.
+	reclaimAll
+	// reclaimStopThenAll stops a running agent container, then runs Cleanup.
+	reclaimStopThenAll
+)
+
+// reclaim applies the janitor's rules to g. agentFinishedAt is when a non-running agent
+// container finished; zero when it never started (created, its launch still in progress):
+//   - the agent container has exited and is past its retention: Cleanup removes the lot;
+//   - it has exited but is still within retention: only the sidecar, now useless, is removed;
+//   - it is running, or created but never started, and past its deadline: stopped if running,
+//     then Cleanup removes the lot;
+//   - there is no agent container and the group is past its deadline: Cleanup removes the lot
+//     -- a sidecar created ahead of its agent during a launch still in progress is never taken,
+//     because that launch has not yet reached its own deadline;
+//   - otherwise, including a group without both bound labels, the group is left alone.
+func (g *janitorGroup) reclaim(now, agentFinishedAt time.Time) reclaimAction {
+	if !g.hasDeadline || !g.hasRetention {
+		return reclaimNothing
+	}
+	pastDeadline := now.After(g.deadline)
+	switch {
+	case g.agent == nil:
+		if pastDeadline {
+			return reclaimAll
+		}
+	case g.agent.State == container.StateRunning:
+		if pastDeadline {
+			return reclaimStopThenAll
+		}
+	case agentFinishedAt.IsZero():
+		if pastDeadline {
+			return reclaimAll
+		}
+	case !now.Before(agentFinishedAt.Add(g.retention)):
+		return reclaimAll
+	case g.sidecar != nil:
+		return reclaimSidecar
+	}
+	return reclaimNothing
+}
+
 // sweep finds every workload this executor's own labels describe on its daemon, groups them by
-// execution id, and reclaims each group whose state and bounds call for it -- see the package
-// doc. now is a parameter so tests control it; production calls always pass time.Now().
+// execution id, and reclaims each group whose state and bounds call for it -- see reclaim. now
+// is a parameter so tests control it; production calls always pass time.Now().
 func (d *DockerExecutor) sweep(ctx context.Context, now time.Time) {
 	f := filters.NewArgs()
 	f.Add("label", labelAppKey+"="+labelApp)
@@ -776,9 +828,10 @@ func (d *DockerExecutor) sweep(ctx context.Context, now time.Time) {
 	}
 }
 
-// isUnderDir reports whether path is base itself or a descendant of it. A group whose tmp-dir
-// fails this check belongs to a different Worker sharing this daemon, and the janitor must never
-// strand (or race) that Worker's own staging files.
+// isUnderDir reports whether path is a strict descendant of base. A group whose tmp-dir fails
+// this check belongs to a different Worker sharing this daemon, and the janitor must never strand
+// (or race) that Worker's own staging files; base itself fails it, since Cleanup deletes the
+// tmp-dir it names and base holds every in-flight workload's staging directory.
 func isUnderDir(path, base string) bool {
 	if path == "" {
 		return false
@@ -787,17 +840,11 @@ func isUnderDir(path, base string) bool {
 	if err != nil {
 		return false
 	}
-	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// sweepGroup applies the reclaim rules to one execution's group:
-//   - the agent container has exited and is past its retention: Cleanup removes the lot;
-//   - it has exited but is still within retention: only the sidecar, now useless, is removed;
-//   - it is still running but past its deadline: it is stopped, then Cleanup removes the lot;
-//   - there is no agent container and every remaining object is past its deadline: Cleanup
-//     removes the lot -- a sidecar created ahead of its agent during a launch still in progress
-//     is never taken, because that launch has not yet reached its own deadline;
-//   - otherwise the group is left alone.
+// sweepGroup reads what reclaim needs off the daemon for one execution's group, then carries out
+// its decision.
 func (d *DockerExecutor) sweepGroup(ctx context.Context, execID string, g *janitorGroup, now time.Time) {
 	execUUID, err := uuid.Parse(execID)
 	if err != nil {
@@ -805,53 +852,39 @@ func (d *DockerExecutor) sweepGroup(ctx context.Context, execID string, g *janit
 		return
 	}
 
-	if g.agent == nil {
-		if now.After(g.deadline) {
-			if err := d.Cleanup(ctx, execUUID); err != nil {
-				slog.Error("janitor: cleanup", "execID", execID, "err", err)
-			}
+	var finishedAt time.Time
+	if g.agent != nil && g.agent.State != container.StateRunning {
+		if finishedAt, err = d.agentFinishedAt(ctx, g.agent.ID); err != nil {
+			slog.Error("janitor: inspect agent container", "execID", execID, "err", err)
+			return
 		}
-		return
 	}
 
-	if g.agent.State == container.StateRunning {
-		if now.After(g.deadline) {
-			timeout := 30
-			if err := d.client.ContainerStop(ctx, g.agent.ID, container.StopOptions{Timeout: &timeout}); err != nil &&
-				!client.IsErrNotFound(err) && !dockererrdefs.IsNotModified(err) {
-				slog.Error("janitor: stop agent container past deadline", "execID", execID, "err", err)
-				return
-			}
-			if err := d.Cleanup(ctx, execUUID); err != nil {
-				slog.Error("janitor: cleanup", "execID", execID, "err", err)
-			}
-		}
+	switch g.reclaim(now, finishedAt) {
+	case reclaimNothing:
 		return
-	}
-
-	finishedAt, err := d.agentFinishedAt(ctx, g.agent.ID)
-	if err != nil {
-		slog.Error("janitor: inspect exited agent container", "execID", execID, "err", err)
-		return
-	}
-	if !now.Before(finishedAt.Add(g.retention)) {
-		if err := d.Cleanup(ctx, execUUID); err != nil {
-			slog.Error("janitor: cleanup", "execID", execID, "err", err)
-		}
-		return
-	}
-
-	// Exited, but still within retention: the sidecar has no further use once its agent has
-	// exited, but the agent container itself stays reachable (for its logs) until retention.
-	if g.sidecar != nil {
+	case reclaimSidecar:
+		// The agent container itself stays reachable (for its logs) until its retention.
 		if err := d.client.ContainerRemove(ctx, g.sidecar.ID, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil &&
 			!client.IsErrNotFound(err) {
 			slog.Error("janitor: remove sidecar of exited agent", "execID", execID, "err", err)
 		}
+		return
+	case reclaimStopThenAll:
+		timeout := 30
+		if err := d.client.ContainerStop(ctx, g.agent.ID, container.StopOptions{Timeout: &timeout}); err != nil &&
+			!client.IsErrNotFound(err) && !dockererrdefs.IsNotModified(err) {
+			slog.Error("janitor: stop agent container past deadline", "execID", execID, "err", err)
+			return
+		}
+	}
+	if err := d.Cleanup(ctx, execUUID); err != nil {
+		slog.Error("janitor: cleanup", "execID", execID, "err", err)
 	}
 }
 
-// agentFinishedAt inspects containerID (expected non-running) and returns when it finished.
+// agentFinishedAt inspects containerID (expected non-running) and returns when it finished, or
+// the zero time when it never started.
 func (d *DockerExecutor) agentFinishedAt(ctx context.Context, containerID string) (time.Time, error) {
 	inspect, err := d.client.ContainerInspect(ctx, containerID)
 	if err != nil {
@@ -860,6 +893,8 @@ func (d *DockerExecutor) agentFinishedAt(ctx context.Context, containerID string
 	if inspect.State == nil || inspect.State.FinishedAt == "" {
 		return time.Time{}, fmt.Errorf("container %s has no FinishedAt", containerID)
 	}
+	// A created-but-never-started container reports 0001-01-01T00:00:00Z, which parses to
+	// the zero time.
 	finishedAt, err := time.Parse(time.RFC3339Nano, inspect.State.FinishedAt)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parse FinishedAt %q: %w", inspect.State.FinishedAt, err)
