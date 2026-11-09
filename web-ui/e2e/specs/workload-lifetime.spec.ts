@@ -2,6 +2,14 @@ import { test, expect, seededRepos } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
 import { workloadObjectsForRun, stagingDirsFor } from "../helpers/docker";
 
+// Both describe blocks below share one Worker process and one Docker daemon.
+// `fullyParallel: true` would otherwise let the "Docker workload lifetime" test's DinD
+// sidecars run concurrently with "Failure logs", starving FetchPodLogs's bounded retry
+// budget (three 30s attempts, see worker/executor.LogGrace) of real Docker-daemon
+// responsiveness and losing the captured output the latter asserts on. Serial keeps this
+// file's tests on one worker (see PARALLELISM.md for the same mitigation elsewhere).
+test.describe.configure({ mode: "serial" });
+
 /**
  * Proves the Docker executor's own deadline/retention bounds, not the (now-deleted)
  * orchestrator reconciler, reclaim a run's agent containers, DinD sidecars, volumes and staging
