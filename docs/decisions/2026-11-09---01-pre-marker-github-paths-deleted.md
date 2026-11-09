@@ -38,8 +38,8 @@ one-step completion for a gate whose approved roadmap has something to write and
 materialized is refused with 409. It still records the completion's merges first, because a merge
 made on GitHub stands whatever happens to the approval; only the decision is withheld, and no
 roadmap row is written. A roadmap gate whose plan has nothing to write still completes in one
-step with its note, and one whose write an earlier materialize step already claimed completes with
-the note that step stored.
+step with its note, and one whose roadmap an earlier attempt already claimed is never written again:
+it completes with whatever note that attempt stored.
 
 **The API server's GitHub calls left by those paths are deleted.** That is the deprecated
 branch-cleanup route and the cleanup and token logic behind it, the compare, ref-delete and
@@ -51,6 +51,9 @@ installation-token mint.
 
 ## Supersedes
 
+- From [2026-10-11---02](2026-10-11---02-async-gate-finalize-on-the-worker.md): its roadmap write
+  and issue filing inside complete, which 2026-10-15---01 had already moved off complete for every
+  gate whose plan declares a roadmap write. Complete now never writes a roadmap.
 - From [2026-10-13---01](2026-10-13---01-branch-cleanup-on-the-worker.md): its "To remove later"
   consequence. The legacy activity, its client call, the legacy route, its service method and the
   control plane's ref-delete call are removed here.
@@ -67,9 +70,9 @@ installation-token mint.
   may have been recorded before both markers existed, and end it. The query below must return no
   rows. `:cutoff` is the end of the day the install first ran a build containing
   [#197](https://github.com/dangtrivan15/choruskube/pull/197), the later of the two moves; an
-  install first deployed on a later build can skip it. Cancel each run it lists
-  through the app, so its row closes and its approvals void, then terminate its workflow in
-  Temporal and re-run the query.
+  install first deployed on a later build can skip it. Cancel each run it lists through the app,
+  so its row closes and its approvals void, then terminate its workflow in Temporal and re-run the
+  query.
 
   ```sql
   SELECT id, status, created_at
