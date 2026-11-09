@@ -243,7 +243,7 @@ DinD sidecar, and both the sidecar's data volume and the shared workspace volume
 same `choruskube/run-id`, `choruskube/exec-id`, `choruskube/tmp-dir`, `choruskube/deadline` and
 `choruskube/retention` labels, computed once at launch from the node's own activity timeout,
 heartbeat timeout, and `WORKLOAD_RETENTION` (see
-[the workload-lifetime decision](../docs/decisions/2026-11-09---01-launching-executor-bounds-workload-lifetime.md)).
+[the workload-lifetime decision](../docs/decisions/2026-11-09---02-launching-executor-bounds-workload-lifetime.md)).
 Cleanup-by-execution-id always attempts to remove all four — agent container, sidecar, both
 volumes, and the staging directory — whether or not the agent container is still there to find.
 A janitor goroutine, started by `New` and stopped by `Close`, sweeps the daemon by label on a

@@ -58,7 +58,7 @@ grace) stamped on at launch. Kubernetes enforces this with `ActiveDeadlineSecond
 launched with. Docker has no equivalent, so the Docker executor labels every object it
 creates with the bounds and runs its own janitor goroutine, which sweeps the daemon by
 label on an interval and reclaims a workload once its state and bounds call for it —
-see [docs/decisions/2026-11-09---01-launching-executor-bounds-workload-lifetime.md](docs/decisions/2026-11-09---01-launching-executor-bounds-workload-lifetime.md).
+see [docs/decisions/2026-11-09---02-launching-executor-bounds-workload-lifetime.md](docs/decisions/2026-11-09---02-launching-executor-bounds-workload-lifetime.md).
 
 ```
    ┌──────────┐  REST / WS   ┌──────────────┐  Temporal signals  ┌──────────────────┐

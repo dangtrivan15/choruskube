@@ -13,7 +13,7 @@ test.describe.configure({ mode: "serial" });
 /**
  * Proves the Docker executor's own deadline/retention bounds, not the (now-deleted)
  * orchestrator reconciler, reclaim a run's agent containers, DinD sidecars, volumes and staging
- * directories — see docs/decisions/2026-11-09---01-launching-executor-bounds-workload-lifetime.md.
+ * directories — see docs/decisions/2026-11-09---02-launching-executor-bounds-workload-lifetime.md.
  *
  * The e2e stack's Worker sets a short `WORKLOAD_RETENTION` (30s), but `e2e-dind-isolation`'s two
  * nodes carry a 120s activity timeout, so each node's heartbeat-timeout floor
@@ -73,8 +73,18 @@ test.describe("Failure logs", () => {
 
     const failingStep = await api.waitForNodeStatus(run.id, "failing_step", ["failed"], 120_000);
 
-    const logs = await api.getNodeLogs(run.id, failingStep.id);
-    const combined = logs.map((l) => l.message).join("\n");
-    expect(combined).toContain("Mock agent: timeout scenario");
+    // waitForNodeStatus returns the instant the status column flips to "failed", which the
+    // workflow writes before its failure path's own log entries (pod logs, "Node failed: ...")
+    // — those land moments later via separate activities. Poll instead of reading once, or this
+    // races the workflow and sees only the pre-failure "Agent launched" log line.
+    await expect
+      .poll(
+        async () => {
+          const logs = await api.getNodeLogs(run.id, failingStep.id);
+          return logs.map((l) => l.message).join("\n");
+        },
+        { timeout: 60_000, intervals: [2_000] },
+      )
+      .toContain("Mock agent: timeout scenario");
   });
 });
