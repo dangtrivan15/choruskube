@@ -67,8 +67,7 @@ func (s *DAGExecutorTestSuite) assertCleanupPlanned(runID uuid.UUID) {
 }
 
 // TestBranchCleanupRunsOnTheWorkerQueue proves the plan runs on the workflow's own queue and the
-// Worker step runs on the run's Worker queue with the plan's repos and the run's id, and that the
-// legacy activity is never scheduled on the new version.
+// Worker step runs on the run's Worker queue with the plan's repos and the run's id.
 func (s *DAGExecutorTestSuite) TestBranchCleanupRunsOnTheWorkerQueue() {
 	runID, _ := s.branchCleanupRun()
 	starts := s.recordStarts(nil)
@@ -88,7 +87,6 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupRunsOnTheWorkerQueue() {
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
-	s.env.AssertActivityNotCalled(s.T(), "DeleteStaleBranches", mock.Anything, mock.Anything)
 	s.assertCleanupPlanned(runID)
 
 	planInfos, _ := starts.of("PlanBranchCleanup")
@@ -198,14 +196,14 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupWorkerErrorStillCompletes() {
 	s.Less(lastStatusWrite, firstCleanup, "no run status write may follow the cleanup step: %v", seq)
 }
 
-// TestBranchCleanupOldVersionUsesTheAPI: a history recorded before the marker calls only the
-// legacy activity, even when the run carries a Worker task queue.
-func (s *DAGExecutorTestSuite) TestBranchCleanupOldVersionUsesTheAPI() {
+// TestBranchCleanupVersionCheckRefusesPreMarkerHistories pins the version range a completed run
+// passes to GetVersion for "branch-cleanup-on-worker". The SDK's own check against that range is
+// what refuses a history recorded before the marker, by name at the call, instead of a later
+// mismatch.
+func (s *DAGExecutorTestSuite) TestBranchCleanupVersionCheckRefusesPreMarkerHistories() {
 	runID, _ := s.branchCleanupRun()
-	s.env.OnGetVersion("branch-cleanup-on-worker", workflow.DefaultVersion, 1).Return(workflow.DefaultVersion)
-	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.MatchedBy(func(p activity.DeleteStaleBranchesParams) bool {
-		return p.RunID == runID
-	})).Return(nil).Once()
+	// Not .Maybe(): AfterTest's AssertExpectations is what fails a completed run that skips this call.
+	s.env.OnGetVersion("branch-cleanup-on-worker", workflow.Version(1), workflow.Version(1)).Return(workflow.Version(1)).Once()
 
 	s.env.ExecuteWorkflow(DAGExecutorWorkflow, DAGExecutorParams{
 		RunID: runID, GraphVersion: 1, WorkerTaskQueue: "fleet-acme",
@@ -213,6 +211,5 @@ func (s *DAGExecutorTestSuite) TestBranchCleanupOldVersionUsesTheAPI() {
 
 	s.True(s.env.IsWorkflowCompleted())
 	s.NoError(s.env.GetWorkflowError())
-	s.env.AssertActivityNotCalled(s.T(), "PlanBranchCleanup", mock.Anything, mock.Anything)
-	s.env.AssertActivityNotCalled(s.T(), "CleanupRunBranches", mock.Anything, mock.Anything)
+	s.assertCleanupPlanned(runID)
 }

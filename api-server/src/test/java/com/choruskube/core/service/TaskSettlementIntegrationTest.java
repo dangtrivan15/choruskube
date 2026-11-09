@@ -282,7 +282,7 @@ public class TaskSettlementIntegrationTest extends BaseTest {
             assertThat(in.issueNumber()).isEqualTo(42);
         });
         verifyNoInteractions(gitHubAppService);
-        verify(gitHubCredentialResolver, never()).getTokenForRepo(any());
+        verify(gitHubCredentialResolver, never()).getTokenForRun(any());
     }
 
     /**

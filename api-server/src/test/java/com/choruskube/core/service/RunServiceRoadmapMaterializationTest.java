@@ -31,7 +31,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * Covers the deterministic-materialization contract directly on {@link
- * RunService#prepareMaterialization} and {@link RunService#materializeAndNote}: a reviewed
+ * RunService#prepareMaterialization} and {@link RunService#materializeForWorker}: a reviewed
  * breakdown is materialized via {@link RoadmapCandidateMaterializer} and produces the expected
  * result note, a structural violation is rejected before anything is materialized, and an empty or
  * missing document resolves to a fixed note without ever calling the materializer. The gate's
@@ -226,20 +226,20 @@ class RunServiceRoadmapMaterializationTest {
         RunService.MaterializationPlan plan =
                 service.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_candidates, edited);
         assertThat(plan.runnable()).isTrue();
-        service.materializeAndNote(runId, plan);
+        service.materializeForWorker(runId, plan);
 
         verify(roadmapCandidateMaterializer).materialize(runId, edited, RoadmapMaterializeMode.roadmap_candidates);
     }
 
     @Test
-    void materializeAndNote_surfacesPerCandidateFailures() {
+    void materializeForWorker_surfacesPerCandidateFailures() {
         CandidateEpicProposal good = sampleCandidates().epics().get(0);
         CandidateEpicProposal malformed =
                 new CandidateEpicProposal(null, null, null, null, null, null, null, null, UUID.randomUUID());
         RoadmapCandidatesDocument edited = new RoadmapCandidatesDocument(null, List.of(good, malformed), null);
 
         // The materializer itself owns per-candidate best-effort behavior (see
-        // DefaultRoadmapCandidateMaterializer) — materializeAndNote just needs to pass the full
+        // DefaultRoadmapCandidateMaterializer) — materializeForWorker just needs to pass the full
         // document through and surface whatever summary comes back, unconditionally.
         when(roadmapCandidateMaterializer.materialize(runId, edited, RoadmapMaterializeMode.roadmap_candidates))
                 .thenReturn(new MaterializationSummary(
@@ -252,7 +252,7 @@ class RunServiceRoadmapMaterializationTest {
 
         RunService.MaterializationPlan plan =
                 service.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_candidates, edited);
-        String note = service.materializeAndNote(runId, plan);
+        String note = service.materializeForWorker(runId, plan).note();
 
         verify(roadmapCandidateMaterializer).materialize(runId, edited, RoadmapMaterializeMode.roadmap_candidates);
         assertThat(note).contains("Skipped: Failed to materialize candidate Epic 'null': boom");
@@ -270,7 +270,7 @@ class RunServiceRoadmapMaterializationTest {
                 service.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_candidates, empty);
 
         assertThat(plan.runnable()).isTrue();
-        service.materializeAndNote(runId, plan);
+        service.materializeForWorker(runId, plan);
         verify(roadmapCandidateMaterializer).materialize(runId, empty, RoadmapMaterializeMode.roadmap_candidates);
     }
 
@@ -316,7 +316,7 @@ class RunServiceRoadmapMaterializationTest {
         RunService.MaterializationPlan plan =
                 service.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_extension, edited);
         assertThat(plan.runnable()).isTrue();
-        String note = service.materializeAndNote(runId, plan);
+        String note = service.materializeForWorker(runId, plan).note();
 
         assertThat(note)
                 .contains("Roadmap extension approved: created 0 Epics, 1 Stories, 1 Tasks and 0 dependency edges");

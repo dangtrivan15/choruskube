@@ -1,7 +1,6 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.credential.GitHubTokenScope;
-import com.choruskube.core.exception.GitHubApiException;
 import com.choruskube.core.exception.GitHubRateLimitHints;
 import com.choruskube.core.exception.GitHubTokenMintException;
 import com.choruskube.core.exception.GitHubTokenScopeException;
@@ -250,126 +249,6 @@ public class GitHubAppService {
                 .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
                 .build();
         return httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-    }
-
-    /** A newly-filed issue's identity, as returned by {@link #createIssue}. */
-    public record CreatedIssue(int number, String htmlUrl) {}
-
-    /**
-     * Files a new issue — used by roadmap-extension materialization to give a newly-created Task a
-     * matching GitHub issue. A non-2xx status throws {@link GitHubApiException}, an I/O or interrupt
-     * failure wraps in {@link RuntimeException}.
-     */
-    public CreatedIssue createIssue(String token, String ownerRepo, String title, String body) {
-        String payload;
-        try {
-            payload = objectMapper.writeValueAsString(Map.of("title", title, "body", body != null ? body : ""));
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to serialize GitHub issue payload for " + ownerRepo, e);
-        }
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(githubApiUrl + "/repos/" + ownerRepo + "/issues"))
-                .header("Authorization", "Bearer " + token)
-                .header("Accept", "application/vnd.github+json")
-                .header("Content-Type", "application/json")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .timeout(Duration.ofSeconds(10))
-                .POST(HttpRequest.BodyPublishers.ofString(payload))
-                .build();
-        try {
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() / 100 != 2) {
-                throw new GitHubApiException(response.statusCode(), ownerRepo, rateLimitHints(response.headers()));
-            }
-            JsonNode body2 = objectMapper.readTree(response.body());
-            return new CreatedIssue(
-                    body2.get("number").asInt(), body2.get("html_url").asText());
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            throw new RuntimeException("Failed to create issue for " + ownerRepo + ": " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * How many commits {@code head} is ahead of {@code base} — GitHub's {@code compare}
-     * {@code ahead_by} field. {@code base}/{@code head} are branch (or ref) names, not SHAs;
-     * {@code ownerRepo} is the {@code owner/repo} slug — derive it with {@link
-     * com.choruskube.core.util.RepoNameUtil#deriveOwnerRepoName(String)} from the {@code GitRepo}'s
-     * URL. Used by {@code BranchCleanupService} to decide whether a run branch is safe to
-     * delete: {@code ahead_by == 0} means the branch carries nothing the default branch lacks.
-     *
-     * @throws GitHubApiException if GitHub returns a non-2xx status — notably 404 when either ref
-     *     is not found, which the caller distinguishes from any other failure via {@link
-     *     GitHubApiException#getStatus()}
-     * @throws RuntimeException if the response body cannot be parsed, or if the call never produced
-     *     a status at all (timeout, DNS failure, reset connection)
-     */
-    public int compareCommits(String token, String ownerRepo, String base, String head) {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(githubApiUrl + "/repos/" + ownerRepo + "/compare/" + base + "..." + head))
-                .header("Authorization", "Bearer " + token)
-                .header("Accept", "application/vnd.github+json")
-                .timeout(Duration.ofSeconds(10))
-                .GET()
-                .build();
-        try {
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() / 100 != 2) {
-                throw new GitHubApiException(response.statusCode(), ownerRepo, rateLimitHints(response.headers()));
-            }
-            try {
-                JsonNode body = objectMapper.readTree(response.body());
-                return body.get("ahead_by").asInt();
-            } catch (Exception e) {
-                // The exception's own message can quote the response body that failed to parse, so
-                // it is deliberately not interpolated here.
-                throw new RuntimeException("Failed to parse GitHub compare payload for " + ownerRepo, e);
-            }
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            throw new RuntimeException(
-                    "Failed to compare " + base + "..." + head + " for " + ownerRepo + ": " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Deletes a ref — {@code caller passes "heads/" + branch}. Returns {@code true} both when the
-     * delete succeeded (2xx) and when the ref was already gone (404/422): both leave the ref absent,
-     * which is all {@code BranchCleanupService} cares about.
-     *
-     * <p>Legacy: its only caller is {@code BranchCleanupService#cleanupBranches}, which itself
-     * serves only workflow histories recorded before the {@code branch-cleanup-on-worker} version
-     * marker. The Worker's own GitHub client deletes a ref for every run that reaches cleanup
-     * after that marker.
-     *
-     * @throws GitHubApiException on any other non-2xx status, carrying the real status code
-     * @throws RuntimeException if the call never produced a status at all
-     */
-    public boolean deleteRef(String token, String ownerRepo, String ref) {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(githubApiUrl + "/repos/" + ownerRepo + "/git/refs/" + ref))
-                .header("Authorization", "Bearer " + token)
-                .header("Accept", "application/vnd.github+json")
-                .timeout(Duration.ofSeconds(10))
-                .DELETE()
-                .build();
-        try {
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            int status = response.statusCode();
-            if (status / 100 == 2 || status == 404 || status == 422) {
-                return true;
-            }
-            throw new GitHubApiException(status, ownerRepo, rateLimitHints(response.headers()));
-        } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            throw new RuntimeException("Failed to delete ref " + ref + " for " + ownerRepo + ": " + e.getMessage(), e);
-        }
     }
 
     /**

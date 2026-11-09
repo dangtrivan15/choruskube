@@ -614,7 +614,8 @@ func TestPlanGateFinalize_MapsComparesAndPullRequests(t *testing.T) {
 			"reason": null,
 			"compares": [{"gitRepoId": "%s", "ownerRepo": "acme/api", "branch": "main", "baseSha": "abc123"}],
 			"prs": [{"rowId": "%s", "ownerRepo": "acme/api", "number": 42, "label": "api", "prUrl": "https://github.com/acme/api/pull/42"}],
-			"mergeMethod": "squash"
+			"mergeMethod": "squash",
+			"writesRoadmap": false
 		}`, repoID, rowID)
 	}))
 	defer server.Close()
@@ -622,18 +623,20 @@ func TestPlanGateFinalize_MapsComparesAndPullRequests(t *testing.T) {
 
 	plan, err := client.PlanGateFinalize(context.Background(), runID, execID, approvalID)
 	require.NoError(t, err)
+	writesRoadmap := false
 	assert.Equal(t, GatePlanResponse{
-		Outcome:     "proceed",
-		Compares:    []GateCompareItem{{GitRepoID: repoID, OwnerRepo: "acme/api", Branch: "main", BaseSha: "abc123"}},
-		PRs:         []GatePRItem{{RowID: rowID, OwnerRepo: "acme/api", Number: 42, Label: "api", PRURL: "https://github.com/acme/api/pull/42"}},
-		MergeMethod: "squash",
+		Outcome:       "proceed",
+		Compares:      []GateCompareItem{{GitRepoID: repoID, OwnerRepo: "acme/api", Branch: "main", BaseSha: "abc123"}},
+		PRs:           []GatePRItem{{RowID: rowID, OwnerRepo: "acme/api", Number: 42, Label: "api", PRURL: "https://github.com/acme/api/pull/42"}},
+		MergeMethod:   "squash",
+		WritesRoadmap: &writesRoadmap,
 	}, plan)
 }
 
 func TestPlanGateFinalize_HoldCarriesNoWork(t *testing.T) {
 	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"outcome":"hold","reason":"main moved","compares":[],"prs":[],"mergeMethod":null}`))
+		w.Write([]byte(`{"outcome":"hold","reason":"main moved","compares":[],"prs":[],"mergeMethod":null,"writesRoadmap":false}`))
 	})
 
 	plan, err := client.PlanGateFinalize(context.Background(), uuid.New(), uuid.New(), uuid.New())
@@ -776,26 +779,35 @@ func TestMaterializeGateApproval_NoMergesSendsAnEmptyList(t *testing.T) {
 	assert.Empty(t, res.Issues)
 }
 
-// TestPlanGateFinalize_WritesRoadmapDecodesFalseWhenAbsent: an API that predates the split write
-// step omits the field, and the zero value is what keeps the workflow on one-step complete.
-func TestPlanGateFinalize_WritesRoadmapDecodesFalseWhenAbsent(t *testing.T) {
+func TestPlanGateFinalize_DecodesWritesRoadmap(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		t.Run(fmt.Sprint(want), func(t *testing.T) {
+			_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"outcome":"proceed","reason":null,"compares":[],"prs":[],"mergeMethod":null,"writesRoadmap":%t}`, want)
+			})
+
+			plan, err := client.PlanGateFinalize(context.Background(), uuid.New(), uuid.New(), uuid.New())
+			require.NoError(t, err)
+			require.NotNil(t, plan.WritesRoadmap)
+			assert.Equal(t, want, *plan.WritesRoadmap)
+		})
+	}
+}
+
+// TestPlanGateFinalize_WithoutWritesRoadmapIsRejected: read as false, a plan without the field
+// would send an approved roadmap to the one-step complete, which the API refuses. A retry gets
+// the same body, so the error is non-retryable.
+func TestPlanGateFinalize_WithoutWritesRoadmapIsRejected(t *testing.T) {
 	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"outcome":"proceed","reason":null,"compares":[],"prs":[],"mergeMethod":null}`))
 	})
 
-	plan, err := client.PlanGateFinalize(context.Background(), uuid.New(), uuid.New(), uuid.New())
-	require.NoError(t, err)
-	assert.False(t, plan.WritesRoadmap)
-}
-
-func TestPlanGateFinalize_DecodesWritesRoadmap(t *testing.T) {
-	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"outcome":"proceed","reason":null,"compares":[],"prs":[],"mergeMethod":null,"writesRoadmap":true}`))
-	})
-
-	plan, err := client.PlanGateFinalize(context.Background(), uuid.New(), uuid.New(), uuid.New())
-	require.NoError(t, err)
-	assert.True(t, plan.WritesRoadmap)
+	_, err := client.PlanGateFinalize(context.Background(), uuid.New(), uuid.New(), uuid.New())
+	appErr, ok := err.(*temporal.ApplicationError)
+	require.Truef(t, ok, "want the *ApplicationError itself, got %T: %v", err, err)
+	assert.True(t, appErr.NonRetryable())
+	assert.Equal(t, GateFinalizeRejectedType, appErr.Type())
+	assert.Contains(t, appErr.Error(), "writesRoadmap")
 }
 
 func TestRefuseGateApproval(t *testing.T) {
@@ -937,7 +949,8 @@ func TestGateFinalize_IsNotCutShortByTheDefaultClientTimeout(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{}`))
+		// writesRoadmap answers the plan call; every other call ignores it.
+		w.Write([]byte(`{"writesRoadmap":false}`))
 	})
 	client.httpClient.Timeout = handlerTime / 6
 

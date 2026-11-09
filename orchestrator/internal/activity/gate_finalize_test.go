@@ -83,23 +83,24 @@ func TestPlanGateFinalize_MapsThePlanIntoTheWorkersTypes(t *testing.T) {
 			"outcome": "proceed", "reason": null,
 			"compares": [{"gitRepoId": "%s", "ownerRepo": "acme/api", "branch": "main", "baseSha": "abc123"}],
 			"prs": [{"rowId": "%s", "ownerRepo": "acme/api", "number": 42, "label": "api", "prUrl": "https://github.com/acme/api/pull/42"}],
-			"mergeMethod": "squash"
+			"mergeMethod": "squash", "writesRoadmap": true
 		}`, repoID, rowID)
 	})
 
 	plan, err := f.acts.PlanGateFinalize(withWorkflowRunID(t, f.runID), f.approvalRef())
 	require.NoError(t, err)
 	assert.Equal(t, GatePlan{
-		Outcome:     GatePlanProceed,
-		Compares:    []GateCompare{{GitRepoID: repoID, OwnerRepo: "acme/api", Branch: "main", BaseSha: "abc123"}},
-		PRs:         []GatePR{{RowID: rowID, OwnerRepo: "acme/api", Number: 42, Label: "api", PRURL: "https://github.com/acme/api/pull/42"}},
-		MergeMethod: "squash",
+		Outcome:       GatePlanProceed,
+		Compares:      []GateCompare{{GitRepoID: repoID, OwnerRepo: "acme/api", Branch: "main", BaseSha: "abc123"}},
+		PRs:           []GatePR{{RowID: rowID, OwnerRepo: "acme/api", Number: 42, Label: "api", PRURL: "https://github.com/acme/api/pull/42"}},
+		MergeMethod:   "squash",
+		WritesRoadmap: true,
 	}, plan)
 }
 
 func TestPlanGateFinalize_HoldAndRefusedCarryNoWork(t *testing.T) {
 	f := newGateFixture(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"outcome":"refused","reason":"nothing to merge","compares":[],"prs":[],"mergeMethod":null}`))
+		w.Write([]byte(`{"outcome":"refused","reason":"nothing to merge","compares":[],"prs":[],"mergeMethod":null,"writesRoadmap":false}`))
 	})
 
 	plan, err := f.acts.PlanGateFinalize(withWorkflowRunID(t, f.runID), f.approvalRef())
@@ -110,6 +111,18 @@ func TestPlanGateFinalize_HoldAndRefusedCarryNoWork(t *testing.T) {
 		Compares: []GateCompare{},
 		PRs:      []GatePR{},
 	}, plan)
+}
+
+func TestPlanGateFinalize_APlanWithoutWritesRoadmapFails(t *testing.T) {
+	f := newGateFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"outcome":"proceed","reason":null,"compares":[],"prs":[],"mergeMethod":null}`))
+	})
+
+	_, err := f.acts.PlanGateFinalize(withWorkflowRunID(t, f.runID), f.approvalRef())
+	appErr, ok := err.(*temporal.ApplicationError)
+	require.Truef(t, ok, "want the *ApplicationError itself, got %T: %v", err, err)
+	assert.True(t, appErr.NonRetryable())
+	assert.Equal(t, apiclient.GateFinalizeRejectedType, appErr.Type())
 }
 
 func TestHoldGateApproval_SendsTheComparesAndMapsTheResult(t *testing.T) {

@@ -21,7 +21,6 @@ import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.InternalUpdateNodeExecutionRequest;
 import com.choruskube.core.model.DriftRecheckConfig.StampMode;
-import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GateStamp;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
@@ -187,11 +186,9 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
     }
 
     @Test
-    void approve_repliesFinalizing_thenPlanCompleteMerges_materializesOnce() throws Exception {
+    void approve_repliesFinalizing_thenOneStepCompleteOfAnUnwrittenRoadmap_conflicts_recordingOnlyTheMerges()
+            throws Exception {
         RunPullRequest pr = pullRequest(11, "https://github.com/" + ownerRepo + "/pull/11");
-        when(credentialResolver.getTokenForRepo(repoId)).thenReturn("issue-token");
-        when(gitHubAppService.createIssue(eq("issue-token"), eq(ownerRepo), eq("Do the thing"), any()))
-                .thenReturn(new GitHubAppService.CreatedIssue(42, "https://github.com/" + ownerRepo + "/issues/42"));
 
         mockMvc.perform(post("/api/v1/runs/{id}/nodes/{exec}/signal", runId, gateExec.getId())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -208,7 +205,6 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
         assertThat(stamps).singleElement().extracting(GateStamp::getStatus).isEqualTo(GateStampStatus.finalizing);
         UUID approvalId = stamps.get(0).getId();
         assertThat(payload()).contains("approvalId=" + approvalId);
-        verifyNoInteractions(gitHubAppService, credentialResolver);
 
         mockMvc.perform(post(STEPS + "/{approval}/plan", runId, gateExec.getId(), approvalId))
                 .andExpect(status().isOk())
@@ -224,50 +220,29 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
                 .andExpect(jsonPath("$.prs[0].number").value(11))
                 .andExpect(jsonPath("$.prs[0].label").value(ownerRepo + "#11"))
                 .andExpect(jsonPath("$.prs[0].prUrl").value(pr.getPrUrl()))
-                .andExpect(jsonPath("$.mergeMethod").value("squash"));
+                .andExpect(jsonPath("$.mergeMethod").value("squash"))
+                .andExpect(jsonPath("$.writesRoadmap").value(true));
 
+        // An orchestrator that skipped the materialize step: merged on GitHub stays merged, but the
+        // approved roadmap must not be dropped by completing without it.
         String merged = "{\"merges\":[{\"rowId\":\"" + pr.getId()
                 + "\",\"kind\":\"MERGED\",\"mergedAt\":\"2026-10-11T10:00:00Z\",\"mergeSha\":\"m1\"}]}";
-        String first = mockMvc.perform(post(STEPS + "/{approval}/complete", runId, gateExec.getId(), approvalId)
+        mockMvc.perform(post(STEPS + "/{approval}/complete", runId, gateExec.getId(), approvalId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(merged))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.outcome").value("completed"))
-                .andExpect(jsonPath("$.attachmentRefs").value("{}"))
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
+                .andExpect(status().isConflict());
 
-        assertThat(first)
-                .contains("ship it")
-                .contains("Pull requests merged on approval (squash): " + ownerRepo + "#11.")
-                .contains("Roadmap extension approved: created 1 Epics, 1 Stories, 1 Tasks");
         assertThat(prRepo.findById(pr.getId()).orElseThrow().getMergedAt())
                 .isEqualTo(Instant.parse("2026-10-11T10:00:00Z"));
-        GateStamp consumed = stampRepo.findById(approvalId).orElseThrow();
-        assertThat(consumed.getStatus()).isEqualTo(GateStampStatus.consumed);
-        assertThat(consumed.getMaterializedAt()).isNotNull();
-        assertThat(execRepo.findById(gateExec.getId()).orElseThrow().getDecision())
-                .isEqualTo("approved");
-        assertThat(epicRepo.findBySoftwareProjectIdOrderByCreatedAtDesc(repoId))
-                .extracting(Epic::getTitle)
-                .containsExactly("Async follow-up");
-
-        String second = mockMvc.perform(post(STEPS + "/{approval}/complete", runId, gateExec.getId(), approvalId)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(merged))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.outcome").value("completed"))
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-
-        assertThat(second).isEqualTo(first);
-        assertThat(epicRepo.findBySoftwareProjectIdOrderByCreatedAtDesc(repoId)).hasSize(1);
-        assertThat(stampRepo.findById(approvalId).orElseThrow().getMaterializedAt())
-                .isEqualTo(consumed.getMaterializedAt());
-        verify(auditSink, times(1)).record(eq(AuditSink.PULL_REQUESTS_MERGED), eq("workflow_run"), eq(runId), any());
-        verify(gitHubAppService, times(1)).createIssue(any(), any(), any(), any());
+        GateStamp stillFinalizing = stampRepo.findById(approvalId).orElseThrow();
+        assertThat(stillFinalizing.getStatus()).isEqualTo(GateStampStatus.finalizing);
+        assertThat(stillFinalizing.getMaterializedAt()).isNull();
+        NodeExecution gate = execRepo.findById(gateExec.getId()).orElseThrow();
+        assertThat(gate.getDecision()).isNull();
+        assertThat(gate.getStatus()).isEqualTo(NodeExecutionStatus.finalizing);
+        assertThat(epicRepo.findBySoftwareProjectIdOrderByCreatedAtDesc(repoId)).isEmpty();
+        assertThat(roadmapCounts()).containsExactly(0, 0, 0);
+        verifyNoInteractions(gitHubAppService, credentialResolver);
     }
 
     @Test
@@ -370,9 +345,6 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
 
     @Test
     void complete_anEdgeTheWritePathRejects_isSkippedAndNoted_andTheRestIsWrittenOnce() throws Exception {
-        when(credentialResolver.getTokenForRepo(repoId)).thenReturn("issue-token");
-        when(gitHubAppService.createIssue(eq("issue-token"), eq(ownerRepo), any(), any()))
-                .thenReturn(new GitHubAppService.CreatedIssue(7, "https://github.com/" + ownerRepo + "/issues/7"));
         // GATE strictness leaves dependency checks to the write path, which rejects the repeat.
         String document = "{\"epics\":[{\"title\":\"Edge case\",\"stories\":[{\"title\":\"Slice\",\"tasks\":["
                 + "{\"title\":\"Build it\",\"key\":\"t1\"},{\"title\":\"Ship it\",\"key\":\"t2\"}]}]}],"
@@ -387,11 +359,49 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
                 stampRepo.findByWorkflowRunIdOrderByCreatedAtAsc(runId).get(0).getId();
         mockMvc.perform(post(STEPS + "/{approval}/plan", runId, gateExec.getId(), approvalId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.outcome").value("proceed"));
+                .andExpect(jsonPath("$.outcome").value("proceed"))
+                .andExpect(jsonPath("$.writesRoadmap").value(true));
 
+        String materializeBody = mockMvc.perform(
+                        post(STEPS + "/{approval}/materialize", runId, gateExec.getId(), approvalId)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"merges\":[]}"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        List<Map<String, Object>> issues = JsonPath.read(materializeBody, "$.issues");
+        assertThat(issues).hasSize(2);
+        assertThat(roadmapCounts()).containsExactly(1, 2, 1);
+
+        String repeatMaterialize = mockMvc.perform(
+                        post(STEPS + "/{approval}/materialize", runId, gateExec.getId(), approvalId)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"merges\":[]}"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertThat(repeatMaterialize).isEqualTo(materializeBody);
+        assertThat(roadmapCounts()).containsExactly(1, 2, 1);
+
+        StringBuilder filed = new StringBuilder();
+        for (int i = 0; i < issues.size(); i++) {
+            filed.append(i == 0 ? "" : ",")
+                    .append("{\"taskId\":\"")
+                    .append(issues.get(i).get("taskId"))
+                    .append("\",\"number\":")
+                    .append(7 + i)
+                    .append(",\"url\":\"https://github.com/")
+                    .append(ownerRepo)
+                    .append("/issues/")
+                    .append(7 + i)
+                    .append("\"}");
+        }
+        String completeBody = "{\"merges\":[],\"issues\":[" + filed + "]}";
         String first = mockMvc.perform(post(STEPS + "/{approval}/complete", runId, gateExec.getId(), approvalId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"merges\":[]}"))
+                        .content(completeBody))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.outcome").value("completed"))
                 .andReturn()
@@ -401,7 +411,8 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
         assertThat(first)
                 .contains("created 1 Epics, 1 Stories, 2 Tasks and 1 dependency edges (1 skipped)")
                 .contains("Skipped: Failed to materialize dependency edge 't1' -> 't2'")
-                .contains("This dependency edge already exists");
+                .contains("This dependency edge already exists")
+                .contains("GitHub issues: filed 2 of 2.");
         assertThat(roadmapCounts()).containsExactly(1, 2, 1);
         GateStamp consumed = stampRepo.findById(approvalId).orElseThrow();
         assertThat(consumed.getStatus()).isEqualTo(GateStampStatus.consumed);
@@ -409,7 +420,7 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
 
         String second = mockMvc.perform(post(STEPS + "/{approval}/complete", runId, gateExec.getId(), approvalId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"merges\":[]}"))
+                        .content(completeBody))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
@@ -417,7 +428,7 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
 
         assertThat(second).isEqualTo(first);
         assertThat(roadmapCounts()).containsExactly(1, 2, 1);
-        verify(gitHubAppService, times(2)).createIssue(any(), any(), any(), any());
+        verifyNoInteractions(gitHubAppService, credentialResolver);
     }
 
     @Test

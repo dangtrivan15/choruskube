@@ -14,7 +14,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -343,20 +342,6 @@ public class InternalRunController {
     @GetMapping("/{runId}/branch-cleanup-plan")
     public BranchCleanupPlanResponse branchCleanupPlan(@PathVariable UUID runId) {
         return branchCleanupService.plan(runId);
-    }
-
-    /**
-     * @deprecated legacy path: serves only workflow histories recorded before the {@code
-     *     branch-cleanup-on-worker} version marker, which {@link #branchCleanupPlan} and the
-     *     Worker's own cleanup activity now serve instead. Run-level, not node-execution-scoped, so
-     *     {@code InternalAuthFilter}'s agent {@code JOB_SECRET} matching — which only authorizes
-     *     paths carrying a caller's own {@code node-executions/{execId}} segment — never matches
-     *     this path; only the orchestrator's {@code ORCHESTRATOR_SECRET} does.
-     */
-    @Deprecated
-    @PostMapping("/{runId}/cleanup-branches")
-    public ResponseEntity<BranchCleanupResponse> cleanupBranches(@PathVariable UUID runId) {
-        return ResponseEntity.ok(branchCleanupService.cleanupBranches(runId));
     }
 
     /**

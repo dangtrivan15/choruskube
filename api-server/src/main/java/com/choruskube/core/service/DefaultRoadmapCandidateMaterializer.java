@@ -1,6 +1,5 @@
 package com.choruskube.core.service;
 
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.CandidateDependency;
 import com.choruskube.core.dto.CandidateEpicProposal;
 import com.choruskube.core.dto.CandidateMilestone;
@@ -18,12 +17,9 @@ import com.choruskube.core.dto.StoryResponse;
 import com.choruskube.core.dto.TaskIssueTarget;
 import com.choruskube.core.dto.TaskResponse;
 import com.choruskube.core.model.GitRepo;
-import com.choruskube.core.model.TaskGithubIssue;
 import com.choruskube.core.model.enums.BlockableItemType;
-import com.choruskube.core.model.enums.GithubIssueState;
 import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.RoadmapMaterializeMode;
-import com.choruskube.core.repository.TaskGithubIssueRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -50,9 +46,10 @@ import org.springframework.stereotype.Service;
  *       recorded directly against the anchor's id, and its children (if any) attach under it.
  *       Each created item's {@code key} (if any) is recorded in a {@code key -> (BlockableItemType,
  *       id)} map as it's created;
- *   <li>In {@code roadmap_extension} mode, right after each new Task is created, a matching GitHub
- *       issue is filed and the linkage persisted — best-effort: a failure here is recorded in
- *       {@code errors} but never un-creates the Task;
+ *   <li>In {@code roadmap_extension} mode, right after each new Task is created, the GitHub issue
+ *       the run's Worker files for it is resolved into the summary's {@code issueTargets} — no
+ *       GitHub call happens here, and a failure is recorded in {@code errors} but never un-creates
+ *       the Task;
  *   <li>Dependency edges: each {@link CandidateDependency} resolves its {@code blocking}/{@code
  *       blocked} keys against the same map and calls the writer's {@code createDependency} — a
  *       project/org-checked path, needed because a key may resolve to an anchor (an item outside
@@ -81,21 +78,11 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
 
     private final InternalRunService internalRunService;
     private final MilestoneService milestoneService;
-    private final GitHubAppService gitHubAppService;
-    private final GitHubCredentialResolver gitHubCredentialResolver;
-    private final TaskGithubIssueRepository taskGithubIssueRepository;
 
     public DefaultRoadmapCandidateMaterializer(
-            InternalRunService internalRunService,
-            MilestoneService milestoneService,
-            GitHubAppService gitHubAppService,
-            GitHubCredentialResolver gitHubCredentialResolver,
-            TaskGithubIssueRepository taskGithubIssueRepository) {
+            InternalRunService internalRunService, MilestoneService milestoneService) {
         this.internalRunService = internalRunService;
         this.milestoneService = milestoneService;
-        this.gitHubAppService = gitHubAppService;
-        this.gitHubCredentialResolver = gitHubCredentialResolver;
-        this.taskGithubIssueRepository = taskGithubIssueRepository;
     }
 
     /** {@code key -> (BlockableItemType, id)} for every candidate item (anchor or created) carrying a {@code key}. */
@@ -103,14 +90,14 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
 
     @Override
     public MaterializationSummary materialize(
-            UUID runId, RoadmapCandidatesDocument document, RoadmapMaterializeMode mode, IssueFiling filing) {
-        IssueFiling effectiveFiling = mode == RoadmapMaterializeMode.roadmap_extension ? filing : null;
-        return materialize(new RunWriter(internalRunService, runId), document, effectiveFiling);
+            UUID runId, RoadmapCandidatesDocument document, RoadmapMaterializeMode mode) {
+        return materialize(
+                new RunWriter(internalRunService, runId), document, mode == RoadmapMaterializeMode.roadmap_extension);
     }
 
     @Override
     public MaterializationSummary materialize(RoadmapItemWriter writer, RoadmapCandidatesDocument document) {
-        return materialize(writer, document, null);
+        return materialize(writer, document, false);
     }
 
     /** The gate path: JOB_SECRET-safe writes, each scoped to the run's own project and org. */
@@ -142,9 +129,9 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         }
     }
 
-    /** {@code filing}: null means this mode never files a GitHub issue — {@code candidates} mode or an import. */
+    /** {@code resolveIssueTargets}: false for {@code candidates} mode or an import, which file no GitHub issue. */
     private MaterializationSummary materialize(
-            RoadmapItemWriter writer, RoadmapCandidatesDocument document, IssueFiling filing) {
+            RoadmapItemWriter writer, RoadmapCandidatesDocument document, boolean resolveIssueTargets) {
         List<UUID> createdEpicIds = new ArrayList<>();
         List<UUID> createdStoryIds = new ArrayList<>();
         List<UUID> createdTaskIds = new ArrayList<>();
@@ -161,16 +148,15 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         materializeMilestones(writer, document.milestones(), createdMilestoneIds, milestoneIdByKey, errors);
 
         Map<String, ItemRef> itemByKey = new HashMap<>();
-        // Resolved once per materialization, not once per Task: ON_API's fileGithubIssue keeps its
-        // own per-task resolution below, so only BY_WORKER's issueTarget needs this.
-        RepoResolution repoResolution = filing == IssueFiling.BY_WORKER ? resolveReposOnce(writer) : null;
+        // Resolved once per materialization, not once per Task.
+        RepoResolution repoResolution = resolveIssueTargets ? resolveReposOnce(writer) : null;
         List<CandidateEpicProposal> epics = document.epics();
         if (epics != null) {
             for (CandidateEpicProposal candidate : epics) {
                 materializeEpic(
                         writer,
                         candidate,
-                        filing,
+                        resolveIssueTargets,
                         repoResolution,
                         createdEpicIds,
                         createdStoryIds,
@@ -285,7 +271,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
     private void materializeEpic(
             RoadmapItemWriter writer,
             CandidateEpicProposal candidate,
-            IssueFiling filing,
+            boolean resolveIssueTargets,
             RepoResolution repoResolution,
             List<UUID> createdEpicIds,
             List<UUID> createdStoryIds,
@@ -337,7 +323,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
                             writer,
                             epicId,
                             story,
-                            filing,
+                            resolveIssueTargets,
                             repoResolution,
                             createdStoryIds,
                             createdTaskIds,
@@ -360,7 +346,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
             RoadmapItemWriter writer,
             UUID epicId,
             CandidateStoryProposal story,
-            IssueFiling filing,
+            boolean resolveIssueTargets,
             RepoResolution repoResolution,
             List<UUID> createdStoryIds,
             List<UUID> createdTaskIds,
@@ -390,7 +376,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
                         epicId,
                         storyId,
                         task,
-                        filing,
+                        resolveIssueTargets,
                         repoResolution,
                         createdTaskIds,
                         errors,
@@ -405,7 +391,7 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
             UUID epicId,
             UUID storyId,
             CandidateTaskProposal task,
-            IssueFiling filing,
+            boolean resolveIssueTargets,
             RepoResolution repoResolution,
             List<UUID> createdTaskIds,
             List<String> errors,
@@ -426,17 +412,14 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
         if (task.key() != null) {
             itemByKey.put(task.key(), new ItemRef(BlockableItemType.task, createdTask.id()));
         }
-        if (filing == IssueFiling.ON_API) {
-            fileGithubIssue(writer, createdTask, task.repoId(), errors);
-        } else if (filing == IssueFiling.BY_WORKER) {
+        if (resolveIssueTargets) {
             issueTarget(repoResolution, createdTask, task.repoId(), errors, issueTargets);
         }
     }
 
     /**
-     * Resolves a newly-created Task's repo/title/body for the run's Worker to file, mirroring
-     * {@link #fileGithubIssue}'s resolution but never calling {@code GitHubAppService} or {@code
-     * GitHubCredentialResolver} — the Worker holds the credential, not the API.
+     * Resolves a newly-created Task's repo/title/body for the run's Worker to file. Never calls
+     * GitHub or resolves a credential — the Worker holds the credential, not the API.
      */
     private void issueTarget(
             RepoResolution repoResolution,
@@ -462,36 +445,6 @@ public class DefaultRoadmapCandidateMaterializer implements RoadmapCandidateMate
             }
             issueTargets.add(new TaskIssueTarget(
                     createdTask.id(), repo.getId(), ownerRepo.get(), createdTask.title(), createdTask.description()));
-        } catch (Exception e) {
-            String message = "Failed to file GitHub issue for Task '" + createdTask.title() + "': " + e.getMessage();
-            logger.warn(message, e);
-            errors.add(message);
-        }
-    }
-
-    /**
-     * Files a matching GitHub issue for a newly-created Task and persists the linkage — best-effort,
-     * same as every other per-item step here: a failure is recorded in {@code errors} and the Task
-     * itself, already created and committed, stays created.
-     */
-    private void fileGithubIssue(
-            RoadmapItemWriter writer, TaskResponse createdTask, UUID candidateRepoId, List<String> errors) {
-        try {
-            UUID projectId = writer.softwareProjectId();
-            List<GitRepo> repos = internalRunService.resolveRepos(projectId);
-            GitRepo repo = resolveRepoForTask(repos, candidateRepoId);
-            String ownerRepo = RepoNameUtil.deriveOwnerRepoName(repo.getUrl());
-            String token = gitHubCredentialResolver.getTokenForRepo(repo.getId());
-            GitHubAppService.CreatedIssue issue =
-                    gitHubAppService.createIssue(token, ownerRepo, createdTask.title(), createdTask.description());
-
-            TaskGithubIssue linkage = new TaskGithubIssue();
-            linkage.setTaskId(createdTask.id());
-            linkage.setGitRepoId(repo.getId());
-            linkage.setIssueNumber(issue.number());
-            linkage.setIssueUrl(issue.htmlUrl());
-            linkage.setState(GithubIssueState.open);
-            taskGithubIssueRepository.save(linkage);
         } catch (Exception e) {
             String message = "Failed to file GitHub issue for Task '" + createdTask.title() + "': " + e.getMessage();
             logger.warn(message, e);

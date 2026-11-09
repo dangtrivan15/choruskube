@@ -24,6 +24,8 @@ import com.choruskube.core.dto.GateFinalizeDtos.StepResult;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.service.GateFinalizeService;
 import com.choruskube.core.service.RunScopeBinder;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -96,6 +98,22 @@ class InternalGateFinalizeControllerTest {
         order.verify(service).complete(runId, execId, approvalId, merges, issues);
         order.verify(service).requireGate(runId, execId);
         order.verify(service).refuse(runId, execId, approvalId, "no", List.of());
+    }
+
+    /**
+     * The orchestrator refuses a plan without {@code writesRoadmap}, so the field must be on the
+     * wire even when false, the value a gate with no roadmap answers.
+     */
+    @Test
+    void plan_forAGateWithNoRoadmap_serializesWritesRoadmapFalse() throws Exception {
+        when(service.plan(runId, execId, approvalId))
+                .thenReturn(new PlanResponse("proceed", null, List.of(), List.of(), null, false));
+
+        JsonNode json = new ObjectMapper().valueToTree(controller.plan(runId, execId, approvalId));
+
+        assertThat(json.has("writesRoadmap")).isTrue();
+        assertThat(json.get("writesRoadmap").isBoolean()).isTrue();
+        assertThat(json.get("writesRoadmap").asBoolean()).isFalse();
     }
 
     @Test

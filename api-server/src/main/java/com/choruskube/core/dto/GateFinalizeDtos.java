@@ -18,8 +18,8 @@ public final class GateFinalizeDtos {
 
     /**
      * {@code outcome}: {@code proceed}, {@code hold} or {@code refused} (with {@code reason}).
-     * {@code writesRoadmap} is the orchestrator's capability signal for the split write-then-file
-     * protocol; an older API omits it, which the orchestrator decodes as {@code false}.
+     * {@code writesRoadmap} sends the orchestrator down the split write-then-file protocol. It stays
+     * a primitive, always serialized: the orchestrator refuses a plan that omits it.
      */
     public record PlanResponse(
             String outcome,

@@ -99,8 +99,8 @@ type GateApprovalRef struct {
 }
 
 // GatePlan.Outcome is GatePlanProceed, GatePlanHold or GatePlanRefused. Compares, PRs and
-// MergeMethod are the work to hand the Worker, and only a proceed carries any. WritesRoadmap is
-// false on an API that predates the split write step, which keeps the workflow on one-step complete.
+// MergeMethod are the work to hand the Worker, and only a proceed carries any. WritesRoadmap
+// picks the split path; the client refuses a plan that omits it rather than reading it as false.
 type GatePlan struct {
 	Outcome       string        `json:"outcome"`
 	Reason        string        `json:"reason"`
@@ -224,7 +224,7 @@ func (a *Activities) PlanGateFinalize(ctx context.Context, p GateApprovalRef) (G
 		Compares:      make([]GateCompare, len(resp.Compares)),
 		PRs:           make([]GatePR, len(resp.PRs)),
 		MergeMethod:   resp.MergeMethod,
-		WritesRoadmap: resp.WritesRoadmap,
+		WritesRoadmap: *resp.WritesRoadmap,
 	}
 	for i, c := range resp.Compares {
 		plan.Compares[i] = GateCompare(c)

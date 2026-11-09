@@ -69,11 +69,11 @@ import org.springframework.util.Assert;
 /**
  * Finishes an approval on a gate whose workflow drives it in steps ({@code finalize_mode = 'async'}).
  * The click claims the gate and records the approval as a {@code finalizing} {@link GateStamp}; the
- * workflow then calls plan, then either complete directly (the one-step protocol) or materialize
- * followed by complete (the split protocol, once the approval's roadmap write and GitHub issue
- * filing moved to a separate step and the run's Worker respectively) — or hold or refuse instead. A
- * Temporal retry may repeat any step after it already succeeded, so each one answers a repeat with
- * the result it gave the first time and changes nothing twice.
+ * workflow then calls plan, then either complete directly (the one-step protocol, for a gate that
+ * writes no roadmap) or materialize followed by complete (the split protocol: this service writes
+ * the roadmap and the run's Worker files its GitHub issues) — or hold or refuse instead. A Temporal
+ * retry may repeat any step after it already succeeded, so each one answers a repeat with the
+ * result it gave the first time and changes nothing twice.
  */
 @Service
 public class GateFinalizeService {
@@ -309,8 +309,8 @@ public class GateFinalizeService {
                     .toList();
             mergeMethod = method.get().name();
         }
-        // The capability signal the orchestrator uses to pick the split write-then-file protocol
-        // over the one-step complete; an older API's response simply omits the field.
+        // Sends the orchestrator down the split write-then-file protocol. It must be true whenever
+        // complete would refuse a one-step completion, or the approval can never finish.
         boolean writesRoadmap = mode.isPresent() && materializationPlan.runnable();
         return new PlanResponse(PROCEED, null, compares, prs, mergeMethod, writesRoadmap);
     }
@@ -521,15 +521,15 @@ public class GateFinalizeService {
     }
 
     /**
-     * Records the Worker's merges, writes the approved roadmap at most once (the one-step
-     * protocol) or links the issues the run's Worker filed for an already-written one (the split
-     * protocol, told apart by {@code issue_requests} being non-null), then records the gate's
-     * {@code approved} decision and result. A repeat after success returns the stored result.
+     * Records the Worker's merges, links the issues the run's Worker filed for an already-written
+     * roadmap (the split protocol, told apart by {@code issue_requests} being non-null), then
+     * records the gate's {@code approved} decision and result. The one-step protocol serves only a
+     * gate that writes no roadmap. A repeat after success returns the stored result.
      */
     public StepResult complete(
             UUID runId, UUID gateExecId, UUID approvalId, List<PrResultItem> merges, List<IssueResultItem> issues) {
-        // Each step commits on its own: inside a caller's transaction the claim would not commit
-        // before the roadmap write, and a rejected write would roll the whole approval back.
+        // Each step commits on its own: inside a caller's transaction a refusal below would roll
+        // back the merges already recorded, which stand on GitHub whatever happens to the approval.
         Assert.state(
                 !TransactionSynchronizationManager.isActualTransactionActive(),
                 "Completing a gate approval must run outside a transaction");
@@ -557,16 +557,12 @@ public class GateFinalizeService {
         RunService.MaterializationPlan plan = mode.isPresent() && stamp.getMaterializedAt() == null
                 ? runService.prepareMaterialization(runId, mode.get(), gateRecheck.approvedCandidates(stamp))
                 : null;
-        String approved = runService.validateDecisionAgainstEdges(snapshot, gate.getTemplateNodeId(), "approved");
-
-        if (plan != null && plan.runnable() && Boolean.TRUE.equals(tx.execute(s -> claimMaterialization(approvalId)))) {
-            String note = materializeOneStep(runId, plan);
-            tx.executeWithoutResult(s -> {
-                GateStamp locked = lock(approvalId);
-                locked.setMaterializationNote(note);
-                stampRepo.save(locked);
-            });
+        if (plan != null && plan.runnable()) {
+            // Only the split protocol writes a roadmap; completing here would drop the approved one.
+            throw new ConflictException("Approval " + approvalId
+                    + " approved a roadmap that was never written; only the materialize step writes it");
         }
+        String approved = runService.validateDecisionAgainstEdges(snapshot, gate.getTemplateNodeId(), "approved");
 
         return tx.execute(status -> {
             GateStamp locked = lock(approvalId);
@@ -577,7 +573,7 @@ public class GateFinalizeService {
                 throw new ConflictException(
                         "Approval " + approvalId + " is " + locked.getStatus() + ", not finalizing");
             }
-            String roadmapNote = plan != null && !plan.runnable() ? plan.fixedNote() : locked.getMaterializationNote();
+            String roadmapNote = plan != null ? plan.fixedNote() : locked.getMaterializationNote();
             String result = RunService.appendNote(
                     RunService.appendNote(withFeedback(gate.getResult(), locked.getFeedback()), mergeNote),
                     roadmapNote);
@@ -780,21 +776,6 @@ public class GateFinalizeService {
         locked.setMaterializedAt(clock.instant());
         stampRepo.save(locked);
         return true;
-    }
-
-    /**
-     * The one-step protocol's roadmap write, which still files GitHub issues on the API. Runs with
-     * no surrounding transaction, so each write commits on its own and a write the write path
-     * rejects is skipped and noted rather than rolling back the rest.
-     */
-    private String materializeOneStep(UUID runId, RunService.MaterializationPlan plan) {
-        try {
-            return runService.materializeAndNote(runId, plan);
-        } catch (RuntimeException e) {
-            // Already claimed, so no retry writes it again; the note is the reviewer's only trace.
-            log.error("Writing the approved roadmap of run {} stopped partway: {}", runId, e.getMessage(), e);
-            return MATERIALIZATION_STOPPED;
-        }
     }
 
     private GateStamp lock(UUID approvalId) {

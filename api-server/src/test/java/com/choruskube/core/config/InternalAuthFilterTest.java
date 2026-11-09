@@ -195,30 +195,19 @@ public class InternalAuthFilterTest extends BaseTest {
                 .andExpect(status().isNotFound());
     }
 
-    // ── stale run-branch cleanup (Part 2): orchestrator-only, by construction ────────
-    //
-    // /internal/runs/{runId}/cleanup-branches carries no node-executions/{execId} segment, so
-    // NODE_EXEC_PATH_PATTERN never matches it and an agent's JOB_SECRET can never authorize it —
-    // only the orchestrator's shared secret can. Mirrors agentToken_deniesOtherEndpoint above,
-    // which proves the same thing for /graph-runtime.
+    // ── removed legacy branch cleanup: gone, and still behind the filter ──────────
 
     @Test
-    void orchestratorToken_canAccessCleanupBranchesEndpoint() throws Exception {
+    void orchestratorToken_onRemovedCleanupBranchesPath_isNotFound() throws Exception {
+        // The orchestrator's secret passes the filter; a 404 here proves no controller method
+        // serves the API-side cleanup at this address anymore.
         mockMvc.perform(post("/internal/runs/" + run.getId() + "/cleanup-branches")
                         .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.results").isArray());
+                .andExpect(status().isNotFound());
     }
 
     @Test
-    void agentToken_deniesCleanupBranchesEndpoint() throws Exception {
-        mockMvc.perform(post("/internal/runs/" + run.getId() + "/cleanup-branches")
-                        .header("Authorization", "Bearer test-agent-job-secret"))
-                .andExpect(status().isUnauthorized());
-    }
-
-    @Test
-    void noAuth_deniesCleanupBranchesEndpoint() throws Exception {
+    void noAuth_onRemovedCleanupBranchesPath_isUnauthorized() throws Exception {
         mockMvc.perform(post("/internal/runs/" + run.getId() + "/cleanup-branches"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("Missing or invalid Authorization header"));
@@ -226,8 +215,9 @@ public class InternalAuthFilterTest extends BaseTest {
 
     // ── branch cleanup plan: orchestrator-only, by construction ───────────────────
     //
-    // /internal/runs/{runId}/branch-cleanup-plan carries no node-executions/{execId} segment
-    // either, for the same reason as cleanup-branches above.
+    // /internal/runs/{runId}/branch-cleanup-plan carries no node-executions/{execId} segment, so
+    // NODE_EXEC_PATH_PATTERN never matches it and an agent's JOB_SECRET can never authorize it —
+    // only the orchestrator's shared secret can.
 
     @Test
     void orchestratorToken_canAccessBranchCleanupPlanEndpoint() throws Exception {

@@ -50,7 +50,6 @@ func (s *DAGExecutorTestSuite) newGateRun(timeoutSecs int) gateRun {
 	s.env.OnActivity("InitRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("AppendRunLog", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Maybe()
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
 		return p.TemplateNodeID == g.node
@@ -788,19 +787,23 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizeIssueStepKeepsFailingStillCo
 	s.assertBackoff(at, 5*time.Second, 10*time.Second, 20*time.Second, 40*time.Second)
 }
 
-// TestHumanGateFinalizePlanWithoutWritesRoadmapKeepsOneStepComplete: a plan that does not declare
-// writesRoadmap never runs the write or issue steps, even on a version that supports them.
-func (s *DAGExecutorTestSuite) TestHumanGateFinalizePlanWithoutWritesRoadmapKeepsOneStepComplete() {
+// TestHumanGateFinalizeWritesRoadmapFalseTakesOneStepComplete: a plan with writesRoadmap false
+// takes the one-step complete, never runs the write or issue steps, and never calls GetVersion
+// for the gate-issues marker, which a history records only on the roadmap-writing path.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeWritesRoadmapFalseTakesOneStepComplete() {
 	g := s.newGateRun(3600)
+	var markerChecked bool
+	s.env.OnGetVersion(gateIssuesOnWorkerChange, workflow.Version(1), workflow.Version(1)).
+		Run(func(mock.Arguments) { markerChecked = true }).Return(workflow.Version(1)).Maybe()
 
 	s.expectGateOpened(g)
-	s.expectGateCompleted(g, "roadmap written", "{}")
+	s.expectGateCompleted(g, "merged", "{}")
 	s.anyOtherStatusWrite()
-	s.expectPlan(g, "s1", activity.GatePlan{Outcome: activity.GatePlanProceed})
+	s.expectPlan(g, "s1", activity.GatePlan{Outcome: activity.GatePlanProceed, WritesRoadmap: false})
 	s.env.OnActivity("CompleteGateFinalize", mock.Anything, mock.MatchedBy(func(p activity.GateCompleteParams) bool {
 		return p.GateApprovalRef == g.approval("s1") && len(p.Merges) == 0 && len(p.Issues) == 0
 	})).Return(activity.GateStepResult{
-		Outcome: activity.GateStepCompleted, Result: "roadmap written", AttachmentRefs: "{}",
+		Outcome: activity.GateStepCompleted, Result: "merged", AttachmentRefs: "{}",
 	}, nil).Once()
 	s.decisionReads(g, "approved")
 	s.signalGate(g, 0, "approved", "s1")
@@ -808,33 +811,54 @@ func (s *DAGExecutorTestSuite) TestHumanGateFinalizePlanWithoutWritesRoadmapKeep
 	s.runGate(g)
 
 	s.assertCompleted()
+	s.False(markerChecked, "a gate that writes no roadmap must not record the gate-issues marker")
 	s.env.AssertActivityNotCalled(s.T(), "MaterializeGateApproval", mock.Anything, mock.Anything)
 	s.env.AssertActivityNotCalled(s.T(), "FileGateIssues", mock.Anything, mock.Anything)
 }
 
-// TestHumanGateFinalizeOldVersionKeepsOneStepComplete: a history recorded before the version
-// marker keeps the one-step complete even when the plan now declares writesRoadmap.
-func (s *DAGExecutorTestSuite) TestHumanGateFinalizeOldVersionKeepsOneStepComplete() {
+// TestHumanGateFinalizeIssuesVersionCheckRefusesPreMarkerHistories pins the version range a
+// roadmap-writing plan passes to GetVersion for the gate-issues marker. The SDK's own check
+// against that range is what refuses a history recorded before the marker, by name at the call.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeIssuesVersionCheckRefusesPreMarkerHistories() {
 	g := s.newGateRun(3600)
-	s.env.OnGetVersion(gateIssuesOnWorkerChange, workflow.DefaultVersion, 1).Return(workflow.DefaultVersion)
+	plan, since, _ := roadmapIssue()
+	// Not .Maybe(): AfterTest's AssertExpectations is what fails a roadmap gate that skips this call.
+	s.env.OnGetVersion(gateIssuesOnWorkerChange, workflow.Version(1), workflow.Version(1)).Return(workflow.Version(1)).Once()
 
 	s.expectGateOpened(g)
-	s.expectGateCompleted(g, "roadmap written", "{}")
-	s.anyOtherStatusWrite()
-	s.expectPlan(g, "s1", activity.GatePlan{Outcome: activity.GatePlanProceed, WritesRoadmap: true})
-	s.env.OnActivity("CompleteGateFinalize", mock.Anything, mock.MatchedBy(func(p activity.GateCompleteParams) bool {
-		return p.GateApprovalRef == g.approval("s1") && len(p.Merges) == 0 && len(p.Issues) == 0
-	})).Return(activity.GateStepResult{
+	s.expectCompleteWithIssues(g, "s1", nil, []activity.GateIssueResult{}, activity.GateStepResult{
 		Outcome: activity.GateStepCompleted, Result: "roadmap written", AttachmentRefs: "{}",
-	}, nil).Once()
+	})
+	s.anyOtherStatusWrite()
+	s.expectPlan(g, "s1", plan)
+	s.expectMaterialize(g, "s1", nil, activity.GateMaterialized{Since: since, Issues: []activity.GateIssue{}})
 	s.decisionReads(g, "approved")
 	s.signalGate(g, 0, "approved", "s1")
 
 	s.runGate(g)
 
 	s.assertCompleted()
+}
+
+// TestHumanGateFinalizeRejectedPlanFailsTheNode: a plan the client rejects outright, as it does
+// one without writesRoadmap, fails the node once instead of retrying or completing in one step.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeRejectedPlanFailsTheNode() {
+	g := s.newGateRun(3600)
+
+	s.expectGateOpened(g)
+	s.expectGateFailed(g, "plan carries no writesRoadmap")
+	s.anyOtherStatusWrite()
+	s.env.OnActivity("PlanGateFinalize", mock.Anything, mock.Anything).Return(activity.GatePlan{},
+		temporal.NewNonRetryableApplicationError("plan gate finalize: plan carries no writesRoadmap", "GateFinalizeRejected", nil))
+	s.signalGate(g, 0, "approved", "s1")
+
+	s.runGate(g)
+
+	s.assertCompleted()
+	s.env.AssertActivityNumberOfCalls(s.T(), "PlanGateFinalize", 1)
 	s.env.AssertActivityNotCalled(s.T(), "MaterializeGateApproval", mock.Anything, mock.Anything)
-	s.env.AssertActivityNotCalled(s.T(), "FileGateIssues", mock.Anything, mock.Anything)
+	s.env.AssertActivityNotCalled(s.T(), "CompleteGateFinalize", mock.Anything, mock.Anything)
+	s.env.AssertActivityNotCalled(s.T(), "RefuseGateApproval", mock.Anything, mock.Anything)
 }
 
 // TestHumanGateFinalizeRejectedMaterializeFailsTheNode: an API step the API rejects outright

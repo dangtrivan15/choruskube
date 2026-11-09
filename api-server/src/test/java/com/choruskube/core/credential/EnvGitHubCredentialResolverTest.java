@@ -36,12 +36,9 @@ class EnvGitHubCredentialResolverTest {
 
     @Test
     void patBranch_neverTouchesTheScopeResolver() {
-        UUID runId = UUID.randomUUID();
-        UUID repoId = UUID.randomUUID();
         EnvGitHubCredentialResolver resolver = resolver("ghp_configured");
 
-        resolver.getTokenForRun(runId);
-        resolver.getTokenForRepo(repoId);
+        resolver.getTokenForRun(UUID.randomUUID());
 
         verifyNoInteractions(scopeResolver);
     }
@@ -59,20 +56,6 @@ class EnvGitHubCredentialResolverTest {
 
         assertThat(resolver.getTokenForRun(runId)).isEqualTo("ghs_scoped");
         verify(gitHubAppService).generateInstallationToken(any(), any(), any(), eq(scope));
-    }
-
-    @Test
-    void appBranch_perRepo_passesTheRepoScopeToTheMint() throws IOException {
-        UUID repoId = UUID.randomUUID();
-        GitHubTokenScope scope = GitHubTokenScope.of(List.of("acme/api"));
-        when(scopeResolver.forRepo(repoId)).thenReturn(scope);
-        GitHubAppService gitHubAppService = mock(GitHubAppService.class);
-        when(gitHubAppService.generateInstallationToken(any(), any(), any(), eq(scope)))
-                .thenReturn("ghs_scoped");
-
-        EnvGitHubCredentialResolver resolver = resolverWithApp(gitHubAppService);
-
-        assertThat(resolver.getTokenForRepo(repoId)).isEqualTo("ghs_scoped");
     }
 
     private EnvGitHubCredentialResolver resolver(String pat) {

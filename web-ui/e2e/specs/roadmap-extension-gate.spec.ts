@@ -1,7 +1,7 @@
 import { test, expect, seededRepos } from "../fixtures";
 import { RoadmapCandidateGatePage } from "../pages/roadmap-candidate-gate.page";
 import { uniqueName, type TestApiClient, type Epic, type Story, type Task } from "../helpers/api-client";
-import { findWireMockRequests } from "../helpers/wiremock";
+import { findWireMockRequests, headerOf } from "../helpers/wiremock";
 
 // Exercises Feature Development's roadmap-extension gate: an Implement-equivalent node
 // proposes new Stories/Tasks anchored under an existing Epic (plus, optionally, a wholly
@@ -149,7 +149,7 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
     expect(epicsAfter.map((e) => e.id).sort()).toEqual(epicsBefore.map((e) => e.id).sort());
 
     // The project resolves to a real github.com repo, so the Worker's FileGateIssues activity
-    // actually files a GitHub issue for each new Task. IssueFiling's non-GitHub skip path is
+    // actually files a GitHub issue for each new Task. The non-GitHub skip path is
     // covered by DefaultRoadmapCandidateMaterializerTest and GitHubTokenScopeResolverTest
     // instead — this template's software_project_id input must resolve to a repo
     // draft_extension (an AI node) can actually clone, which rules out the workerRepo fixture
@@ -162,6 +162,28 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
       });
       expect(filed.length).toBeGreaterThan(0);
     }).toPass({ timeout: 60_000 });
+
+    // Every issue for this run's new Tasks is filed by the Worker: the API server files none.
+    // The negative check matches on the Task's title, never its task key: only the Worker writes
+    // the key into an issue body, so a key match can never see an issue filed by anything else.
+    const newTasks = graph.tasks.filter((t) => t.id !== task.id);
+    expect(newTasks.length).toBeGreaterThan(0);
+    for (const newTask of newTasks) {
+      const keyed = await findWireMockRequests({
+        method: "POST",
+        urlPathPattern: "/repos/.+/issues",
+        bodyContains: "choruskube-task:" + newTask.id,
+      });
+      expect(keyed.length).toBeGreaterThan(0);
+      expect(keyed.filter((req) => headerOf(req, "User-Agent") !== "choruskube-worker")).toEqual([]);
+
+      const titled = await findWireMockRequests({
+        method: "POST",
+        urlPathPattern: "/repos/.+/issues",
+        bodyContains: newTask.title,
+      });
+      expect(titled.filter((req) => headerOf(req, "User-Agent") !== "choruskube-worker")).toEqual([]);
+    }
   });
 
   test("removing the anchor from the proposal before approving creates nothing", async ({ page, api }) => {

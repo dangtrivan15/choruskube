@@ -1164,20 +1164,4 @@ public class InternalRunControllerTest extends BaseTest {
         mockMvc.perform(get("/internal/runs/" + UUID.randomUUID() + "/branch-cleanup-plan"))
                 .andExpect(status().isNotFound());
     }
-
-    @Test
-    void cleanupBranches_returns200WithASummaryPerRepo() throws Exception {
-        // No real GitHub credential is configured in this test environment, so
-        // BranchCleanupService's per-repo GitHub call fails — but that failure is caught and
-        // reported as a per-repo outcome, never surfaced as an HTTP error: the endpoint is
-        // best-effort and must always answer 200 with one result per repo in the run.
-        mockMvc.perform(post("/internal/runs/" + run.getId() + "/cleanup-branches"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.results").isArray())
-                .andExpect(jsonPath("$.results.length()").value(1))
-                .andExpect(
-                        jsonPath("$.results[0].gitRepoId").value(gitRepo.getId().toString()))
-                .andExpect(jsonPath("$.results[0].branch").value("choruskube-run-" + run.getId()))
-                .andExpect(jsonPath("$.results[0].outcome").value("SKIPPED_ERROR"));
-    }
 }

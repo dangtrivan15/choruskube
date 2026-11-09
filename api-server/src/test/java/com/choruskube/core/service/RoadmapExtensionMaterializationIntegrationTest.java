@@ -11,10 +11,12 @@ import com.choruskube.core.dto.CandidateDependency;
 import com.choruskube.core.dto.CandidateEpicProposal;
 import com.choruskube.core.dto.CandidateStoryProposal;
 import com.choruskube.core.dto.CandidateTaskProposal;
+import com.choruskube.core.dto.GateFinalizeDtos.IssueRequest;
+import com.choruskube.core.dto.GateFinalizeDtos.IssueResultItem;
+import com.choruskube.core.dto.GateFinalizeDtos.MaterializeResponse;
+import com.choruskube.core.dto.GateFinalizeDtos.PlanResponse;
 import com.choruskube.core.dto.RoadmapCandidatesDocument;
 import com.choruskube.core.dto.SignalRequest;
-import com.choruskube.core.exception.GitHubApiException;
-import com.choruskube.core.exception.GitHubRateLimitHints;
 import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GitRepo;
@@ -41,8 +43,10 @@ import com.choruskube.core.repository.WorkflowRunRepository;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.BiFunction;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,10 +58,10 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * Approve-time materialization on the real, seeded v43 Final Approval gate — the whole chain
- * (signal, then plan/complete through {@link GateFinalizeService}) against a real database, with
- * only Temporal stubbed. {@code complete} refuses to run inside a transaction, so this class
- * commits its fixtures instead of rolling them back, and cleans them up itself via {@link
- * CommittedFixtureCleaner}.
+ * (signal, then plan, materialize and complete through {@link GateFinalizeService}) against a real
+ * database, with only Temporal stubbed and the run's Worker played by the test. {@code complete}
+ * refuses to run inside a transaction, so this class commits its fixtures instead of rolling them
+ * back, and cleans them up itself via {@link CommittedFixtureCleaner}.
  */
 class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
 
@@ -129,13 +133,6 @@ class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
         mockStub = Mockito.mock(WorkflowStub.class);
         Mockito.when(workflowClient.newUntypedWorkflowStub(ArgumentMatchers.anyString()))
                 .thenReturn(mockStub);
-        Mockito.lenient()
-                .when(gitHubCredentialResolver.getTokenForRepo(ArgumentMatchers.any()))
-                .thenReturn("tok");
-        Mockito.lenient()
-                .when(gitHubAppService.createIssue(
-                        ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any()))
-                .thenReturn(new GitHubAppService.CreatedIssue(1, "https://github.com/acme/repo/issues/1"));
 
         project = new GitRepo();
         project.setUrl("https://github.com/acme/extension-materialization-test-" + UUID.randomUUID());
@@ -214,21 +211,46 @@ class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
     }
 
     /**
-     * Drives an approved decision through {@link GateFinalizeService}'s one-step protocol (signal,
-     * then plan, then complete), which writes the roadmap inside complete. These fixtures register
-     * no pull request and record no base, so the plan leaves nothing for a Worker to compare or
-     * merge. Returns the gate's final result note.
+     * Drives an approved decision the way the workflow does: signal, then plan, then — only when
+     * the plan writes a roadmap — materialize, with the Worker's result for each requested issue
+     * built by {@code workerFiles}, then complete. These fixtures register no pull request and
+     * record no base, so the plan leaves nothing for a Worker to compare or merge. Returns the
+     * gate's final result note.
      */
-    private String approveThroughFinalize(WorkflowRun run, NodeExecution exec, RoadmapCandidatesDocument edited) {
+    private String approveThroughFinalize(
+            WorkflowRun run,
+            NodeExecution exec,
+            RoadmapCandidatesDocument edited,
+            BiFunction<IssueRequest, Integer, IssueResultItem> workerFiles) {
         runService.signalHumanDecision(run.getId(), exec.getId(), new SignalRequest("approved", null, null, edited));
         UUID approvalId = stampRepo
                 .findByWorkflowRunIdOrderByCreatedAtAsc(run.getId())
                 .get(0)
                 .getId();
-        gateFinalize.plan(run.getId(), exec.getId(), approvalId);
-        return gateFinalize
-                .complete(run.getId(), exec.getId(), approvalId, List.of(), List.of())
+        PlanResponse plan = gateFinalize.plan(run.getId(), exec.getId(), approvalId);
+        List<IssueResultItem> issues = new ArrayList<>();
+        if (plan.writesRoadmap()) {
+            MaterializeResponse materialized =
+                    gateFinalize.materialize(run.getId(), exec.getId(), approvalId, List.of());
+            for (int i = 0; i < materialized.issues().size(); i++) {
+                issues.add(workerFiles.apply(materialized.issues().get(i), i + 1));
+            }
+        }
+        String result = gateFinalize
+                .complete(run.getId(), exec.getId(), approvalId, List.of(), issues)
                 .result();
+        Mockito.verifyNoInteractions(gitHubAppService, gitHubCredentialResolver);
+        return result;
+    }
+
+    /** As {@link #approveThroughFinalize(WorkflowRun, NodeExecution, RoadmapCandidatesDocument, BiFunction)}, every issue filed. */
+    private String approveThroughFinalize(WorkflowRun run, NodeExecution exec, RoadmapCandidatesDocument edited) {
+        return approveThroughFinalize(
+                run,
+                exec,
+                edited,
+                (request, number) -> new IssueResultItem(
+                        request.taskId(), number, "https://github.com/acme/repo/issues/" + number, null));
     }
 
     @Test
@@ -291,10 +313,6 @@ class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
 
     @Test
     void approve_issueFilingFails_taskStillCreated_noLinkage_failureInResultNote() {
-        Mockito.when(gitHubAppService.createIssue(
-                        ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.any()))
-                .thenThrow(
-                        new GitHubApiException(503, "acme/extension-materialization-test", GitHubRateLimitHints.NONE));
         GraphTemplate v43 = templateRepo
                 .findFirstByGraphIdOrderByVersionDesc(GraphIds.FEATURE_DEVELOPMENT)
                 .orElseThrow();
@@ -321,7 +339,11 @@ class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
                         runsEpic.getId())),
                 null);
 
-        String result = approveThroughFinalize(run, exec, edited);
+        String result = approveThroughFinalize(
+                run,
+                exec,
+                edited,
+                (request, number) -> new IssueResultItem(request.taskId(), null, null, "GitHub returned 503"));
 
         Task followUp = taskRepo.findAll().stream()
                 .filter(t -> t.getStoryId().equals(runsStory.getId()) && "Follow-up".equals(t.getTitle()))
@@ -329,8 +351,8 @@ class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
                 .orElseThrow();
         assertThat(taskGithubIssueRepo.findByTaskId(followUp.getId())).isEmpty();
         assertThat(result)
-                .contains("created 0 Epics, 0 Stories, 1 Tasks and 0 dependency edges (1 skipped)")
-                .contains("Skipped: Failed to file GitHub issue for Task 'Follow-up'");
+                .contains("created 0 Epics, 0 Stories, 1 Tasks and 0 dependency edges (0 skipped)")
+                .contains("GitHub issues: filed 0 of 1. Not filed: \"Follow-up\" (GitHub returned 503)");
     }
 
     @Test
