@@ -711,7 +711,6 @@ class GateFinalizeServiceTest {
                 .containsExactly(new IssueRequest(taskId, targetRepoId, "acme/app", "Task 1", "body"));
         verify(merge).recordOutcome(eq(runId), any());
         verify(runService).materializeForWorker(eq(runId), any());
-        verify(runService, never()).materializeAndNote(any(), any());
         assertThat(stamp.getMaterializedAt()).isEqualTo(NOW);
         assertThat(stamp.getMaterializationNote()).isEqualTo("Roadmap extension approved: created 1 Epics");
     }
@@ -967,9 +966,25 @@ class GateFinalizeServiceTest {
         when(gateRecheck.approvedCandidates(stamp)).thenReturn(doc);
         when(runService.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_extension, doc))
                 .thenReturn(RunService.MaterializationPlan.runnable(RoadmapMaterializeMode.roadmap_extension, doc));
-        when(runService.materializeAndNote(eq(runId), any()))
-                .thenReturn("Roadmap extension approved: created 1 Epics, 0 Stories, 0 Tasks and 0 dependency edges "
-                        + "(0 skipped)");
+        doAnswer(inv -> {
+                    stamp.setStatus(GateStampStatus.consumed);
+                    return null;
+                })
+                .when(gateRecheck)
+                .consume(approvalId);
+    }
+
+    /** A gate that merges and writes no roadmap: the one-step completion's only case. */
+    private void stubMergeOnly() {
+        snapshot(MERGE_GATE);
+        MergePlan plan = mergePlan();
+        when(merge.planMerge(runId, PullRequestMergeMethod.squash)).thenReturn(plan);
+        MergeOutcome outcome = new MergeOutcome(
+                PullRequestMergeMethod.squash,
+                List.of(new PullRequestMergeService.Result(prRef(), Kind.MERGED, NOW, "m1")));
+        when(merge.outcomeOf(runId, plan, List.of(new WorkerPrResult(rowId, Kind.MERGED, NOW, "m1")), approvalId))
+                .thenReturn(outcome);
+        when(merge.note(outcome)).thenReturn("Pull requests merged on approval (squash): acme/app#7.");
         doAnswer(inv -> {
                     stamp.setStatus(GateStampStatus.consumed);
                     return null;
@@ -983,9 +998,60 @@ class GateFinalizeServiceTest {
     }
 
     @Test
-    void complete_recordsMerges_materializesOnce_setsApprovedDecision_consumes() {
+    void complete_oneStep_recordsMerges_setsApprovedDecision_consumes() {
+        stubMergeOnly();
+
+        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
+
+        assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
+        assertThat(result.result())
+                .isEqualTo("Tests passed\n\n## Reviewer Feedback\n\nship it\n\n"
+                        + "Pull requests merged on approval (squash): acme/app#7.");
+        assertThat(result.attachmentRefs()).isEqualTo(REFS);
+        InOrder order = inOrder(merge, gateRecheck);
+        order.verify(merge).recordOutcome(eq(runId), any());
+        order.verify(gateRecheck).consume(approvalId);
+        assertThat(gate.getDecision()).isEqualTo("approved");
+        assertThat(gate.getResult()).isEqualTo(result.result());
+        assertThat(gate.getArtifactRefs()).isEqualTo(REFS);
+        verify(runService, never()).prepareMaterialization(any(), any(), any());
+    }
+
+    @Test
+    void complete_oneStep_isIdempotent() {
+        stubMergeOnly();
+
+        StepResult first = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
+        StepResult second = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
+
+        assertThat(second).isEqualTo(first);
+        verify(merge, times(1)).recordOutcome(eq(runId), any());
+        verify(gateRecheck, times(1)).consume(approvalId);
+    }
+
+    @Test
+    void complete_oneStep_runnableUnmaterializedRoadmap_refuses409_recordsMergesButNoDecision() {
         RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
         stubMergeAndMaterialize(doc);
+
+        assertThatThrownBy(() -> service.complete(runId, gateExecId, approvalId, mergedRow(), List.of()))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("never written");
+
+        verify(merge).recordOutcome(eq(runId), any());
+        verify(runService, never()).materializeForWorker(any(), any());
+        verify(gateRecheck, never()).consume(any());
+        assertThat(gate.getDecision()).isNull();
+        assertThat(stamp.getStatus()).isEqualTo(GateStampStatus.finalizing);
+        assertThat(stamp.getMaterializedAt()).isNull();
+    }
+
+    @Test
+    void complete_oneStep_roadmapGateWithNothingToCreate_completesWithItsNote() {
+        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
+        stubMergeAndMaterialize(doc);
+        when(runService.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_extension, doc))
+                .thenReturn(RunService.MaterializationPlan.fixedNote("Roadmap proposal: nothing to create"));
 
         StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
 
@@ -993,32 +1059,10 @@ class GateFinalizeServiceTest {
         assertThat(result.result())
                 .isEqualTo("Tests passed\n\n## Reviewer Feedback\n\nship it\n\n"
                         + "Pull requests merged on approval (squash): acme/app#7.\n\n"
-                        + "Roadmap extension approved: created 1 Epics, 0 Stories, 0 Tasks and 0 dependency edges "
-                        + "(0 skipped)");
-        assertThat(result.attachmentRefs()).isEqualTo(REFS);
-        InOrder order = inOrder(merge, runService, gateRecheck);
-        order.verify(merge).recordOutcome(eq(runId), any());
-        order.verify(runService).materializeAndNote(eq(runId), any());
-        order.verify(gateRecheck).consume(approvalId);
-        assertThat(stamp.getMaterializedAt()).isEqualTo(NOW);
-        assertThat(stamp.getMaterializationNote()).startsWith("Roadmap extension approved: created 1 Epics");
+                        + "Roadmap proposal: nothing to create");
         assertThat(gate.getDecision()).isEqualTo("approved");
-        assertThat(gate.getResult()).isEqualTo(result.result());
-        assertThat(gate.getArtifactRefs()).isEqualTo(REFS);
-    }
-
-    @Test
-    void complete_isIdempotent_materializesOnce() {
-        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
-        stubMergeAndMaterialize(doc);
-
-        StepResult first = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
-        StepResult second = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
-
-        assertThat(second).isEqualTo(first);
-        verify(runService, times(1)).materializeAndNote(eq(runId), any());
-        verify(merge, times(1)).recordOutcome(eq(runId), any());
-        verify(gateRecheck, times(1)).consume(approvalId);
+        verify(runService, never()).materializeForWorker(any(), any());
+        verify(gateRecheck).consume(approvalId);
     }
 
     @Test
@@ -1032,7 +1076,7 @@ class GateFinalizeServiceTest {
 
         assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
         assertThat(result.result()).endsWith("\n\nRoadmap extension approved: created 2 Epics (stored)");
-        verify(runService, never()).materializeAndNote(any(), any());
+        verify(runService, never()).materializeForWorker(any(), any());
         verify(runService, never()).prepareMaterialization(any(), any(), any());
         verify(gateRecheck).consume(approvalId);
     }
@@ -1048,72 +1092,7 @@ class GateFinalizeServiceTest {
         assertThat(result.result())
                 .isEqualTo("Tests passed\n\n## Reviewer Feedback\n\nship it\n\n"
                         + "Pull requests merged on approval (squash): acme/app#7.");
-        verify(runService, never()).materializeAndNote(any(), any());
-        verify(gateRecheck).consume(approvalId);
-    }
-
-    @Test
-    void complete_writesTheRoadmapOutsideAnyTransaction_afterCommittingTheClaim() {
-        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
-        stubMergeAndMaterialize(doc);
-        int[] open = {0};
-        int[] committed = {0};
-        when(txManager.getTransaction(any())).thenAnswer(inv -> {
-            open[0]++;
-            return txStatus;
-        });
-        doAnswer(inv -> {
-                    open[0]--;
-                    committed[0]++;
-                    return null;
-                })
-                .when(txManager)
-                .commit(any());
-        when(runService.materializeAndNote(eq(runId), any())).thenAnswer(inv -> {
-            assertThat(open[0]).as("transactions open around the roadmap write").isZero();
-            assertThat(committed[0]).as("the claim committed first").isEqualTo(1);
-            assertThat(stamp.getMaterializedAt()).isEqualTo(NOW);
-            return "Roadmap extension approved: created 1 Epics";
-        });
-
-        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
-
-        assertThat(result.result()).endsWith("Roadmap extension approved: created 1 Epics");
-        verify(runService).materializeAndNote(eq(runId), any());
-        assertThat(open[0]).isZero();
-    }
-
-    @Test
-    void complete_anOverlappingAttemptClaimedFirst_writesNothing() {
-        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
-        stubMergeAndMaterialize(doc);
-        when(runService.prepareMaterialization(runId, RoadmapMaterializeMode.roadmap_extension, doc))
-                .thenAnswer(inv -> {
-                    stamp.setMaterializedAt(NOW.minusSeconds(1));
-                    stamp.setMaterializationNote("written by the other attempt");
-                    return RunService.MaterializationPlan.runnable(RoadmapMaterializeMode.roadmap_extension, doc);
-                });
-
-        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
-
-        assertThat(result.result()).endsWith("written by the other attempt");
-        assertThat(stamp.getMaterializedAt()).isEqualTo(NOW.minusSeconds(1));
-        verify(runService, never()).materializeAndNote(any(), any());
-    }
-
-    @Test
-    void complete_aRoadmapWriteThatStopsPartway_stillCompletes_andSaysSo() {
-        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
-        stubMergeAndMaterialize(doc);
-        when(runService.materializeAndNote(eq(runId), any())).thenThrow(new IllegalStateException("connection lost"));
-
-        StepResult result = service.complete(runId, gateExecId, approvalId, mergedRow(), List.of());
-
-        assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
-        assertThat(result.result()).contains("stopped partway").doesNotContain("connection lost");
-        assertThat(stamp.getMaterializedAt()).isEqualTo(NOW);
-        assertThat(stamp.getMaterializationNote())
-                .isEqualTo("Writing the approved roadmap stopped partway, so some items may be missing.");
+        verify(runService, never()).materializeForWorker(any(), any());
         verify(gateRecheck).consume(approvalId);
     }
 
@@ -1132,8 +1111,7 @@ class GateFinalizeServiceTest {
 
     @Test
     void complete_duplicateRowResults_areCountedOnce() {
-        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
-        stubMergeAndMaterialize(doc);
+        stubMergeOnly();
         List<PrResultItem> twice = new ArrayList<>(mergedRow());
         twice.add(new PrResultItem(rowId, "MERGED", NOW, "m1"));
 
@@ -1176,7 +1154,7 @@ class GateFinalizeServiceTest {
 
     @Test
     void complete_voidedApproval_recordsTheMergesButConflicts() {
-        stubMergeAndMaterialize(null);
+        stubMergeOnly();
         stamp.setStatus(GateStampStatus.voided);
 
         assertThatThrownBy(() -> service.complete(runId, gateExecId, approvalId, mergedRow(), List.of()))
@@ -1184,24 +1162,6 @@ class GateFinalizeServiceTest {
 
         verify(merge).recordOutcome(eq(runId), any());
         verify(gateRecheck, never()).consume(any());
-        verify(runService, never()).materializeAndNote(any(), any());
-    }
-
-    @Test
-    void complete_oneStep_unchanged_filesOnTheApi() {
-        RoadmapCandidatesDocument doc = new RoadmapCandidatesDocument(null, List.of(), null);
-        stubMergeAndMaterialize(doc);
-
-        StepResult result = service.complete(
-                runId,
-                gateExecId,
-                approvalId,
-                mergedRow(),
-                List.of(new IssueResultItem(UUID.randomUUID(), 1, "https://github.com/acme/app/issues/1", null)));
-
-        assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
-        verify(runService).materializeAndNote(eq(runId), any());
-        verify(taskGithubIssueRepo, never()).save(any());
     }
 
     // ── complete, the split protocol ─────────────────────────────────────────────

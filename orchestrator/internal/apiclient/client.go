@@ -281,20 +281,6 @@ func (c *Client) GetGraphRuntime(ctx context.Context, runID uuid.UUID) (string, 
 	return string(resp), nil
 }
 
-// CleanupBranches asks the API server to best-effort delete this run's per-repo run branch for
-// every repo whose branch is not ahead of its default branch.
-//
-// Deprecated: serves only workflow histories recorded before the branch-cleanup-on-worker version
-// marker. Every run that reaches cleanup after that marker calls GetBranchCleanupPlan instead and
-// lets the Worker do the GitHub compare and delete itself.
-func (c *Client) CleanupBranches(ctx context.Context, runID uuid.UUID) error {
-	_, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/internal/runs/%s/cleanup-branches", runID), nil)
-	if err != nil {
-		return fmt.Errorf("cleanup branches: %w", err)
-	}
-	return nil
-}
-
 // BranchCleanupPlanRejectedType is the application error type of a branch-cleanup-plan call the
 // API answered with a 400, 404 or 409.
 const BranchCleanupPlanRejectedType = "BranchCleanupPlanRejected"
@@ -651,7 +637,7 @@ const GateFinalizeRejectedType = "GateFinalizeRejected"
 // doGateFinalize posts to a gate-finalize endpoint. A 400, 404 or 409 is the API refusing the
 // request itself, so a retry gets the same answer: it comes back as the *ApplicationError itself,
 // because the SDK reads an error's retry class from its concrete type and a wrapped one retries.
-// ctx's deadline is the only time bound: complete can write a roadmap for longer than the
+// ctx's deadline is the only time bound: materialize can write a roadmap for longer than the
 // default client's timeout, and a cut-off retry would race the write it interrupted.
 func (c *Client) doGateFinalize(ctx context.Context, op string, runID, execID uuid.UUID, rest string, reqBody any) ([]byte, error) {
 	path := fmt.Sprintf("/internal/runs/%s/node-executions/%s/gate-finalize%s", runID, execID, rest)
@@ -716,15 +702,15 @@ type GateIssueResultItem struct {
 }
 
 // GatePlanResponse.Outcome is proceed, hold or refused. A null Reason or MergeMethod decodes to
-// "". WritesRoadmap decodes to false when absent, which is what an API older than the split
-// write step sends.
+// "". WritesRoadmap is a pointer so PlanGateFinalize can refuse a plan without it: read as false,
+// an approved roadmap would take the one-step complete, which the API refuses.
 type GatePlanResponse struct {
 	Outcome       string            `json:"outcome"`
 	Reason        string            `json:"reason"`
 	Compares      []GateCompareItem `json:"compares"`
 	PRs           []GatePRItem      `json:"prs"`
 	MergeMethod   string            `json:"mergeMethod"`
-	WritesRoadmap bool              `json:"writesRoadmap"`
+	WritesRoadmap *bool             `json:"writesRoadmap"`
 }
 
 // GateStepResponse.Outcome is completed, held or refused; null fields decode to "".
@@ -769,6 +755,10 @@ func (c *Client) PlanGateFinalize(ctx context.Context, runID, execID, approvalID
 	var result GatePlanResponse
 	if err := json.Unmarshal(resp, &result); err != nil {
 		return GatePlanResponse{}, fmt.Errorf("unmarshal gate finalize plan: %w", err)
+	}
+	if result.WritesRoadmap == nil {
+		return GatePlanResponse{}, temporal.NewNonRetryableApplicationError(
+			"plan gate finalize: plan carries no writesRoadmap", GateFinalizeRejectedType, nil)
 	}
 	return result, nil
 }

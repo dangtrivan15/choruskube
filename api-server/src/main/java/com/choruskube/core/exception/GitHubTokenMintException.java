@@ -11,16 +11,12 @@ package com.choruskube.core.exception;
  * only the pull-request read would have left this half in place, and this half fires at least as
  * often.
  *
- * <p>Not a {@link GitHubApiException}: that one names an {@code owner/repo} and a pull request
- * number in its message because a human needs both to act, and neither exists for a token mint.
- * Inventing placeholder values to reuse the type would put fiction in an operator-facing string.
- * The shared part — was this a rate limit? — is the {@link GitHubRateLimited} interface, which is
- * all the classifier looks for.
+ * <p>Whether this was a rate limit is answered by the {@link GitHubRateLimited} interface, which is
+ * all a classifier looks for.
  *
- * <p><strong>The message carries the installation id and nothing else</strong>, for the same reason
- * {@link GitHubApiException} omits the body: an error payload from GitHub can echo the request,
- * {@code Authorization} header included, and this text reaches a log and the Autopilot's {@code
- * disengagedReason}.
+ * <p><strong>The message carries the installation id and nothing else</strong>, never the response
+ * body: an error payload from GitHub can echo the request, {@code Authorization} header included,
+ * and this text reaches a log and the Autopilot's {@code disengagedReason}.
  */
 public class GitHubTokenMintException extends RuntimeException implements GitHubRateLimited {
 

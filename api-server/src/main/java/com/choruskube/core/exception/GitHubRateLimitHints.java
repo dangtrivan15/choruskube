@@ -9,7 +9,7 @@ package com.choruskube.core.exception;
  * therefore cannot tell "wait" from "a human must act", and the difference matters: the first
  * clears itself in seconds, the second stops the Autopilot until somebody fixes a credential. The
  * distinguishing signal is only in the headers. The body would also carry it, and the body is
- * exactly what {@link GitHubApiException} refuses to keep — GitHub echoes the request, {@code
+ * exactly what {@link GitHubTokenMintException} refuses to keep — GitHub echoes the request, {@code
  * Authorization} header included, in some error payloads, and these values reach a log and a UI
  * panel. Three parsed integers cannot leak a token; a retained response cannot promise that.
  *

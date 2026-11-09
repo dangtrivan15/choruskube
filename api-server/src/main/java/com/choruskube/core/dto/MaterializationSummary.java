@@ -10,8 +10,8 @@ import java.util.UUID;
  * recorded in {@code errors} rather than aborting the batch; {@code createdDependencyCount} counts
  * only the edges that were actually created. {@code createdMilestoneIds} lists every Milestone
  * created OR reused (find-or-create by name) during this materialization. {@code issueTargets}
- * is populated only by {@code DefaultRoadmapCandidateMaterializer}'s {@code BY_WORKER} filing
- * mode: one entry per new Task whose issue the run's Worker, not the API, is asked to file.
+ * is populated only for a {@code roadmap_extension} gate: one entry per new Task whose issue the
+ * run's Worker, not the API, is asked to file.
  */
 public record MaterializationSummary(
         List<UUID> createdEpicIds,

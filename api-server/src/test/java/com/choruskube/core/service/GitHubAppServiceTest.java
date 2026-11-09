@@ -3,7 +3,6 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.*;
 
 import com.choruskube.core.credential.GitHubTokenScope;
-import com.choruskube.core.exception.GitHubApiException;
 import com.choruskube.core.exception.GitHubRateLimitHints;
 import com.choruskube.core.exception.GitHubTokenMintException;
 import com.choruskube.core.exception.GitHubTokenScopeException;
@@ -66,46 +65,6 @@ class GitHubAppServiceTest {
     // -----------------------------------------------------------------------------------
     // Over real HTTP — the status has to survive the client, and the body must not
     // -----------------------------------------------------------------------------------
-
-    /**
-     * The status is what the caller classifies on — a 401 disengages the Autopilot where a 503 does
-     * not — so it has to arrive as a field rather than as text somebody has to parse back out.
-     *
-     * <p>The body must not arrive at all. GitHub echoes the request in some error payloads, the
-     * {@code Authorization} header among them, and this message is logged and rendered in the UI.
-     * The stub answers with exactly that shape, so the assertion is about a real payload rather than
-     * a hypothetical one.
-     */
-    @Test
-    void createIssue_unauthorized_carriesTheStatusAndNeverTheBody() throws Exception {
-        String echoingBody = "{\"message\":\"Bad credentials\","
-                + "\"request\":{\"headers\":{\"Authorization\":\"Bearer ghs_notatoken\"}}}";
-        try (Stub github = Stub.serving(401, echoingBody)) {
-            GitHubAppService service = github.service();
-
-            assertThatThrownBy(() -> service.createIssue("ghs_notatoken", "org/backend-api", "Follow-up", "body"))
-                    .isInstanceOf(GitHubApiException.class)
-                    .hasMessage("GitHub returned 401 for org/backend-api")
-                    .satisfies(thrown -> {
-                        GitHubApiException e = (GitHubApiException) thrown;
-                        assertThat(e.getStatus()).isEqualTo(401);
-                        assertThat(e.getOwnerRepo()).isEqualTo("org/backend-api");
-                        assertThat(e.getMessage()).doesNotContain("ghs_notatoken", "Bad credentials");
-                    });
-        }
-    }
-
-    @Test
-    void createIssue_serverError_carriesTheStatusSoTheCallerCanCallItTransient() throws Exception {
-        try (Stub github = Stub.serving(503, "unavailable")) {
-            GitHubAppService service = github.service();
-
-            assertThatThrownBy(() -> service.createIssue("t0ken", "org/backend-api", "Follow-up", "body"))
-                    .isInstanceOf(GitHubApiException.class)
-                    .satisfies(thrown -> assertThat(((GitHubApiException) thrown).getStatus())
-                            .isEqualTo(503));
-        }
-    }
 
     /**
      * A rate limit on the mint used to throw a bare {@code RuntimeException} with the status only
@@ -198,127 +157,6 @@ class GitHubAppServiceTest {
         return "-----BEGIN PRIVATE KEY-----\n"
                 + Base64.getEncoder().encodeToString(privateKey.getEncoded())
                 + "\n-----END PRIVATE KEY-----\n";
-    }
-
-    // -----------------------------------------------------------------------------------
-    // compareCommits / deleteRef — the branch-ref primitives BranchCleanupService uses
-    // -----------------------------------------------------------------------------------
-
-    @Test
-    void compareCommits_ok_parsesAheadByAndHitsTheRightRequest() throws Exception {
-        try (Stub github = Stub.serving(200, "{\"ahead_by\":3,\"status\":\"ahead\"}")) {
-            int ahead = github.service().compareCommits("t0ken", "org/backend-api", "main", "choruskube-run-abc");
-
-            assertThat(ahead).isEqualTo(3);
-            assertThat(github.captured().method).isEqualTo("GET");
-            assertThat(github.captured().path).isEqualTo("/repos/org/backend-api/compare/main...choruskube-run-abc");
-            assertThat(github.captured().authorization).isEqualTo("Bearer t0ken");
-        }
-    }
-
-    @Test
-    void compareCommits_zeroAheadBy_parsesAsZero() throws Exception {
-        try (Stub github = Stub.serving(200, "{\"ahead_by\":0,\"status\":\"identical\"}")) {
-            assertThat(github.service().compareCommits("t0ken", "org/backend-api", "main", "stale-branch"))
-                    .isZero();
-        }
-    }
-
-    /**
-     * A 404 (branch or base not found) has to arrive with the real status intact — it's what lets
-     * {@code BranchCleanupService} tell "gone" apart from any other failure via {@link
-     * GitHubApiException#getStatus()}.
-     */
-    @Test
-    void compareCommits_404_throwsWithTheRealStatus() throws Exception {
-        try (Stub github = Stub.serving(404, "{\"message\":\"Not Found\"}")) {
-            GitHubAppService service = github.service();
-
-            assertThatThrownBy(() -> service.compareCommits("t0ken", "org/backend-api", "main", "gone-branch"))
-                    .isInstanceOf(GitHubApiException.class)
-                    .satisfies(thrown -> assertThat(((GitHubApiException) thrown).getStatus())
-                            .isEqualTo(404));
-        }
-    }
-
-    @Test
-    void compareCommits_serverError_throwsWithTheRealStatus() throws Exception {
-        try (Stub github = Stub.serving(500, "unavailable")) {
-            GitHubAppService service = github.service();
-
-            assertThatThrownBy(() -> service.compareCommits("t0ken", "org/backend-api", "main", "branch"))
-                    .isInstanceOf(GitHubApiException.class)
-                    .satisfies(thrown -> assertThat(((GitHubApiException) thrown).getStatus())
-                            .isEqualTo(500));
-        }
-    }
-
-    @Test
-    void deleteRef_noContent_returnsTrueAndHitsTheRightRequest() throws Exception {
-        try (Stub github = Stub.serving(204, "")) {
-            boolean deleted = github.service().deleteRef("t0ken", "org/backend-api", "heads/choruskube-run-abc");
-
-            assertThat(deleted).isTrue();
-            assertThat(github.captured().method).isEqualTo("DELETE");
-            assertThat(github.captured().path).isEqualTo("/repos/org/backend-api/git/refs/heads/choruskube-run-abc");
-            assertThat(github.captured().authorization).isEqualTo("Bearer t0ken");
-        }
-    }
-
-    @Test
-    void deleteRef_404_returnsTrueBecauseItIsAlreadyGone() throws Exception {
-        try (Stub github = Stub.serving(404, "{\"message\":\"Not Found\"}")) {
-            assertThat(github.service().deleteRef("t0ken", "org/backend-api", "heads/already-gone"))
-                    .isTrue();
-        }
-    }
-
-    @Test
-    void deleteRef_unprocessable_returnsTrueBecauseItIsAlreadyGone() throws Exception {
-        try (Stub github = Stub.serving(422, "{\"message\":\"Reference does not exist\"}")) {
-            assertThat(github.service().deleteRef("t0ken", "org/backend-api", "heads/already-gone"))
-                    .isTrue();
-        }
-    }
-
-    @Test
-    void deleteRef_serverError_throwsWithTheRealStatus() throws Exception {
-        try (Stub github = Stub.serving(500, "unavailable")) {
-            GitHubAppService service = github.service();
-
-            assertThatThrownBy(() -> service.deleteRef("t0ken", "org/backend-api", "heads/branch"))
-                    .isInstanceOf(GitHubApiException.class)
-                    .satisfies(thrown -> assertThat(((GitHubApiException) thrown).getStatus())
-                            .isEqualTo(500));
-        }
-    }
-
-    @Test
-    void createIssue_created_returnsNumberAndUrl() throws Exception {
-        try (Stub github =
-                Stub.serving(201, "{\"number\":42,\"html_url\":\"https://github.com/org/backend-api/issues/42\"}")) {
-            var issue = github.service().createIssue("t0ken", "org/backend-api", "Follow-up", "body text");
-
-            assertThat(issue.number()).isEqualTo(42);
-            assertThat(issue.htmlUrl()).isEqualTo("https://github.com/org/backend-api/issues/42");
-            assertThat(github.captured().method).isEqualTo("POST");
-            assertThat(github.captured().path).isEqualTo("/repos/org/backend-api/issues");
-            assertThat(github.captured().authorization).isEqualTo("Bearer t0ken");
-            assertThat(new ObjectMapper().readTree(github.captured().body))
-                    .isEqualTo(new ObjectMapper().readTree("{\"title\":\"Follow-up\",\"body\":\"body text\"}"));
-        }
-    }
-
-    @Test
-    void createIssue_nonTwoxx_throwsGitHubApiException() throws Exception {
-        try (Stub github = Stub.serving(422, "{\"message\":\"Validation Failed\"}")) {
-            GitHubAppService service = github.service();
-
-            assertThatThrownBy(() -> service.createIssue("t0ken", "org/backend-api", "Follow-up", "body"))
-                    .isInstanceOf(GitHubApiException.class)
-                    .satisfies(thrown -> assertThat(((GitHubApiException) thrown).getStatus())
-                            .isEqualTo(422));
-        }
     }
 
     /** What one request to the stub actually looked like — set exactly once, before the response. */

@@ -727,7 +727,7 @@ public class DefaultTaskServiceTest extends BaseTest {
 
         assertThat(completed.status()).isEqualTo("done");
         Mockito.verifyNoInteractions(gitHubAppService);
-        Mockito.verify(gitHubCredentialResolver, Mockito.never()).getTokenForRepo(ArgumentMatchers.any());
+        Mockito.verify(gitHubCredentialResolver, Mockito.never()).getTokenForRun(ArgumentMatchers.any());
         TaskGithubIssue reloaded =
                 taskGithubIssueRepository.findById(linkage.getId()).orElseThrow();
         assertThat(reloaded.getState()).isEqualTo(GithubIssueState.open);
@@ -745,7 +745,7 @@ public class DefaultTaskServiceTest extends BaseTest {
 
         assertThat(completed.status()).isEqualTo("done");
         Mockito.verifyNoInteractions(gitHubAppService);
-        Mockito.verify(gitHubCredentialResolver, Mockito.never()).getTokenForRepo(ArgumentMatchers.any());
+        Mockito.verify(gitHubCredentialResolver, Mockito.never()).getTokenForRun(ArgumentMatchers.any());
     }
 
     @Test
@@ -761,7 +761,7 @@ public class DefaultTaskServiceTest extends BaseTest {
 
         assertThat(completed.status()).isEqualTo("done");
         Mockito.verifyNoInteractions(gitHubAppService);
-        Mockito.verify(gitHubCredentialResolver, Mockito.never()).getTokenForRepo(ArgumentMatchers.any());
+        Mockito.verify(gitHubCredentialResolver, Mockito.never()).getTokenForRun(ArgumentMatchers.any());
     }
 
     private TaskGithubIssue makeLinkage(UUID taskId, UUID gitRepoId, int issueNumber, GithubIssueState state) {

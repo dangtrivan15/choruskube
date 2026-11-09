@@ -1549,21 +1549,15 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 	return nil
 }
 
-// cleanupRunBranches picks the branch-cleanup path by history. Version-gated because this
-// changes which activities a run's history calls at cleanup: replaying a history recorded before
-// the marker against the new path would raise a non-determinism error. With the marker, a repo's
-// branch is deleted by the Worker that served the run, with that Worker's own credential, instead
-// of by this control plane.
+// cleanupRunBranches has the API plan which repos' run branches to clean up and the Worker that
+// served the run delete them, with that Worker's own credential.
 func cleanupRunBranches(
 	ctx, dbCtx workflow.Context, logger log.Logger, activities *activity.Activities, params DAGExecutorParams,
 ) {
-	if workflow.GetVersion(ctx, "branch-cleanup-on-worker", workflow.DefaultVersion, 1) == workflow.DefaultVersion {
-		if cleanErr := workflow.ExecuteActivity(dbCtx, activities.DeleteStaleBranches,
-			activity.DeleteStaleBranchesParams{RunID: params.RunID}).Get(ctx, nil); cleanErr != nil {
-			logger.Warn("stale branch cleanup failed", "runID", params.RunID, "error", cleanErr)
-		}
-		return
-	}
+	// Oldest supported version is 1, so a pre-marker history fails here by name via Temporal's
+	// "removed support" error. New runs still record the marker so an older orchestrator build
+	// can still replay them.
+	workflow.GetVersion(ctx, "branch-cleanup-on-worker", 1, 1)
 
 	var plan activity.BranchCleanupPlan
 	if err := workflow.ExecuteActivity(dbCtx, activities.PlanBranchCleanup,
@@ -1704,9 +1698,9 @@ func gateAPIActivityOptions() workflow.ActivityOptions {
 	}
 }
 
-// gateCompleteActivityOptions: the same 5-minute budget covers completing, writing a roadmap of
-// many tasks, and the one-step legacy path's own filing. Cut off sooner, a retry overlaps the
-// attempt still writing and completes the gate without its roadmap note.
+// gateCompleteActivityOptions: the same 5-minute budget covers completing and writing a roadmap of
+// many tasks. Cut off sooner, a retry overlaps the attempt still writing, records the roadmap as
+// stopped partway, and hands the Worker none of its issues.
 func gateCompleteActivityOptions() workflow.ActivityOptions {
 	opts := gateAPIActivityOptions()
 	opts.StartToCloseTimeout = 5 * time.Minute
@@ -1851,12 +1845,15 @@ func (f *gateFinalizer) finalize(approvalID string) (nodeCompletion, finalizeOut
 		return f.hold(ref, gh.Compares)
 	}
 
-	// GetVersion is called only here: a history that passed this point before the marker existed
-	// recorded the one-step complete below and must keep replaying that command on every retry.
-	if plan.WritesRoadmap && workflow.GetVersion(f.ctx, gateIssuesOnWorkerChange, workflow.DefaultVersion, 1) >= 1 {
+	if plan.WritesRoadmap {
+		// Called only for a roadmap-writing plan: a version-1 history recorded the marker only on
+		// that path. Oldest supported version is 1, so a pre-marker history fails here by name.
+		workflow.GetVersion(f.ctx, gateIssuesOnWorkerChange, 1, 1)
 		return f.writeFileComplete(ref, gh.Merges)
 	}
 
+	// The API refuses a one-step completion for an approved roadmap never materialized, so only a
+	// gate that writes no roadmap may end here.
 	var done activity.GateStepResult
 	if err := workflow.ExecuteActivity(f.completeCtx, f.acts.CompleteGateFinalize,
 		activity.GateCompleteParams{GateApprovalRef: ref, Merges: gh.Merges},

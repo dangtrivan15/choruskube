@@ -153,43 +153,6 @@ func TestUpdateWorkflowRunStatus(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestDeleteStaleBranches(t *testing.T) {
-	runID := uuid.New()
-	var receivedMethod, receivedPath string
-
-	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedMethod = r.Method
-		receivedPath = r.URL.Path
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{"results": []interface{}{}})
-	}))
-	defer apiServer.Close()
-
-	client := apiclient.NewClient(apiServer.URL)
-	acts := NewActivities(client, nil, nil, nil)
-
-	err := acts.DeleteStaleBranches(withWorkflowRunID(t, runID), DeleteStaleBranchesParams{RunID: runID})
-	require.NoError(t, err)
-	assert.Equal(t, http.MethodPost, receivedMethod)
-	assert.Equal(t, fmt.Sprintf("/internal/runs/%s/cleanup-branches", runID), receivedPath)
-}
-
-func TestDeleteStaleBranches_NonOKSurfacesAsError(t *testing.T) {
-	runID := uuid.New()
-
-	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal error"))
-	}))
-	defer apiServer.Close()
-
-	client := apiclient.NewClient(apiServer.URL)
-	acts := NewActivities(client, nil, nil, nil)
-
-	err := acts.DeleteStaleBranches(withWorkflowRunID(t, runID), DeleteStaleBranchesParams{RunID: runID})
-	require.Error(t, err)
-}
-
 func TestSetNodeDecision(t *testing.T) {
 	var receivedBody map[string]string
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

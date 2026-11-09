@@ -480,21 +480,3 @@ func (a *Activities) SetTraversedEdges(ctx context.Context, params SetTraversedE
 	}
 	return a.client.SetTraversedEdges(ctx, params.RunID, params.NodeExecutionID, params.EdgeIDs)
 }
-
-// --- Activity: DeleteStaleBranches ---
-
-// DeleteStaleBranchesParams identifies the run whose per-repo run branches should be best-effort
-// deleted once it has reached "completed" (see DAGExecutorWorkflow's Step 6).
-type DeleteStaleBranchesParams struct {
-	RunID uuid.UUID
-}
-
-// DeleteStaleBranches serves only workflow histories recorded before the branch-cleanup-on-worker
-// version marker. Every run that reaches cleanup after that marker calls PlanBranchCleanup and
-// CleanupRunBranches instead.
-func (a *Activities) DeleteStaleBranches(ctx context.Context, params DeleteStaleBranchesParams) error {
-	if err := guardRun(ctx, params.RunID); err != nil {
-		return err
-	}
-	return a.client.CleanupBranches(ctx, params.RunID)
-}

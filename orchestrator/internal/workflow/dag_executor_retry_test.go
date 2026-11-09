@@ -37,7 +37,6 @@ func (s *DAGExecutorTestSuite) TestHumanGateTimeout_RetryViaApproval() {
 	// completion path schedules run for real and panic unless stubbed -- and the
 	// panic's retries starve the run of its deadline under load.
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Maybe()
 
 	// First execution created
@@ -189,7 +188,6 @@ func (s *DAGExecutorTestSuite) TestScriptNodeRetry_RefreshesSnapshot() {
 	s.env.OnActivity("FetchPodLogs", mock.Anything, mock.Anything).Return("", nil).Maybe()
 	// Unmocked, the nil-registered real impls panic and their retries starve the run under load.
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Maybe()
 	s.env.OnActivity("GetNodeDecision", mock.Anything, mock.MatchedBy(func(p activity.GetNodeDecisionParams) bool {
 		return p.NodeExecutionID == execA2
@@ -271,7 +269,6 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_RetryNodeSignal_Preserv
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
 	// Unmocked, the nil-registered real impls panic and their retries starve the run under load.
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Maybe()
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {
@@ -345,7 +342,6 @@ func (s *DAGExecutorTestSuite) TestModelEffortResolution_PauseHeartbeatTimeoutRe
 	s.env.OnActivity("DeleteAgentJob", mock.Anything, mock.Anything).Return(nil).Maybe()
 	// Unmocked, the nil-registered real impls panic and their retries starve the run under load.
 	s.env.OnActivity("SetTraversedEdges", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.env.OnActivity("DeleteStaleBranches", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.env.OnActivity("CleanupRunBranches", mock.Anything, mock.Anything).Return(activity.BranchCleanupResult{}, nil).Maybe()
 
 	s.env.OnActivity("CreateNodeExecution", mock.Anything, mock.MatchedBy(func(p activity.CreateNodeExecParams) bool {

@@ -24,23 +24,10 @@ class ControlPlaneGitHubCallsTest {
             .guarding(GitHubAppService.class)
             .sourceRoot(Path.of("src/main/java"));
 
-    private static final Map<String, String> ALLOWED = Map.ofEntries(
-            Map.entry(
-                    "core.credential.EnvGitHubCredentialResolver#resolveToken -> GitHubAppService#generateInstallationToken",
-                    "Token mint for a Worker that holds no credentials; goes when the open-source stack keeps its"
-                            + " credentials on the Worker. docs/decisions/2026-10-13---02-data-plane-credential-rule.md"),
-            Map.entry(
-                    "core.service.BranchCleanupService#cleanupOne -> GitHubAppService#compareCommits",
-                    "Legacy branch cleanup for workflow histories recorded before cleanup moved to the Worker."
-                            + " docs/decisions/2026-10-13---01-branch-cleanup-on-the-worker.md"),
-            Map.entry(
-                    "core.service.BranchCleanupService#cleanupOne -> GitHubAppService#deleteRef",
-                    "Legacy branch cleanup for workflow histories recorded before cleanup moved to the Worker."
-                            + " docs/decisions/2026-10-13---01-branch-cleanup-on-the-worker.md"),
-            Map.entry(
-                    "core.service.DefaultRoadmapCandidateMaterializer#fileGithubIssue -> GitHubAppService#createIssue",
-                    "One-step issue filing for histories recorded before filing moved to the Worker."
-                            + " docs/decisions/2026-10-15---01-roadmap-issues-filed-on-the-worker.md"));
+    private static final Map<String, String> ALLOWED = Map.ofEntries(Map.entry(
+            "core.credential.EnvGitHubCredentialResolver#resolveToken -> GitHubAppService#generateInstallationToken",
+            "Token mint for a Worker that holds no credentials; goes when the open-source stack keeps its"
+                    + " credentials on the Worker. docs/decisions/2026-10-13---02-data-plane-credential-rule.md"));
 
     @Test
     void apiServerCallsGitHubOnlyFromTheAllowlist() {

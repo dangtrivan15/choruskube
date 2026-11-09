@@ -847,7 +847,7 @@ public class RunService {
 
     /**
      * A validated-but-not-yet-performed materialization. {@code runnable()} tells the caller
-     * whether to call {@link #materializeAndNote} at all: a plan built from a null source, or one
+     * whether to call {@link #materializeForWorker} at all: a plan built from a null source, or one
      * whose reviewed document creates nothing, resolves to {@link #fixedNote} instead, and
      * materialization never runs for it — so the merge {@link GateFinalizeService} always completes
      * first can never be followed by a roadmap write that turns out unnecessary.
@@ -866,9 +866,9 @@ public class RunService {
     /**
      * Validates an approved roadmap gate's reviewed document and decides whether materialization
      * has anything to do — without writing anything. Split from the write itself ({@link
-     * #materializeAndNote}) so the roadmap proposal is confirmed valid before {@link
+     * #materializeForWorker}) so the roadmap proposal is confirmed valid before {@link
      * GateFinalizeService} merges any pull request, while the non-idempotent write still waits
-     * until the gate's complete step: a retry after a merge failure must never risk creating the
+     * until the gate's materialize step: a retry after a merge failure must never risk creating the
      * roadmap items twice.
      */
     MaterializationPlan prepareMaterialization(
@@ -915,22 +915,15 @@ public class RunService {
         }
     }
 
-    /** Performs a runnable plan's materialization and builds its result note. Not idempotent. */
-    String materializeAndNote(UUID runId, MaterializationPlan plan) {
-        MaterializationSummary summary = roadmapCandidateMaterializer.materialize(runId, plan.source(), plan.mode());
-        return noteFor(plan.mode(), summary);
-    }
-
-    /** The write step's result: the same note text {@link #materializeAndNote} builds, plus what to hand the Worker. */
+    /** The write step's result: its note for the gate, plus the issues to hand the Worker. */
     record MaterializationOutcome(String note, List<TaskIssueTarget> issueTargets) {}
 
     /**
-     * The split-protocol write step: materializes with {@link RoadmapCandidateMaterializer.IssueFiling#BY_WORKER},
-     * so no GitHub call happens here — the returned targets are what the run's Worker must file.
+     * Performs a runnable plan's materialization and builds its result note. Not idempotent. No
+     * GitHub call happens here — the returned targets are what the run's Worker must file.
      */
     MaterializationOutcome materializeForWorker(UUID runId, MaterializationPlan plan) {
-        MaterializationSummary summary = roadmapCandidateMaterializer.materialize(
-                runId, plan.source(), plan.mode(), RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+        MaterializationSummary summary = roadmapCandidateMaterializer.materialize(runId, plan.source(), plan.mode());
         return new MaterializationOutcome(noteFor(plan.mode(), summary), summary.issueTargets());
     }
 

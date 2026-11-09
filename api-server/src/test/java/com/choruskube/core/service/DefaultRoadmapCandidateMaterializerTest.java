@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.CandidateDependency;
 import com.choruskube.core.dto.CandidateEpicProposal;
 import com.choruskube.core.dto.CandidateMilestone;
@@ -26,7 +25,6 @@ import com.choruskube.core.exception.DependencyCycleException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.RoadmapMaterializeMode;
-import com.choruskube.core.repository.TaskGithubIssueRepository;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -48,9 +46,6 @@ class DefaultRoadmapCandidateMaterializerTest {
 
     private InternalRunService internalRunService;
     private MilestoneService milestoneService;
-    private GitHubAppService gitHubAppService;
-    private GitHubCredentialResolver gitHubCredentialResolver;
-    private TaskGithubIssueRepository taskGithubIssueRepository;
     private DefaultRoadmapCandidateMaterializer materializer;
     private final UUID runId = UUID.randomUUID();
     private final UUID softwareProjectId = UUID.randomUUID();
@@ -59,15 +54,7 @@ class DefaultRoadmapCandidateMaterializerTest {
     void setUp() {
         internalRunService = Mockito.mock(InternalRunService.class);
         milestoneService = Mockito.mock(MilestoneService.class);
-        gitHubAppService = Mockito.mock(GitHubAppService.class);
-        gitHubCredentialResolver = Mockito.mock(GitHubCredentialResolver.class);
-        taskGithubIssueRepository = Mockito.mock(TaskGithubIssueRepository.class);
-        materializer = new DefaultRoadmapCandidateMaterializer(
-                internalRunService,
-                milestoneService,
-                gitHubAppService,
-                gitHubCredentialResolver,
-                taskGithubIssueRepository);
+        materializer = new DefaultRoadmapCandidateMaterializer(internalRunService, milestoneService);
     }
 
     private static EpicResponse epicResponse(UUID id) {
@@ -210,7 +197,6 @@ class DefaultRoadmapCandidateMaterializerTest {
                         eq(epicId),
                         eq(storyId),
                         eq(new InternalCreateTaskRequest("Task 1", "t-desc", Priority.medium)));
-        verifyNoInteractions(gitHubAppService);
     }
 
     @Test
@@ -502,7 +488,7 @@ class DefaultRoadmapCandidateMaterializerTest {
         assertThat(summary.createdMilestoneIds()).isEmpty();
         assertThat(summary.createdDependencyCount()).isZero();
         assertThat(summary.errors()).isEmpty();
-        verifyNoInteractions(internalRunService, milestoneService, gitHubAppService);
+        verifyNoInteractions(internalRunService, milestoneService);
     }
 
     @Test
@@ -513,7 +499,7 @@ class DefaultRoadmapCandidateMaterializerTest {
         assertThat(summary.createdMilestoneIds()).isEmpty();
         assertThat(summary.createdDependencyCount()).isZero();
         assertThat(summary.errors()).isEmpty();
-        verifyNoInteractions(internalRunService, milestoneService, gitHubAppService);
+        verifyNoInteractions(internalRunService, milestoneService);
     }
 
     @Test
@@ -643,131 +629,8 @@ class DefaultRoadmapCandidateMaterializerTest {
     }
 
     // -----------------------------------------------------------------------
-    // GitHub issue linkage (roadmap_extension mode only)
+    // Worker issue targets (roadmap_extension mode only)
     // -----------------------------------------------------------------------
-
-    @Test
-    void extensionMode_newTask_filesIssueAndPersistsLinkage() {
-        UUID epicId = UUID.randomUUID();
-        UUID storyId = UUID.randomUUID();
-        UUID taskId = UUID.randomUUID();
-        UUID gitRepoId = UUID.randomUUID();
-        GitRepo repo = new GitRepo();
-        repo.setId(gitRepoId);
-        repo.setUrl("https://github.com/acme/widgets");
-
-        when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
-        when(internalRunService.createStory(eq(runId), eq(epicId), any())).thenReturn(storyResponse(storyId, epicId));
-        when(internalRunService.createTask(eq(runId), eq(epicId), eq(storyId), any()))
-                .thenReturn(taskResponse(taskId, storyId, "Task 1", "t-desc"));
-        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
-        when(internalRunService.resolveRepos(softwareProjectId)).thenReturn(List.of(repo));
-        when(gitHubCredentialResolver.getTokenForRepo(gitRepoId)).thenReturn("tok");
-        when(gitHubAppService.createIssue(eq("tok"), eq("acme/widgets"), eq("Task 1"), eq("t-desc")))
-                .thenReturn(new GitHubAppService.CreatedIssue(42, "https://github.com/acme/widgets/issues/42"));
-
-        CandidateEpicProposal candidate = epic(
-                "Bulk Import",
-                null,
-                List.of(story("Story 1", List.of(task("Task 1", null, null)), null, null)),
-                null,
-                null);
-
-        MaterializationSummary summary = materializer.materialize(
-                runId, document(null, List.of(candidate), null), RoadmapMaterializeMode.roadmap_extension);
-
-        assertThat(summary.errors()).isEmpty();
-        ArgumentCaptor<com.choruskube.core.model.TaskGithubIssue> captor =
-                ArgumentCaptor.forClass(com.choruskube.core.model.TaskGithubIssue.class);
-        verify(taskGithubIssueRepository).save(captor.capture());
-        assertThat(captor.getValue().getTaskId()).isEqualTo(taskId);
-        assertThat(captor.getValue().getGitRepoId()).isEqualTo(gitRepoId);
-        assertThat(captor.getValue().getIssueNumber()).isEqualTo(42);
-    }
-
-    @Test
-    void extensionMode_issueFilingFails_taskStaysCreated_failureRecorded() {
-        UUID epicId = UUID.randomUUID();
-        UUID storyId = UUID.randomUUID();
-        UUID taskId = UUID.randomUUID();
-        when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
-        when(internalRunService.createStory(eq(runId), eq(epicId), any())).thenReturn(storyResponse(storyId, epicId));
-        when(internalRunService.createTask(eq(runId), eq(epicId), eq(storyId), any()))
-                .thenReturn(taskResponse(taskId, storyId, "Task 1", "t-desc"));
-        when(internalRunService.resolveSoftwareProjectId(runId)).thenThrow(new RuntimeException("no project"));
-
-        CandidateEpicProposal candidate = epic(
-                "Bulk Import",
-                null,
-                List.of(story("Story 1", List.of(task("Task 1", null, null)), null, null)),
-                null,
-                null);
-
-        MaterializationSummary summary = materializer.materialize(
-                runId, document(null, List.of(candidate), null), RoadmapMaterializeMode.roadmap_extension);
-
-        assertThat(summary.createdTaskIds()).containsExactly(taskId);
-        assertThat(summary.errors()).hasSize(1);
-        assertThat(summary.errors().get(0)).contains("Task 1");
-        verifyNoInteractions(taskGithubIssueRepository);
-    }
-
-    @Test
-    void extensionMode_multiRepoProject_filesIssueInTheTasksRepoId() {
-        UUID epicId = UUID.randomUUID();
-        UUID storyId = UUID.randomUUID();
-        UUID taskId = UUID.randomUUID();
-        GitRepo backend = repo("https://github.com/acme/backend");
-        GitRepo frontend = repo("https://github.com/acme/frontend");
-        stubOneNewTask(epicId, storyId, taskId);
-        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
-        when(internalRunService.resolveRepos(softwareProjectId)).thenReturn(List.of(backend, frontend));
-        when(gitHubCredentialResolver.getTokenForRepo(frontend.getId())).thenReturn("tok");
-        when(gitHubAppService.createIssue(eq("tok"), eq("acme/frontend"), eq("Task 1"), eq("t-desc")))
-                .thenReturn(new GitHubAppService.CreatedIssue(7, "https://github.com/acme/frontend/issues/7"));
-
-        CandidateEpicProposal candidate = epic(
-                "Bulk Import",
-                null,
-                List.of(story("Story 1", List.of(task("Task 1", null, null, frontend.getId())), null, null)),
-                null,
-                null);
-
-        MaterializationSummary summary = materializer.materialize(
-                runId, document(null, List.of(candidate), null), RoadmapMaterializeMode.roadmap_extension);
-
-        assertThat(summary.errors()).isEmpty();
-        ArgumentCaptor<com.choruskube.core.model.TaskGithubIssue> captor =
-                ArgumentCaptor.forClass(com.choruskube.core.model.TaskGithubIssue.class);
-        verify(taskGithubIssueRepository).save(captor.capture());
-        assertThat(captor.getValue().getGitRepoId()).isEqualTo(frontend.getId());
-        assertThat(captor.getValue().getIssueUrl()).isEqualTo("https://github.com/acme/frontend/issues/7");
-    }
-
-    @Test
-    void extensionMode_multiRepoProject_noRepoId_taskStaysCreated_noIssueFiled() {
-        UUID epicId = UUID.randomUUID();
-        UUID storyId = UUID.randomUUID();
-        UUID taskId = UUID.randomUUID();
-        stubOneNewTask(epicId, storyId, taskId);
-        when(internalRunService.resolveSoftwareProjectId(runId)).thenReturn(softwareProjectId);
-        when(internalRunService.resolveRepos(softwareProjectId))
-                .thenReturn(List.of(repo("https://github.com/acme/backend"), repo("https://github.com/acme/frontend")));
-
-        CandidateEpicProposal candidate = epic(
-                "Bulk Import",
-                null,
-                List.of(story("Story 1", List.of(task("Task 1", null, null)), null, null)),
-                null,
-                null);
-
-        MaterializationSummary summary = materializer.materialize(
-                runId, document(null, List.of(candidate), null), RoadmapMaterializeMode.roadmap_extension);
-
-        assertThat(summary.createdTaskIds()).containsExactly(taskId);
-        assertThat(summary.errors()).singleElement().asString().contains("no repoId was given");
-        verifyNoInteractions(gitHubAppService, taskGithubIssueRepository);
-    }
 
     private void stubOneNewTask(UUID epicId, UUID storyId, UUID taskId) {
         when(internalRunService.createEpic(eq(runId), any())).thenReturn(epicResponse(epicId));
@@ -800,17 +663,14 @@ class DefaultRoadmapCandidateMaterializerTest {
                 null,
                 null);
 
-        materialize(materializer, runId, document(null, List.of(candidate), null));
+        MaterializationSummary summary = materialize(materializer, runId, document(null, List.of(candidate), null));
 
-        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
+        assertThat(summary.issueTargets()).isEmpty();
+        verify(internalRunService, never()).resolveRepos(any());
     }
 
-    // -----------------------------------------------------------------------
-    // BY_WORKER filing (roadmap_extension mode only)
-    // -----------------------------------------------------------------------
-
     @Test
-    void byWorker_newTask_collectsTarget_neverCallsGitHub_noLinkage() {
+    void extensionMode_newTask_collectsTarget() {
         UUID epicId = UUID.randomUUID();
         UUID storyId = UUID.randomUUID();
         UUID taskId = UUID.randomUUID();
@@ -827,19 +687,15 @@ class DefaultRoadmapCandidateMaterializerTest {
                 null);
 
         MaterializationSummary summary = materializer.materialize(
-                runId,
-                document(null, List.of(candidate), null),
-                RoadmapMaterializeMode.roadmap_extension,
-                RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+                runId, document(null, List.of(candidate), null), RoadmapMaterializeMode.roadmap_extension);
 
         assertThat(summary.errors()).isEmpty();
         assertThat(summary.issueTargets())
                 .containsExactly(new TaskIssueTarget(taskId, repo.getId(), "acme/widgets", "Task 1", "t-desc"));
-        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
     }
 
     @Test
-    void byWorker_multiRepo_targetsTheTasksRepoId() {
+    void extensionMode_multiRepo_targetsTheTasksRepoId() {
         UUID epicId = UUID.randomUUID();
         UUID storyId = UUID.randomUUID();
         UUID taskId = UUID.randomUUID();
@@ -857,19 +713,15 @@ class DefaultRoadmapCandidateMaterializerTest {
                 null);
 
         MaterializationSummary summary = materializer.materialize(
-                runId,
-                document(null, List.of(candidate), null),
-                RoadmapMaterializeMode.roadmap_extension,
-                RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+                runId, document(null, List.of(candidate), null), RoadmapMaterializeMode.roadmap_extension);
 
         assertThat(summary.errors()).isEmpty();
         assertThat(summary.issueTargets())
                 .containsExactly(new TaskIssueTarget(taskId, frontend.getId(), "acme/frontend", "Task 1", "t-desc"));
-        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
     }
 
     @Test
-    void byWorker_multiRepoNoRepoId_recordsError_noTarget() {
+    void extensionMode_multiRepoNoRepoId_recordsError_noTarget() {
         UUID epicId = UUID.randomUUID();
         UUID storyId = UUID.randomUUID();
         UUID taskId = UUID.randomUUID();
@@ -886,19 +738,15 @@ class DefaultRoadmapCandidateMaterializerTest {
                 null);
 
         MaterializationSummary summary = materializer.materialize(
-                runId,
-                document(null, List.of(candidate), null),
-                RoadmapMaterializeMode.roadmap_extension,
-                RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+                runId, document(null, List.of(candidate), null), RoadmapMaterializeMode.roadmap_extension);
 
         assertThat(summary.createdTaskIds()).containsExactly(taskId);
         assertThat(summary.issueTargets()).isEmpty();
         assertThat(summary.errors()).singleElement().asString().contains("no repoId was given");
-        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
     }
 
     @Test
-    void byWorker_repoNotHostedOnGitHub_recordsError_noTarget_taskStillCreated() {
+    void extensionMode_repoNotHostedOnGitHub_recordsError_noTarget_taskStillCreated() {
         UUID epicId = UUID.randomUUID();
         UUID storyId = UUID.randomUUID();
         UUID taskId = UUID.randomUUID();
@@ -915,19 +763,15 @@ class DefaultRoadmapCandidateMaterializerTest {
                 null);
 
         MaterializationSummary summary = materializer.materialize(
-                runId,
-                document(null, List.of(candidate), null),
-                RoadmapMaterializeMode.roadmap_extension,
-                RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+                runId, document(null, List.of(candidate), null), RoadmapMaterializeMode.roadmap_extension);
 
         assertThat(summary.createdTaskIds()).containsExactly(taskId);
         assertThat(summary.issueTargets()).isEmpty();
         assertThat(summary.errors()).singleElement().asString().contains("not hosted on GitHub");
-        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
     }
 
     @Test
-    void byWorker_mixedBatch_skipsNonGitHubRepoTask_stillQueuesTheGitHubRepoTask() {
+    void extensionMode_mixedBatch_skipsNonGitHubRepoTask_stillQueuesTheGitHubRepoTask() {
         UUID epicId = UUID.randomUUID();
         UUID storyId = UUID.randomUUID();
         UUID githubTaskId = UUID.randomUUID();
@@ -962,41 +806,13 @@ class DefaultRoadmapCandidateMaterializerTest {
                 null);
 
         MaterializationSummary summary = materializer.materialize(
-                runId,
-                document(null, List.of(candidate), null),
-                RoadmapMaterializeMode.roadmap_extension,
-                RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
+                runId, document(null, List.of(candidate), null), RoadmapMaterializeMode.roadmap_extension);
 
         assertThat(summary.createdTaskIds()).containsExactlyInAnyOrder(githubTaskId, otherHostTaskId);
         assertThat(summary.issueTargets())
                 .containsExactly(
                         new TaskIssueTarget(githubTaskId, githubRepo.getId(), "acme/widgets", "GitHub Task", "t-desc"));
         assertThat(summary.errors()).singleElement().asString().contains("not hosted on GitHub");
-    }
-
-    @Test
-    void byWorker_candidatesMode_collectsNothing() {
-        UUID epicId = UUID.randomUUID();
-        UUID storyId = UUID.randomUUID();
-        UUID taskId = UUID.randomUUID();
-        stubOneNewTask(epicId, storyId, taskId);
-
-        CandidateEpicProposal candidate = epic(
-                "Bulk Import",
-                null,
-                List.of(story("Story 1", List.of(task("Task 1", null, null)), null, null)),
-                null,
-                null);
-
-        MaterializationSummary summary = materializer.materialize(
-                runId,
-                document(null, List.of(candidate), null),
-                RoadmapMaterializeMode.roadmap_candidates,
-                RoadmapCandidateMaterializer.IssueFiling.BY_WORKER);
-
-        assertThat(summary.issueTargets()).isEmpty();
-        verify(internalRunService, never()).resolveRepos(any());
-        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver, taskGithubIssueRepository);
     }
 
     @Test
@@ -1033,6 +849,6 @@ class DefaultRoadmapCandidateMaterializerTest {
         verify(writer).createEpic(epicReq.capture());
         assertThat(epicReq.getValue().milestoneId()).isEqualTo(milestoneId);
         verify(writer).createDependency(new InternalCreateDependencyRequest("epic", epicId, "task", taskId));
-        verifyNoInteractions(internalRunService, gitHubAppService, taskGithubIssueRepository);
+        verifyNoInteractions(internalRunService);
     }
 }

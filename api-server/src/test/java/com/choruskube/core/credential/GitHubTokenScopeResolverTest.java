@@ -142,30 +142,6 @@ class GitHubTokenScopeResolverTest extends BaseTest {
         assertThatThrownBy(() -> resolver.forRun(UUID.randomUUID())).isInstanceOf(NotFoundException.class);
     }
 
-    @Test
-    void forRepo_githubRepo_returnsItsScope() {
-        GitRepo repo = saveRepo("https://github.com/scope-resolver-test/for-repo-" + UUID.randomUUID());
-
-        GitHubTokenScope scope = resolver.forRepo(repo.getId());
-
-        assertThat(scope.repositories())
-                .containsExactly(githubOwnerRepoOf(repo.getUrl()).orElseThrow());
-    }
-
-    @Test
-    void forRepo_nonGitHubRepo_returnsEmptyScope() {
-        GitRepo repo = saveRepo("https://example.invalid/scope-resolver-test/for-repo-" + UUID.randomUUID());
-
-        GitHubTokenScope scope = resolver.forRepo(repo.getId());
-
-        assertThat(scope.repositories()).isEmpty();
-    }
-
-    @Test
-    void forRepo_unknownRepo_throwsNotFound() {
-        assertThatThrownBy(() -> resolver.forRepo(UUID.randomUUID())).isInstanceOf(NotFoundException.class);
-    }
-
     private static Optional<String> githubOwnerRepoOf(String url) {
         return RepoNameUtil.githubOwnerRepo(url);
     }

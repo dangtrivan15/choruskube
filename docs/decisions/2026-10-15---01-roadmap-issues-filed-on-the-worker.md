@@ -1,6 +1,6 @@
 # Roadmap-extension issues are filed by the run's Worker during gate finalize, not inline with the roadmap write
 
-**Status:** current; its claim that the one-step complete is kept for an older orchestrator is superseded by [2026-10-17---01-worker-declares-credential-source-at-registration](2026-10-17---01-worker-declares-credential-source-at-registration.md); its claim that the one-step path continues to serve the synchronous gate protocol is superseded by [2026-10-31---04-gate-approvals-finalize-only-asynchronously](2026-10-31---04-gate-approvals-finalize-only-asynchronously.md)
+**Status:** current; its claim that the one-step complete is kept for an older orchestrator is superseded by [2026-10-17---01-worker-declares-credential-source-at-registration](2026-10-17---01-worker-declares-credential-source-at-registration.md); its claim that the one-step path continues to serve the synchronous gate protocol is superseded by [2026-10-31---04-gate-approvals-finalize-only-asynchronously](2026-10-31---04-gate-approvals-finalize-only-asynchronously.md); its consequence that the one-step path is unchanged and still files from the API, and its rule that a plan which does not declare a roadmap write keeps the one-step completion, are superseded by [2026-11-09---01-pre-marker-github-paths-deleted](2026-11-09---01-pre-marker-github-paths-deleted.md)
 
 ## Context
 
