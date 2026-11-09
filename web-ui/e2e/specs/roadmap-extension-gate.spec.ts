@@ -164,17 +164,25 @@ test.describe("Roadmap extension gate (Feature Development's Final Approval, mir
     }).toPass({ timeout: 60_000 });
 
     // Every issue for this run's new Tasks is filed by the Worker: the API server files none.
-    // Matched on any repo, so an API-side POST to some other repo would still be caught.
-    const newTaskIds = graph.tasks.filter((t) => t.id !== task.id).map((t) => t.id);
-    expect(newTaskIds.length).toBeGreaterThan(0);
-    for (const taskId of newTaskIds) {
-      const issuePosts = await findWireMockRequests({
+    // The negative check matches on the Task's title, never its task key: only the Worker writes
+    // the key into an issue body, so a key match can never see an issue filed by anything else.
+    const newTasks = graph.tasks.filter((t) => t.id !== task.id);
+    expect(newTasks.length).toBeGreaterThan(0);
+    for (const newTask of newTasks) {
+      const keyed = await findWireMockRequests({
         method: "POST",
         urlPathPattern: "/repos/.+/issues",
-        bodyContains: "choruskube-task:" + taskId,
+        bodyContains: "choruskube-task:" + newTask.id,
       });
-      expect(issuePosts.length).toBeGreaterThan(0);
-      expect(issuePosts.filter((req) => headerOf(req, "User-Agent") !== "choruskube-worker")).toEqual([]);
+      expect(keyed.length).toBeGreaterThan(0);
+      expect(keyed.filter((req) => headerOf(req, "User-Agent") !== "choruskube-worker")).toEqual([]);
+
+      const titled = await findWireMockRequests({
+        method: "POST",
+        urlPathPattern: "/repos/.+/issues",
+        bodyContains: newTask.title,
+      });
+      expect(titled.filter((req) => headerOf(req, "User-Agent") !== "choruskube-worker")).toEqual([]);
     }
   });
 

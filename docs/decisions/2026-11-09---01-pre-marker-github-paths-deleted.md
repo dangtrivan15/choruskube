@@ -65,8 +65,9 @@ installation-token mint.
 
 - **Upgrade precondition.** Before upgrading, an operator must find every open run whose workflow
   may have been recorded before both markers existed, and end it. The query below must return no
-  rows. `:cutoff` is the end of the day the install first ran a build containing #197, the later of
-  the two moves; an install first deployed on a later build can skip it. Cancel each run it lists
+  rows. `:cutoff` is the end of the day the install first ran a build containing
+  [#197](https://github.com/dangtrivan15/choruskube/pull/197), the later of the two moves; an
+  install first deployed on a later build can skip it. Cancel each run it lists
   through the app, so its row closes and its approvals void, then terminate its workflow in
   Temporal and re-run the query.
 

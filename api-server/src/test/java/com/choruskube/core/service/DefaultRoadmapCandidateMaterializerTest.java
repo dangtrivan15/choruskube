@@ -695,6 +695,34 @@ class DefaultRoadmapCandidateMaterializerTest {
     }
 
     @Test
+    void extensionMode_repoResolutionFails_taskStaysCreated_errorRecorded_noTarget() {
+        UUID epicId = UUID.randomUUID();
+        UUID storyId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        stubOneNewTask(epicId, storyId, taskId);
+        when(internalRunService.resolveSoftwareProjectId(runId)).thenThrow(new RuntimeException("no project"));
+
+        CandidateEpicProposal candidate = epic(
+                "Bulk Import",
+                null,
+                List.of(story("Story 1", List.of(task("Task 1", null, null)), null, null)),
+                null,
+                null);
+
+        MaterializationSummary summary = materializer.materialize(
+                runId, document(null, List.of(candidate), null), RoadmapMaterializeMode.roadmap_extension);
+
+        assertThat(summary.createdTaskIds()).containsExactly(taskId);
+        assertThat(summary.issueTargets()).isEmpty();
+        assertThat(summary.errors())
+                .singleElement()
+                .asString()
+                .contains("Task 1")
+                .contains("no project");
+        verify(internalRunService, never()).resolveRepos(any());
+    }
+
+    @Test
     void extensionMode_multiRepo_targetsTheTasksRepoId() {
         UUID epicId = UUID.randomUUID();
         UUID storyId = UUID.randomUUID();
