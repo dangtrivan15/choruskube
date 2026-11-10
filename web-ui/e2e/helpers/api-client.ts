@@ -17,6 +17,7 @@ import type {
   Readiness,
   AutopilotStatus,
   EpicDependencyResponse,
+  ExecutionLogResponse,
   GateStampResponse,
   StoryConflictResponse,
   StorySpecResponse,
@@ -450,6 +451,11 @@ export class TestApiClient {
     body: { decision: string; feedback?: string },
   ): Promise<void> {
     return this.post(`/api/v1/runs/${runId}/nodes/${nodeExecId}/signal`, body);
+  }
+
+  /** A node execution's accumulated log entries, oldest first. */
+  async getNodeLogs(runId: string, nodeExecId: string): Promise<ExecutionLogResponse[]> {
+    return this.get(`/api/v1/runs/${runId}/nodes/${nodeExecId}/logs`);
   }
 
   // ── Epics / Stories / Tasks ────────────────────────────────────────

@@ -49,6 +49,17 @@ reaching anything but its own work. Placement and credential scoping across more
 one Fleet are extension seams core declares but does not implement — see
 [docs/decisions/2026-09-06---02-worker-placement-and-executor-seams.md](docs/decisions/2026-09-06---02-worker-placement-and-executor-seams.md).
 
+**Workload lifetime.** The executor that launches a workload also bounds its own
+lifetime, from a deadline (the node activity's own timeout, plus grace for the
+workflow's failure path to read its logs first) and a retention (the Worker's
+`WORKLOAD_RETENTION` setting, floored at the node's heartbeat timeout plus that same
+grace) stamped on at launch. Kubernetes enforces this with `ActiveDeadlineSeconds` and
+`TTLSecondsAfterFinished` on the Job, which also owns the ConfigMap and Secrets it
+launched with. Docker has no equivalent, so the Docker executor labels every object it
+creates with the bounds and runs its own janitor goroutine, which sweeps the daemon by
+label on an interval and reclaims a workload once its state and bounds call for it —
+see [docs/decisions/2026-11-09---02-launching-executor-bounds-workload-lifetime.md](docs/decisions/2026-11-09---02-launching-executor-bounds-workload-lifetime.md).
+
 ```
    ┌──────────┐  REST / WS   ┌──────────────┐  Temporal signals  ┌──────────────────┐
    │  web-ui  │ <──────────> │  api-server  │ <────────────────> │   orchestrator   │

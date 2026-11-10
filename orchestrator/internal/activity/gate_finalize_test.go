@@ -40,7 +40,7 @@ func newGateFixture(t *testing.T, handler http.HandlerFunc) gateFixture {
 	}))
 	t.Cleanup(server.Close)
 	return gateFixture{
-		acts:     NewActivities(apiclient.NewAuthenticatedClient(server.URL, "orchestrator-secret"), nil, nil, nil),
+		acts:     NewActivities(apiclient.NewAuthenticatedClient(server.URL, "orchestrator-secret"), nil, nil),
 		runID:    uuid.New(),
 		execID:   uuid.New(),
 		approval: uuid.New(),
@@ -390,7 +390,7 @@ func TestUpdateNodeExecutionStatus_PassesTheFinalizeMode(t *testing.T) {
 func TestRunGateGitHubSteps_IsRegisteredButNeverRunsHere(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestActivityEnvironment()
-	env.RegisterActivity(NewActivities(nil, nil, nil, nil))
+	env.RegisterActivity(NewActivities(nil, nil, nil))
 
 	_, err := env.ExecuteActivity("RunGateGitHubSteps", GateGitHubParams{RunID: uuid.New()})
 	require.Error(t, err)
@@ -401,7 +401,7 @@ func TestRunGateGitHubSteps_IsRegisteredButNeverRunsHere(t *testing.T) {
 func TestFileGateIssues_IsRegisteredButNeverRunsHere(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestActivityEnvironment()
-	env.RegisterActivity(NewActivities(nil, nil, nil, nil))
+	env.RegisterActivity(NewActivities(nil, nil, nil))
 
 	_, err := env.ExecuteActivity("FileGateIssues", GateIssueParams{RunID: uuid.New()})
 	require.Error(t, err)

@@ -38,7 +38,7 @@ func TestGuardRunRejectsAForeignRunThroughARealActivityContext(t *testing.T) {
 	var ts testsuite.WorkflowTestSuite
 	env := ts.NewTestActivityEnvironment()
 
-	acts := NewActivities(apiclient.NewClient("http://unused.invalid"), nil, nil, nil)
+	acts := NewActivities(apiclient.NewClient("http://unused.invalid"), nil, nil)
 	env.RegisterActivity(acts.UpdateWorkflowRunStatus)
 
 	_, err := env.ExecuteActivity(acts.UpdateWorkflowRunStatus, UpdateRunStatusParams{RunID: uuid.New(), Status: "running"})
@@ -47,7 +47,7 @@ func TestGuardRunRejectsAForeignRunThroughARealActivityContext(t *testing.T) {
 }
 
 func TestGetGraphRuntimeRejectsAForeignRun(t *testing.T) {
-	acts := NewActivities(apiclient.NewClient("http://unused.invalid"), nil, nil, nil)
+	acts := NewActivities(apiclient.NewClient("http://unused.invalid"), nil, nil)
 
 	_, err := acts.GetGraphRuntime(withWorkflowRunID(t, uuid.New()), uuid.New())
 	require.Error(t, err)

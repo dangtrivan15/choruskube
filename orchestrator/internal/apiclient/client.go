@@ -239,22 +239,6 @@ func (c *Client) CheckNodePlacement(ctx context.Context, runID, nodeExecID uuid.
 
 // --- Workflow Run ---
 
-// GetWorkflowRunStatus returns the current status string for a workflow run.
-// Used by the reconciler to check if a run is still active.
-func (c *Client) GetWorkflowRunStatus(ctx context.Context, runID uuid.UUID) (string, error) {
-	resp, err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/internal/runs/%s/status", runID), nil)
-	if err != nil {
-		return "", fmt.Errorf("get workflow run status: %w", err)
-	}
-	var result struct {
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return "", fmt.Errorf("unmarshal workflow run status: %w", err)
-	}
-	return result.Status, nil
-}
-
 func (c *Client) UpdateWorkflowRunStatus(ctx context.Context, runID uuid.UUID, status string) error {
 	body := map[string]string{"status": status}
 	_, err := c.doJSON(ctx, http.MethodPut, fmt.Sprintf("/internal/runs/%s/status", runID), body)
@@ -483,37 +467,6 @@ func (c *Client) GetInputArtifacts(ctx context.Context, runID, nodeExecID uuid.U
 		return nil, fmt.Errorf("unmarshal input artifacts: %w", err)
 	}
 	return &state.InputArtifactManifest{Artifacts: result.Artifacts, Required: result.Required}, nil
-}
-
-// --- Workloads (reconciler) ---
-
-// TerminateWorkload stops a running execution.
-func (c *Client) TerminateWorkload(ctx context.Context, executionID uuid.UUID) error {
-	_, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/internal/workloads/%s/terminate", executionID), nil)
-	if err != nil {
-		return fmt.Errorf("terminate workload: %w", err)
-	}
-	return nil
-}
-
-// WorkloadExecutionInfo describes a running or completed workload execution.
-type WorkloadExecutionInfo struct {
-	NodeExecutionID uuid.UUID `json:"nodeExecutionId"`
-	RunID           uuid.UUID `json:"runId"`
-	ExecutionHandle string    `json:"executionHandle"`
-}
-
-// ListWorkloads returns info about all running/completed executions.
-func (c *Client) ListWorkloads(ctx context.Context) ([]WorkloadExecutionInfo, error) {
-	resp, err := c.doJSON(ctx, http.MethodGet, "/internal/workloads", nil)
-	if err != nil {
-		return nil, fmt.Errorf("list workloads: %w", err)
-	}
-	var result []WorkloadExecutionInfo
-	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal workload list: %w", err)
-	}
-	return result, nil
 }
 
 // --- Job Secret Hash ---

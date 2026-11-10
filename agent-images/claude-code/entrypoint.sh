@@ -495,10 +495,17 @@ if [ "$SKIP_AGENT_INVOCATION" = "true" ]; then
 elif [ "$EXECUTOR_TYPE" = "script" ]; then
   echo "Running script: $COMMAND"
   cd /workspace/repo 2>/dev/null || cd /workspace
+  # Command substitution hands back output only once the command exits, so a script that
+  # never exits on its own (the timeout-enforcement scenario) would leave the container's
+  # own log stream empty for as long as it keeps running. Tee to a file instead.
   set +e
-  SCRIPT_OUTPUT=$(eval "$COMMAND" 2>&1)
-  SCRIPT_EXIT=$?
+  script_output_file="/tmp/script_output_$$.log"
+  : > "$script_output_file"
+  eval "$COMMAND" 2>&1 | tee "$script_output_file"
+  SCRIPT_EXIT=${PIPESTATUS[0]}
   set -e
+  SCRIPT_OUTPUT=$(cat "$script_output_file")
+  rm -f "$script_output_file"
 
   if [ $SCRIPT_EXIT -eq 0 ]; then
     SCRIPT_DECISION="passed"

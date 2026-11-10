@@ -16,7 +16,6 @@ type Config struct {
 type TemporalConfig struct {
 	Address   string
 	Namespace string
-	TaskQueue string
 }
 
 type ObjectStoreConfig struct {
@@ -33,7 +32,6 @@ func Load() *Config {
 		Temporal: TemporalConfig{
 			Address:   envOrDefault("TEMPORAL_ADDRESS", "localhost:7233"),
 			Namespace: envOrDefault("TEMPORAL_NAMESPACE", "choruskube"),
-			TaskQueue: envOrDefault("TEMPORAL_TASK_QUEUE", "choruskube"),
 		},
 		HealthPort: envOrDefaultInt("HEALTH_PORT", 8080),
 		ObjectStore: ObjectStoreConfig{

@@ -457,6 +457,15 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 	execParams.DindMemoryRequest = prep.DindMemoryRequest
 	execParams.MemoryCeilingExempt = prep.MemoryCeilingExempt
 
+	// Captured before launch so the executor can stamp the workload with its own bounds; also
+	// the one place that holds Temporal's own addressing for the activity the agent's callbacks
+	// must reach, reused below for that.
+	info := activityInfo(ctx)
+	execParams.Bounds = executor.Bounds{
+		ActivityTimeout:  info.StartToCloseTimeout,
+		HeartbeatTimeout: info.HeartbeatTimeout,
+	}
+
 	result, err := a.executor.Execute(ctx, execParams)
 	if err != nil {
 		return CallbackResult{}, fmt.Errorf("execute: %w", err)
@@ -466,9 +475,6 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 	// moment it starts, racing this activity's own report to the API server -- CompleteWorkload
 	// below is a network round trip a fast (e.g. script) workload can easily win.
 	a.hashCache.Put(params.Identity.NodeExecutionID, result.JobSecretHash)
-	// Captured now, not resolved later: the agent's callbacks carry only NodeExecutionID, so this
-	// is the one place that also holds Temporal's own addressing for the activity they must reach.
-	info := activityInfo(ctx)
 	a.Pending.Put(params.Identity.NodeExecutionID, PendingCompletion{
 		Namespace:  info.Namespace,
 		TaskQueue:  info.TaskQueue,

@@ -95,6 +95,7 @@ would only return what you configured.
 | `TEMPORAL_TLS_DISABLED` | no | Set `true` for a Temporal that serves plaintext gRPC. |
 | `WORKER_CAPABILITIES` | no | `key=value,key=value` pairs this Worker reports about its own infrastructure at registration. Default empty. A server that records required capabilities on a Fleet refuses a Worker that does not report them. |
 | `EXECUTOR_TYPE` | no | `docker` (default) or `k8s` — which executor this process builds at startup. Any other value fails startup. |
+| `WORKLOAD_RETENTION` | no | Go duration (e.g. `1h30m`); default `1h`. How long a finished workload (Kubernetes Job, Docker container/sidecar/volumes) is kept before its executor removes it. Floored at the node's own heartbeat timeout plus 2 minutes — never set it below that, or the configured value is silently stamped up to the floor. An unparseable or non-positive value fails startup. Applies to whichever executor `EXECUTOR_TYPE` selects. |
 | `WORKER_CALLBACK_PORT` | no | Port the callback server listens on for agent completion/heartbeat callbacks. Default `9090`. |
 | `CREDENTIAL_SOURCE` | yes | `control-plane` or `local` — where GitHub and agent credentials come from; see [Credentials](#credentials). No default: a missing or unrecognized value fails startup, since guessing wrong would send a Worker meant to hold its own credentials to the API server for them, or the reverse. `local` is for a single tenant's own Fleet only. Reported at every registration call so the api-server can tell the two modes apart. |
 | `CREDENTIALS_DIR` | no | Folder the `local` source reads. Default `/etc/choruskube/credentials`. |
@@ -235,7 +236,26 @@ service account, or credential itself — see
 
 A node that requests Docker gets a DinD sidecar plus a per-execution `ck-workspace-<id>` volume
 mounted at `/workspace` in both the agent and the sidecar, so a bind mount the agent sends to the
-sidecar's daemon finds the checkout. Cleanup removes the volume with the sidecar.
+sidecar's daemon finds the checkout.
+
+**Workload bounds and the janitor.** Every object a launch creates — the agent container, its
+DinD sidecar, and both the sidecar's data volume and the shared workspace volume — carries the
+same `choruskube/run-id`, `choruskube/exec-id`, `choruskube/tmp-dir`, `choruskube/deadline` and
+`choruskube/retention` labels, computed once at launch from the node's own activity timeout,
+heartbeat timeout, and `WORKLOAD_RETENTION` (see
+[the workload-lifetime decision](../docs/decisions/2026-11-09---02-launching-executor-bounds-workload-lifetime.md)).
+Cleanup-by-execution-id always attempts to remove all four — agent container, sidecar, both
+volumes, and the staging directory — whether or not the agent container is still there to find.
+A janitor goroutine, started by `New` and stopped by `Close`, sweeps the daemon by label on a
+one-minute interval: it reclaims a group once its agent container has exited past retention, once
+a running (or created but never started) agent container is past its deadline (stopping it first),
+or once there is no agent container left and everything else is past its deadline too. It removes a
+sidecar as soon as its agent has exited, without waiting on retention. A workload launched before
+these labels existed carries no deadline, and the janitor leaves it alone: remove such leftovers by
+hand once, with no run in flight. Reading labels straight off the daemon, rather
+than any in-memory state, is what lets the janitor pick back up correctly after a Worker restart,
+and what keeps it from ever touching a workload whose staging directory lies outside its own
+`DOCKER_STAGING_DIR`.
 
 ### Kubernetes agent pod template
 

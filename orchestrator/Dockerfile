@@ -19,5 +19,5 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=build /app/orchestrator .
-EXPOSE 9090
+EXPOSE 8080
 ENTRYPOINT ["./orchestrator"]

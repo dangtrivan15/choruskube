@@ -59,26 +59,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("create kubernetes client: %v", err)
 		}
-		// The memory limit is derived from the request now, so a still-set limit would be
-		// silently ignored while the operator believes it applies.
-		if os.Getenv("K8S_AGENT_MEMORY_LIMIT") != "" {
-			log.Fatalf("K8S_AGENT_MEMORY_LIMIT is no longer read: the agent memory limit is derived from K8S_AGENT_MEMORY_REQUEST; unset it")
+		k8sCfg, err := k8sConfigFromEnv(os.Getenv)
+		if err != nil {
+			log.Fatalf("k8s executor config: %v", err)
 		}
-		k8sExec := k8s.NewKubernetesExecutor(clientset, k8s.Config{
-			// The single namespace this core executor launches every agent Job into and tears
-			// it down within -- a multi-tenant deployment overrides per org via WithNamespace.
-			Namespace:            envOrDefault("K8S_NAMESPACE", "choruskube"),
-			AgentServiceAccount:  envOrDefault("K8S_AGENT_SERVICE_ACCOUNT", "choruskube-agent"),
-			AgentPodTemplateName: envOrDefault("K8S_AGENT_POD_TEMPLATE_NAME", "choruskube-agent-pod-template"),
-			TemplateNamespace:    envOrDefault("K8S_TEMPLATE_NAMESPACE", "choruskube"),
-			// Default agent-container sizing, overridable per execution by the api-server. The
-			// executor pins no numbers of its own; these env defaults are the deployment's.
-			AgentResources: executor.AgentResources{
-				CPURequest:    envOrDefault("K8S_AGENT_CPU_REQUEST", "200m"),
-				MemoryRequest: envOrDefault("K8S_AGENT_MEMORY_REQUEST", "2Gi"),
-				CPULimit:      envOrDefault("K8S_AGENT_CPU_LIMIT", "1"),
-			},
-		})
+		k8sExec := k8s.NewKubernetesExecutor(clientset, k8sCfg)
 		// Fail fast at boot on a missing/malformed agent pod template rather than at the first
 		// agent launch: the Worker is the sole consumer, so this is where that misconfiguration
 		// surfaces.
@@ -87,22 +72,15 @@ func main() {
 		}
 		cfg.Executor = k8sExec
 	case "docker":
-		dockerStagingDir := os.Getenv("DOCKER_STAGING_DIR")
-		if dockerStagingDir == "" {
-			// A named, stable path rather than the package's own blank-means-OS-temp-dir default:
-			// in Docker-out-of-Docker deployments this directory is bind-mounted into the host
-			// daemon at an identical path, which an ephemeral per-process temp dir cannot be.
-			dockerStagingDir = "/tmp/choruskube-agent-staging"
+		dockerCfg, err := dockerConfigFromEnv(os.Getenv)
+		if err != nil {
+			log.Fatalf("docker executor config: %v", err)
 		}
-		dockerExec, err := docker.New(docker.Config{
-			Host:       os.Getenv("DOCKER_HOST"),
-			Network:    os.Getenv("DOCKER_NETWORK"),
-			StagingDir: dockerStagingDir,
-			DindImage:  os.Getenv("DIND_IMAGE"),
-		})
+		dockerExec, err := docker.New(dockerCfg)
 		if err != nil {
 			log.Fatalf("create docker executor: %v", err)
 		}
+		defer dockerExec.Close()
 		cfg.Executor = dockerExec
 	}
 
@@ -183,8 +161,61 @@ func credentialSourceOf(raw string) (string, error) {
 	}
 }
 
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
+// k8sConfigFromEnv builds a k8s.Config from environment variables, resolved through getenv so
+// this is testable without mutating the process environment.
+func k8sConfigFromEnv(getenv func(string) string) (k8s.Config, error) {
+	// The memory limit is derived from the request now, so a still-set limit would be silently
+	// ignored while the operator believes it applies.
+	if getenv("K8S_AGENT_MEMORY_LIMIT") != "" {
+		return k8s.Config{}, fmt.Errorf("K8S_AGENT_MEMORY_LIMIT is no longer read: the agent memory limit is derived from K8S_AGENT_MEMORY_REQUEST; unset it")
+	}
+	retention, err := executor.ParseRetention(getenv(executor.RetentionEnv))
+	if err != nil {
+		return k8s.Config{}, err
+	}
+	return k8s.Config{
+		// The single namespace this core executor launches every agent Job into and tears
+		// it down within -- a multi-tenant deployment overrides per org via WithNamespace.
+		Namespace:            envOrDefault(getenv, "K8S_NAMESPACE", "choruskube"),
+		AgentServiceAccount:  envOrDefault(getenv, "K8S_AGENT_SERVICE_ACCOUNT", "choruskube-agent"),
+		AgentPodTemplateName: envOrDefault(getenv, "K8S_AGENT_POD_TEMPLATE_NAME", "choruskube-agent-pod-template"),
+		TemplateNamespace:    envOrDefault(getenv, "K8S_TEMPLATE_NAMESPACE", "choruskube"),
+		// Default agent-container sizing, overridable per execution by the api-server. The
+		// executor pins no numbers of its own; these env defaults are the deployment's.
+		AgentResources: executor.AgentResources{
+			CPURequest:    envOrDefault(getenv, "K8S_AGENT_CPU_REQUEST", "200m"),
+			MemoryRequest: envOrDefault(getenv, "K8S_AGENT_MEMORY_REQUEST", "2Gi"),
+			CPULimit:      envOrDefault(getenv, "K8S_AGENT_CPU_LIMIT", "1"),
+		},
+		Retention: retention,
+	}, nil
+}
+
+// dockerConfigFromEnv builds a docker.Config from environment variables, resolved through
+// getenv so this is testable without mutating the process environment.
+func dockerConfigFromEnv(getenv func(string) string) (docker.Config, error) {
+	retention, err := executor.ParseRetention(getenv(executor.RetentionEnv))
+	if err != nil {
+		return docker.Config{}, err
+	}
+	dockerStagingDir := getenv("DOCKER_STAGING_DIR")
+	if dockerStagingDir == "" {
+		// A named, stable path rather than the package's own blank-means-OS-temp-dir default:
+		// in Docker-out-of-Docker deployments this directory is bind-mounted into the host
+		// daemon at an identical path, which an ephemeral per-process temp dir cannot be.
+		dockerStagingDir = "/tmp/choruskube-agent-staging"
+	}
+	return docker.Config{
+		Host:       getenv("DOCKER_HOST"),
+		Network:    getenv("DOCKER_NETWORK"),
+		StagingDir: dockerStagingDir,
+		DindImage:  getenv("DIND_IMAGE"),
+		Retention:  retention,
+	}, nil
+}
+
+func envOrDefault(getenv func(string) string, key, def string) string {
+	if v := getenv(key); v != "" {
 		return v
 	}
 	return def
