@@ -20,7 +20,7 @@
 # so `docker ps -a` reliably catches it via its choruskube/run-id label even
 # after the agent exits.
 #
-# Assumes the stack is already up (CI runs `up.sh` first). Set MANAGE_STACK=true
+# Assumes the stack is already up (run `up.sh` first). Set MANAGE_STACK=true
 # to have this script bring it up (with a dummy token) / tear it down itself.
 set -euo pipefail
 
