@@ -3,14 +3,14 @@
 #
 # Usage:
 #   ./scripts/up.sh                 # build + up --wait
-#   ./scripts/setup.sh              # configure tokens first (writes .env), then runs this
+#   ./scripts/setup.sh              # configure credentials first (writes .secrets/credentials/), then runs this
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-# Ensure the GitHub App PEM mount source exists and is user-owned before compose
-# (Docker would otherwise auto-create it as root). Harmless when empty.
-mkdir -p "$REPO_ROOT/.secrets"
+# The Worker's credentials-folder mount source must exist user-owned before compose: Docker
+# would otherwise create it as root, and setup.sh could no longer write it. Harmless when empty.
+mkdir -p "$REPO_ROOT/.secrets/credentials"
 
 # Build the agent images first. They are not Compose services (the executor pulls
 # them at run time), so `compose up --build` would not cover them. Docker layer

@@ -17,8 +17,9 @@
 #   DEFAULT_AGENT_IMAGE / CHORUSKUBE_REPO_AGENT_IMAGE are intentionally UNSET so
 #   they resolve to the public defaults baked into application.properties
 #   (registry.choruskube.com/claude-code:latest and .../choruskube-dev:latest). To run a real
-#   feature-dev workflow, export CLAUDE_CODE_OAUTH_TOKEN before `up.sh` (the AI
-#   agent nodes require it); the stack still boots and serves the API without one.
+#   feature-dev workflow, run ./scripts/setup.sh first: it writes the Claude token (and any
+#   GitHub credential) into .secrets/credentials/, which the worker reads. The stack still
+#   boots and serves the API without one.
 #
 # Ports: 33000 (web-ui) · 38080 (api) · 35432 (postgres) · 37233 (temporal)
 #        39000/39001 (object storage S3 api/filer UI)
@@ -159,18 +160,6 @@ services:
       # they resolve to the public defaults in application.properties
       # (registry.choruskube.com/claude-code:latest and .../choruskube-dev:latest), so the
       # stack pulls the public agent images with zero configuration.
-      #
-      # Optional — export to run real AI agent nodes. Blank still boots; the Worker then
-      # fails each AI node before launch, and script nodes never need it.
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
-      # Optional GitHub credentials for the system org — needed only to push / open
-      # PRs against a target repo. All blank-default → the stack boots with zero
-      # config. Set them via ./scripts/setup.sh. The GitHub App takes precedence
-      # over GITHUB_PAT if both are configured (see EnvGitHubCredentialResolver).
-      GITHUB_PAT: ${GITHUB_PAT:-}
-      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
-      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:-}
-      GITHUB_APP_PRIVATE_KEY_PATH: ${GITHUB_APP_PRIVATE_KEY_PATH:-}
       # Anonymous opt-out telemetry switch — default on for real OSS self-hosters;
       # export CHORUSKUBE_TELEMETRY=off to disable (see PRIVACY.md).
       CHORUSKUBE_TELEMETRY: ${CHORUSKUBE_TELEMETRY:-on}
@@ -179,11 +168,6 @@ services:
       - "38080:8080"
     networks:
       - choruskube
-    volumes:
-      # Holds the GitHub App private-key PEM when the App credential is used
-      # (written by ./scripts/setup.sh). Empty/absent for the PAT and no-credential
-      # cases; Docker auto-creates the dir, so a clean `docker compose up` still boots.
-      - ./.secrets:/run/secrets:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -241,9 +225,9 @@ services:
       # set selects registration: the api-server answers with the queue to poll.
       FLEET_TOKEN: ${WORKER_REGISTRATION_TOKEN:-choruskube-local-worker-token}
       WORKER_CAPABILITIES: docker=true
-      # No default: a Worker must declare which mode it runs in. This stack keeps the api-server
-      # brokering credentials until the OSS default flips to local on its own roadmap item.
-      CREDENTIAL_SOURCE: control-plane
+      # This Worker holds the install's credentials: the api-server holds none, so any other
+      # mode leaves every AI node and GitHub step without a credential.
+      CREDENTIAL_SOURCE: local
       TEMPORAL_ADDRESS: temporal:7233
       # This Temporal serves plaintext gRPC, and the SDK turns TLS on whenever a credential is present.
       TEMPORAL_TLS_DISABLED: "true"
@@ -256,6 +240,9 @@ services:
       DOCKER_STAGING_DIR: *agent-staging-dir
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # The install's credentials, written by ./scripts/setup.sh. up.sh creates the folder
+      # first so Docker does not create it root-owned, which setup.sh could then not write.
+      - ./.secrets/credentials:/etc/choruskube/credentials:ro
       - type: bind
         source: *agent-staging-dir
         target: *agent-staging-dir

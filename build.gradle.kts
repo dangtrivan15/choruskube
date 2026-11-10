@@ -79,6 +79,7 @@ abstract class TaskTimingService :
         ":e2eSmoke" to "e2e: smoke",
         ":e2eSeed" to "e2e: seed",
         ":e2ePlaywright" to "e2e: playwright",
+        ":e2eApiServerMadeNoStubCall" to "e2e: api-server made no stub call",
         ":e2eDown" to "e2e: teardown",
     )
 
@@ -327,7 +328,17 @@ val e2ePlaywright = tasks.register<Exec>("e2ePlaywright") {
     commandLine(args)
 }
 
-val e2eChain = listOf(e2eImages, e2eStackUp, e2eSmoke, e2eSeed, e2ePlaywright)
+// Core-only: a suite that composes the Playwright specs may run a server that legitimately
+// calls the stub, so this check stays a task here and never moves into a shared spec.
+val e2eApiServerMadeNoStubCall = tasks.register<Exec>("e2eApiServerMadeNoStubCall") {
+    description = "Fail if WireMock journaled any request from the api-server, which holds no credential"
+    group = "verification"
+    workingDir = rootDir
+    commandLine("bash", "e2e/check-api-server-made-no-stub-call.sh")
+    mustRunAfter(e2ePlaywright)
+}
+
+val e2eChain = listOf(e2eImages, e2eStackUp, e2eSmoke, e2eSeed, e2ePlaywright, e2eApiServerMadeNoStubCall)
 
 // mustRunAfter orders the phases but does not stop them: org.gradle.continue=true runs every task
 // that does not dependOn the failed one, so without this a failed e2eStackUp still runs all of
@@ -345,7 +356,7 @@ e2eChain.forEachIndexed { i, phase ->
 // this aggregate only has to name them. Teardown is reached through :e2eStackUp's finalizer,
 // which is why it is not listed here.
 tasks.register("e2eTest") {
-    description = "Run the full e2e chain: images -> stack up -> smoke -> seed -> playwright"
+    description = "Run the full e2e chain: images -> stack up -> smoke -> seed -> playwright -> api-server made no stub call"
     group = "verification"
     dependsOn(e2eChain)
 }

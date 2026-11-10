@@ -8,13 +8,13 @@
 #   3. assert the worker (EXECUTOR_TYPE=docker) pulls & spawns an agent
 #      container FROM a published image (registry.choruskube.com/*).
 #
-# The Worker refuses to launch an AI node without a Claude token, and on this stack the
-# api-server attaches the one it is configured with. SOME token must therefore be
-# configured at boot for the agent container to spawn at all. This smoke uses a
-# THROWAWAY dummy: the published agent image is pulled & started (the guard),
-# then the real agent fails auth harmlessly — no real Claude call, no PR. The
-# stack must therefore be booted with CLAUDE_CODE_OAUTH_TOKEN set (any value);
-# the CI job sets it at the job level, and MANAGE_STACK=true sets it below.
+# The Worker refuses to launch an AI node without a Claude token in its own
+# credentials folder (.secrets/credentials/claude-oauth-token, mounted read-only).
+# SOME token must therefore be there for the agent container to spawn at all. This
+# smoke uses a THROWAWAY dummy: the published agent image is pulled & started (the
+# guard), then the real agent fails auth harmlessly — no real Claude call, no PR.
+# With MANAGE_STACK=true the script puts that dummy in the folder when no token is
+# there yet (never overwriting one) and removes it again on exit.
 #
 # The spawned container is NOT auto-removed (cleanup is a separate later call),
 # so `docker ps -a` reliably catches it via its choruskube/run-id label even
@@ -36,12 +36,24 @@ MANAGE_STACK="${MANAGE_STACK:-false}"
 
 if [ "$MANAGE_STACK" = true ]; then
     echo "=== Bringing up the OSS stack (dummy Claude token so AI nodes spawn) ==="
-    export CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-oss-smoke-dummy-token-not-real}"
+    CLAUDE_TOKEN_FILE="$REPO_ROOT/.secrets/credentials/claude-oauth-token"
+    WROTE_TOKEN_FILE=false
+    # Only a file this script wrote may be removed on exit: an existing one is the operator's real token.
+    if [ ! -e "$CLAUDE_TOKEN_FILE" ]; then
+        mkdir -p "$(dirname "$CLAUDE_TOKEN_FILE")"
+        (umask 077; printf '%s\n' "${CLAUDE_CODE_OAUTH_TOKEN:-oss-smoke-dummy-token-not-real}" > "$CLAUDE_TOKEN_FILE")
+        chmod 600 "$CLAUDE_TOKEN_FILE"
+        WROTE_TOKEN_FILE=true
+    fi
+    cleanup() {
+        echo "=== Tearing down ==="
+        bash "$SCRIPTS_DIR/down.sh" || true
+        if [ "$WROTE_TOKEN_FILE" = true ]; then rm -f "$CLAUDE_TOKEN_FILE"; fi
+    }
+    trap cleanup EXIT
     # Smoke runs must not emit anonymous telemetry (overrides docker-compose.yaml default-on).
     export CHORUSKUBE_TELEMETRY=off
     bash "$SCRIPTS_DIR/up.sh"
-    cleanup() { echo "=== Tearing down ==="; bash "$SCRIPTS_DIR/down.sh" || true; }
-    trap cleanup EXIT
 fi
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
