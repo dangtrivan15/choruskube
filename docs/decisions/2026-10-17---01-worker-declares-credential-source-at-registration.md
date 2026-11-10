@@ -1,6 +1,6 @@
 # A Worker declares its credential source at every registration call
 
-**Status:** current
+**Status:** current; its statement that the open-source stack still runs `control-plane` is superseded by [2026-11-10---01-self-hosted-server-holds-no-credential](2026-11-10---01-self-hosted-server-holds-no-credential.md)
 
 ## Context
 

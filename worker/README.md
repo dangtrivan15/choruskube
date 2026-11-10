@@ -6,7 +6,8 @@ A Worker is a Go process that polls one Temporal task queue and runs the agent s
 claims there. It is the only part of ChorusKube that has to sit next to the compute — it owns
 a workload executor itself (Docker or Kubernetes) and launches agent containers directly, so
 wherever the Worker runs is where the work runs. The api-server is off this hot path: it only
-resolves per-run credentials before launch and records the result the Worker reports back.
+records state — execution parameters before launch, the result the Worker reports back — and
+holds no credentials; a self-hosted Worker holds its own.
 
 ## One Fleet
 
@@ -97,7 +98,7 @@ would only return what you configured.
 | `EXECUTOR_TYPE` | no | `docker` (default) or `k8s` — which executor this process builds at startup. Any other value fails startup. |
 | `WORKLOAD_RETENTION` | no | Go duration (e.g. `1h30m`); default `1h`. How long a finished workload (Kubernetes Job, Docker container/sidecar/volumes) is kept before its executor removes it. Floored at the node's own heartbeat timeout plus 2 minutes — never set it below that, or the configured value is silently stamped up to the floor. An unparseable or non-positive value fails startup. Applies to whichever executor `EXECUTOR_TYPE` selects. |
 | `WORKER_CALLBACK_PORT` | no | Port the callback server listens on for agent completion/heartbeat callbacks. Default `9090`. |
-| `CREDENTIAL_SOURCE` | yes | `control-plane` or `local` — where GitHub and agent credentials come from; see [Credentials](#credentials). No default: a missing or unrecognized value fails startup, since guessing wrong would send a Worker meant to hold its own credentials to the API server for them, or the reverse. `local` is for a single tenant's own Fleet only. Reported at every registration call so the api-server can tell the two modes apart. |
+| `CREDENTIAL_SOURCE` | yes | `local` or `control-plane` — where GitHub and agent credentials come from; see [Credentials](#credentials). Every self-hosted install sets `local`. No default: a missing or unrecognized value fails startup, since guessing wrong would send a Worker meant to hold its own credentials to the API server for them, or the reverse. `local` is for a single tenant's own Fleet only. Reported at every registration call so the api-server can tell the two modes apart. |
 | `CREDENTIALS_DIR` | no | Folder the `local` source reads. Default `/etc/choruskube/credentials`. |
 | `GITHUB_API_URL` | no | GitHub API root for the Worker's own GitHub calls (gate compares and merges, run-branch cleanup, roadmap issue filing and closing). Default `https://api.github.com`. |
 | `ANTHROPIC_API_URL` | no | Anthropic API root the `local` source's credential health check reads a Claude token against. Default `https://api.anthropic.com`. |
@@ -124,12 +125,16 @@ An agent pod fetches its GitHub token from the Worker that launched it
 refused unless the execution belongs to the run it names), so the Worker decides where the token
 comes from.
 
-- **`control-plane`** asks the api-server for each run's token. The api-server resolves
-  it per organization, which is what a Worker serving several tenants needs. It also receives the
-  agent's Claude token and registry login from prepare, which it launches with unchanged.
 - **`local`** reads one set of credentials from `CREDENTIALS_DIR` and mints GitHub App tokens
-  itself. It has no notion of a tenant, so every run on the Worker gets the same credentials:
-  use it only for a Worker that serves a single tenant's own Fleet.
+  itself. It is what every self-hosted install runs, on Docker or Kubernetes: the open-source
+  api-server holds no credential to hand out. It has no notion of a tenant, so every run on the
+  Worker gets the same credentials: use it only for a Worker that serves a single tenant's own
+  Fleet.
+- **`control-plane`** exists only for a hosted control plane's shared Fleet, whose Workers serve
+  every tenant and hold nothing. It asks the api-server for each run's token, which that control
+  plane resolves per organization, and launches with the Claude token and registry login prepare
+  attaches. An open-source api-server serves neither: a `control-plane` Worker against it fails
+  its first node for want of a credential.
 
 Why the mode is declared rather than detected, and why `local` must never serve more than one tenant: [2026-10-13---02](../docs/decisions/2026-10-13---02-data-plane-credential-rule.md).
 
@@ -142,9 +147,11 @@ repositories, with each of them in its repository selection — one outside the 
 whole mint for its run. See [2026-10-18---01](../docs/decisions/2026-10-18---01-minted-app-tokens-narrowed-to-the-run.md).
 
 `local` reads these files on every use, so a rotated secret needs no restart. Anything the
-folder does not hold falls back to the environment, and the folder wins: a GitHub credential of
-either kind in the folder beats any in the environment, so a stray variable cannot override a
-mounted secret.
+folder does not hold falls back to the environment. One precedence applies — folder before
+environment, then PAT before App — so a GitHub credential is the first of: the folder's
+`github-pat`, the folder's `github-app/`, `GITHUB_PAT`, the `GITHUB_APP_*` variables. A
+credential of either kind in the folder therefore beats any in the environment, and a stray
+variable cannot override a mounted secret.
 
 The Worker also uses the run's own token itself, not only to hand to the agent pod: to merge a
 gate's pull requests, to delete a completed run's branch once it is confirmed not ahead of its
@@ -157,14 +164,14 @@ with `User-Agent: choruskube-worker`.
 
 | File under `CREDENTIALS_DIR` | Environment fallback | Purpose |
 |------------------------------|----------------------|---------|
-| `github-pat` | `GITHUB_PAT` | A personal access token, used as is. Wins over a GitHub App. Cannot be narrowed; prefer a fine-grained PAT limited to the repositories runs use. |
+| `github-pat` | `GITHUB_PAT` | A personal access token, used as is. Wins over a GitHub App from the same source (folder or environment). Cannot be narrowed; prefer a fine-grained PAT limited to the repositories runs use. |
 | `github-app/app-id`, `github-app/installation-id`, `github-app/private-key.pem` | `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` (a path to the PEM) | A GitHub App; the Worker mints installation tokens and reuses one until 5 minutes before it expires. All three are required. |
-| `claude-oauth-token` | `CLAUDE_CODE_OAUTH_TOKEN` | The Claude token agent pods launch with. Required for AI nodes; a `local` Worker never uses one from the api-server. |
+| `claude-oauth-token` | `CLAUDE_CODE_OAUTH_TOKEN` | The Claude token agent pods launch with. Required for AI nodes; a `local` Worker never uses one from the api-server, which on a self-hosted install holds none. |
 | `registry/host`, `registry/username`, `registry/password` | `REGISTRY_HOST`, `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` | Registry login for the agent image. Optional — none means an anonymous pull; all three or none. |
 
 A `local` Worker launches only with what it holds; an AI node with no Claude token fails before
-launch with a message naming this folder. A `control-plane` Worker launches with what the
-api-server attaches and fails the node the same way when none is attached.
+launch with a message naming this folder. A `control-plane` Worker launches with what its hosted
+control plane attaches and fails the node the same way when none is attached.
 
 ### Credential health
 
@@ -225,6 +232,31 @@ service account, or credential itself — see
 | `K8S_AGENT_MEMORY_REQUEST` | `2Gi` | Default agent-container memory request; overridable per node. The memory limit is always 1.4× the request, and a capped project may not request more than this default. |
 | `K8S_AGENT_CPU_LIMIT` | `1` | Default agent-container CPU limit; overridable per node. |
 | `K8S_AGENT_MEMORY_LIMIT` | — | Removed: the limit is derived from the request. The Worker refuses to start while it is set. |
+
+**Credentials on Kubernetes.** A self-hosted Worker on Kubernetes takes its credentials the
+same way as on Docker: from a Secret mounted read-only at `CREDENTIALS_DIR`, with
+`CREDENTIAL_SOURCE=local`. A Secret's keys are flat, so the volume's `items` map them onto the
+folder's nested paths:
+
+```yaml
+volumes:
+  - name: credentials
+    secret:
+      secretName: choruskube-worker-credentials
+      items:
+        - { key: claude-oauth-token, path: claude-oauth-token }
+        - { key: github-app-id, path: github-app/app-id }
+        - { key: github-app-installation-id, path: github-app/installation-id }
+        - { key: github-app-private-key, path: github-app/private-key.pem }
+# on the Worker container:
+volumeMounts:
+  - { name: credentials, mountPath: /etc/choruskube/credentials, readOnly: true }
+```
+
+Use a `github-pat` item instead of the three `github-app` ones for a PAT. A Secret updated in
+place reaches the mounted files without a restart — except under a `subPath` mount, which
+never updates — and the Worker reads them on every use. Nothing credential-related is set on
+the api-server.
 
 **Docker (`EXECUTOR_TYPE=docker`, the default)** — the local-stack and self-hosted-on-a-single-host path.
 

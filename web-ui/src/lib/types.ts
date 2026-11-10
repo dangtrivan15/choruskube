@@ -1392,7 +1392,7 @@ export interface RepoGroupRequest {
 export type CredentialHealthStatus = "VALID" | "EXPIRED" | "INSUFFICIENT_PERMISSIONS" | "UNREACHABLE";
 
 // Who provisions and rotates a credential. Orthogonal to credentialType (the auth flavor).
-//   "platform" — seeded by SystemOrgSeeder from deployment config; org-admin endpoints reject edits.
+//   "platform" — seeded from deployment config by a multi-tenant deployment; org-admin endpoints reject edits.
 //   "org"      — saved by an org admin via the Admin UI.
 export type CredentialManagedBy = "platform" | "org";
 

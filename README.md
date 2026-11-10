@@ -34,12 +34,16 @@ the API is open and every request is scoped to a seeded "system" organization.
 
 ## Components
 
-- **api-server** — Spring Boot (Java 25). Source of truth for run state; resolves
-  per-run credentials and records Worker-reported execution state.
+- **api-server** — Spring Boot (Java 25). Source of truth for run state; records
+  Worker-reported execution state and holds no credentials.
 - **orchestrator** — Go + Temporal. Drives the graph; dispatches each node as a
   Temporal activity for a Worker to execute.
 - **worker** — Go + Temporal. Runs executors (Docker, Kubernetes) and the
   agent callback server; receives work from Fleets.
+
+The Worker holds the install's credentials — the Claude token and the GitHub PAT or
+App key — in its own credentials folder; see
+[QUICKSTART.md](QUICKSTART.md#run-a-real-ai-workflow).
 - **web-ui** — React + Vite. Graph visualization, live monitoring, approval gates.
 - **agent images** — `claude-code` (the AI agent) and `choruskube-dev` (a fuller
   dev toolchain on top).

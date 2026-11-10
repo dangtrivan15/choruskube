@@ -15,12 +15,13 @@ stack and, optionally, a real AI workflow. For the project overview see
 ## Quick start
 
 ```bash
-./scripts/setup.sh         # configure secrets (all optional), then offers to start the stack
+./scripts/setup.sh         # configure credentials (all optional), then offers to start the stack
 ./scripts/up.sh            # build + start, wait until healthy
 ```
 
 `setup.sh` walks you through the optional Claude and GitHub credentials one value
-at a time and writes a gitignored `.env` the stack reads (see
+at a time and writes them into the gitignored folder `.secrets/credentials/`, which
+the stack mounts read-only on the Worker (see
 [Run a real AI workflow](#run-a-real-ai-workflow)). Every credential is optional —
 **skip `setup.sh` and run `up.sh` directly to boot with zero configuration.** To
 start the stack yourself instead of going through the scripts, `up.sh` maps to:
@@ -53,22 +54,34 @@ Tear down (and wipe the Postgres/object storage volumes):
 
 ## Run a real AI workflow
 
-Real runs use two optional secrets, both seeded into the system org at boot:
+Real runs use two optional secrets, both held by the Worker — the API server holds
+no credential:
 
 - a **Claude Code OAuth token** — required for AI agent nodes;
 - a **GitHub credential** — required only to push and open PRs against a target
   repo (a Personal Access Token, or a GitHub App).
 
 The easiest way to configure them is [`./scripts/setup.sh`](#quick-start), which
-prompts for each value and writes the gitignored `.env`. Prefer to set them by
-hand? Export the variables before `up.sh` (or put them in a `.env` at the repo
-root):
+prompts for each value and writes them into `.secrets/credentials/`. The stack
+mounts that folder read-only on the Worker as its credentials folder. Prefer to
+write it by hand? Use the Worker's layout, one value per file:
 
-| Variable | Purpose |
-|----------|---------|
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude token for AI agent nodes (`claude setup-token`). |
-| `GITHUB_PAT` | A GitHub Personal Access Token. |
-| `GITHUB_APP_ID` / `GITHUB_APP_INSTALLATION_ID` / `GITHUB_APP_PRIVATE_KEY_PATH` | A GitHub App credential. The App takes precedence over `GITHUB_PAT` when both are set. Place the App private-key `.pem` under `./.secrets/` and point the path at `/run/secrets/<file>.pem`. |
+| File under `.secrets/credentials/` | Purpose |
+|------------------------------------|---------|
+| `claude-oauth-token` | Claude token for AI agent nodes (`claude setup-token`). |
+| `github-pat` | A GitHub Personal Access Token. |
+| `github-app/app-id`, `github-app/installation-id`, `github-app/private-key.pem` | A GitHub App credential: its id, its installation id, and its private-key PEM. All three are required. |
+
+The Worker reads the folder on every use, so a file replaced on disk takes effect on
+the next run without a restart. The folder comes before the Worker's own environment
+(`CLAUDE_CODE_OAUTH_TOKEN`, `GITHUB_PAT`, `GITHUB_APP_*`, which the compose stack
+does not set), and a PAT comes before a GitHub App: with both in the folder, the
+Worker uses the PAT. The full precedence and the registry login are in
+[worker/README.md](worker/README.md#credentials).
+
+> **Upgrading an install that kept its credentials in `.env`?** Those lines are no
+> longer read. Re-run `./scripts/setup.sh` to write the folder, then delete the
+> `CLAUDE_CODE_OAUTH_TOKEN`, `GITHUB_PAT` and `GITHUB_APP_*` lines from `.env`.
 
 Approving the Final Approval of Feature Development or Task Delivery merges the run's
 registered pull requests, so the credential needs write access to repository contents and pull
@@ -76,23 +89,24 @@ requests (App: *Contents* and *Pull requests* read/write; classic PAT: `repo`) �
 the same access agents already use to push branches and open PRs — plus *Workflows*
 read/write (classic PAT: `workflow`) if a run's PRs may change `.github/workflows/`.
 
-A GitHub App token is narrowed to the run's own GitHub repositories and a fixed
-run permission list (`contents`, `pull_requests`, `issues` and `workflows` write;
-`actions`, `checks`, `metadata` and `statuses` read), each capped at what the App
-was granted — never the whole installation. The App's installation must be on the
+The Worker mints a GitHub App token narrowed to the run's own GitHub repositories
+and a fixed run permission list (`contents`, `pull_requests`, `issues` and
+`workflows` write; `actions`, `checks`, `metadata` and `statuses` read), each
+capped at what the App was granted — never the whole installation. The App's installation must be on the
 account that owns the repositories your runs use, with each of them in its
 repository selection: one outside the selection fails the whole mint for its run.
 A Personal Access Token cannot be narrowed this way — it carries whatever access
 its owner granted it, so prefer a fine-grained PAT limited to the repositories
-your runs use.
+your runs use; the Worker checks once per run that it reaches each of them.
 
 Without any of these the stack still boots and serves the full API — only the
-steps that need them (AI nodes, repo pushes) are skipped; everything else,
-including script and human-gate nodes, runs.
+steps that need them (AI nodes, repo pushes) fail; everything else, including
+script and human-gate nodes, runs.
 
-> Using a **GitHub App**? Start the stack with `./scripts/up.sh` (or run
-> `mkdir -p .secrets` once) before your first `docker compose up`, so the
-> `.secrets/` PEM directory is created owned by you rather than by Docker as root.
+> Starting with a bare `docker compose up`? Run `mkdir -p .secrets/credentials`
+> once first (`./scripts/up.sh` does it for you), so the credentials folder is
+> created owned by you rather than by Docker as root — `setup.sh` could not
+> write a root-owned one.
 
 ## Next steps
 
