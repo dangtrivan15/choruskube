@@ -1,20 +1,15 @@
 package com.choruskube.core.controller;
 
 import static org.hamcrest.Matchers.contains;
-import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.not;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.choruskube.core.BaseTest;
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.credential.GitHubTokenScope;
 import com.choruskube.core.credential.GitHubTokenScopeResolver;
-import com.choruskube.core.exception.GitHubTokenScopeException;
 import com.choruskube.core.exception.NotFoundException;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
@@ -29,9 +24,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * The Worker-facing GitHub token route through the real filter chain: {@code WorkerAuthFilter} for
- * the bearer token, then the default single-Fleet authorizer behind the controller's {@code
- * ObjectProvider}. The resolver is mocked so no GitHub credential has to exist.
+ * The Worker-facing GitHub token-scope route through the real filter chain: {@code
+ * WorkerAuthFilter} for the bearer token, then the default single-Fleet authorizer behind the
+ * controller's {@code ObjectProvider}.
  */
 @AutoConfigureMockMvc
 @TestPropertySource(properties = "worker.registration.token=test-fleet")
@@ -49,65 +44,13 @@ class WorkerCredentialControllerTest extends BaseTest {
     private WorkflowClient workflowClient;
 
     @MockitoBean
-    private GitHubCredentialResolver resolver;
-
-    @MockitoBean
     private GitHubTokenScopeResolver scopeResolver;
 
+    /** A single-tenant server holds no credential, so it serves no broker route even to a valid Worker. */
     @Test
-    void validCredential_returnsTheRunsToken() throws Exception {
-        when(resolver.getTokenForRun(runId)).thenReturn("ghs_abc");
-
+    void brokerRoute_isNotServedInSingleTenantMode() throws Exception {
         mockMvc.perform(get("/worker/runs/{r}/github-token", runId).header("Authorization", "Bearer test-fleet"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.token").value("ghs_abc"));
-    }
-
-    @Test
-    void missingCredential_isUnauthorized() throws Exception {
-        mockMvc.perform(get("/worker/runs/{r}/github-token", runId)).andExpect(status().isUnauthorized());
-
-        verifyNoInteractions(resolver);
-    }
-
-    @Test
-    void wrongCredential_isRejected() throws Exception {
-        mockMvc.perform(get("/worker/runs/{r}/github-token", runId).header("Authorization", "Bearer nope"))
-                .andExpect(status().isForbidden());
-
-        verifyNoInteractions(resolver);
-    }
-
-    /** The filter prefix-matches the raw URI, so an encoded path skips it; the controller must still refuse. */
-    @Test
-    void percentEncodedWorkerPathWithNoCredential_isUnauthorized() throws Exception {
-        mockMvc.perform(get(URI.create("/%77orker/runs/" + runId + "/github-token")))
-                .andExpect(status().isUnauthorized());
-
-        verifyNoInteractions(resolver);
-    }
-
-    @Test
-    void resolverFailure_isServiceUnavailable_withoutLeakingDetail() throws Exception {
-        when(resolver.getTokenForRun(runId)).thenThrow(new IllegalStateException("No GitHub credential configured"));
-
-        mockMvc.perform(get("/worker/runs/{r}/github-token", runId).header("Authorization", "Bearer test-fleet"))
-                .andExpect(status().isServiceUnavailable())
-                .andExpect(jsonPath("$.error").exists())
-                .andExpect(content().string(not(containsString("No GitHub credential configured"))));
-    }
-
-    /** A narrowed mint that finds no reachable repository still must not leak the repo name it tried. */
-    @Test
-    void resolverFailure_namingARepo_isServiceUnavailable_withoutLeakingTheName() throws Exception {
-        when(resolver.getTokenForRun(runId))
-                .thenThrow(new GitHubTokenScopeException(
-                        "No repository this installation can reach: dropped [acme/secret-repo]"));
-
-        mockMvc.perform(get("/worker/runs/{r}/github-token", runId).header("Authorization", "Bearer test-fleet"))
-                .andExpect(status().isServiceUnavailable())
-                .andExpect(jsonPath("$.error").exists())
-                .andExpect(content().string(not(containsString("acme/secret-repo"))));
+                .andExpect(status().isNotFound());
     }
 
     // -----------------------------------------------------------------------------------
