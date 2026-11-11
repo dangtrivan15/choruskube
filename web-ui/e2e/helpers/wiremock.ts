@@ -1,8 +1,8 @@
 /**
  * wiremock — reads WireMock's own request journal, the only way an E2E spec can tell which
- * component made a GitHub call: the Worker and the API server send the same bearer token under
- * the `control-plane` credential source, but only the Worker's requests carry its fixed
- * `User-Agent: choruskube-worker` (see worker/github/client.go).
+ * component made a GitHub call: the bearer token is the same whichever component holds the
+ * credential, but only the Worker's requests carry its fixed `User-Agent: choruskube-worker`
+ * (see worker/github/client.go).
  */
 
 const DEFAULT_WIREMOCK_URL = "http://localhost:28085";

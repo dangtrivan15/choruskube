@@ -211,26 +211,14 @@ services:
       # Override default agent images to use the local e2e image.
       DEFAULT_AGENT_IMAGE: claude-code:e2e
       CHORUSKUBE_REPO_AGENT_IMAGE: claude-code:e2e
-      # Route external API calls through WireMock so no real tokens are needed.
+      # test-only: the api-server holds no credential, but anything still naming the GitHub API
+      # must reach WireMock, never api.github.com.
       GITHUB_API_URL: http://wiremock:8080
-      ANTHROPIC_API_URL: http://wiremock:8080
-      # Dummy Claude token — exercises SystemOrgSeeder's env-seeding path;
-      # WireMock intercepts all Anthropic calls so no real Claude API is hit.
-      CLAUDE_CODE_OAUTH_TOKEN: e2e-dummy-claude-token-not-real
-      # GitHub credentials — a dummy PAT routes every GitHub call to the WireMock stubs below
-      # instead of failing before it can reach them; GITHUB_APP_* stay blank (PAT takes
-      # precedence in EnvGitHubCredentialResolver).
-      GITHUB_PAT: "e2e-dummy-github-pat-not-real"
-      GITHUB_APP_ID: ""
-      GITHUB_APP_INSTALLATION_ID: ""
-      GITHUB_APP_PRIVATE_KEY_PATH: ""
       CORS_ALLOWED_ORIGINS: http://localhost:23000
     ports:
       - "28080:8080"
     networks:
       - choruskube-e2e
-    volumes:
-      - ./.secrets:/run/secrets:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -322,10 +310,14 @@ services:
       WORKLOAD_RETENTION: 30s
       # test-only: the Worker's own GitHub calls (gate compare/merge, run-branch cleanup, roadmap issue filing, and closing a done Task's issue) reach WireMock, not api.github.com.
       GITHUB_API_URL: http://wiremock:8080
-      # Required, no default: the api-server hands the Worker each run's GitHub token, so no credential files.
-      CREDENTIAL_SOURCE: control-plane
+      # test-only: the Worker's Claude-token health check reaches WireMock, not api.anthropic.com.
+      ANTHROPIC_API_URL: http://wiremock:8080
+      # Required, no default: this Worker holds the stack's credentials, from the folder mounted below.
+      CREDENTIAL_SOURCE: local
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # test-only: a dummy PAT and Claude token; every call they authorize reaches WireMock.
+      - ./e2e/credentials:/etc/choruskube/credentials:ro
       - type: bind
         source: *agent-staging-dir
         target: *agent-staging-dir

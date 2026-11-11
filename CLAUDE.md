@@ -4,11 +4,11 @@ Project-wide instructions for Claude Code agents working in this repository.
 
 > **YOU MUST read [CONTRIBUTING.md](CONTRIBUTING.md) before writing any code.** It contains the project structure, per-component build/test commands, and the DCO sign-off requirement. Read [README.md](README.md) for what ChorusKube is, the local stack, and the port map. Skipping these will lead to wrong assumptions and broken changes.
 
-This is the **open-source core** of ChorusKube. It runs **single-tenant** with no external identity provider: the API is open (`AUTH_ENABLED=false`) and every request is scoped to a seeded "system" organization (`SystemOrgSeeder`, `SingleTenantResolver`, `SingleTenantUserInfoProvider`).
+This is the **open-source core** of ChorusKube. It runs **single-tenant** with no external identity provider: the API is open (`AUTH_ENABLED=false`) and every request is scoped to a seeded "system" organization (`SingleTenantResolver`, `SingleTenantUserInfoProvider`).
 
 ## Quick Reference: Build & Test Commands
 
-`./gradlew test` at the repo root runs the unit suites in parallel (web-ui's after api-server's, for memory); `-Pe2e` adds the full stack chain (`e2eImages` → `e2eStackUp` → `e2eSmoke` → `e2eSeed` → `e2ePlaywright`, teardown as a finalizer). A bare `./gradlew test` no longer boots the stack. Every build prints a per-task timing table on success and failure; `-Dtest.reports.dir=<abs path>` collects all suites' reports under one repo-named tree. Per-component commands below remain the fast-iteration path — see [CONTRIBUTING.md](CONTRIBUTING.md#components-and-per-component-commands).
+`./gradlew test` at the repo root runs the unit suites in parallel (web-ui's after api-server's, for memory); `-Pe2e` adds the full stack chain (`e2eImages` → `e2eStackUp` → `e2eSmoke` → `e2eSeed` → `e2ePlaywright` → `e2eApiServerMadeNoStubCall`, teardown as a finalizer). A bare `./gradlew test` no longer boots the stack. Every build prints a per-task timing table on success and failure; `-Dtest.reports.dir=<abs path>` collects all suites' reports under one repo-named tree. Per-component commands below remain the fast-iteration path — see [CONTRIBUTING.md](CONTRIBUTING.md#components-and-per-component-commands).
 
 | Component    | Build (from its dir)        | Test                | Lint / Format                  |
 |--------------|-----------------------------|---------------------|--------------------------------|
@@ -141,12 +141,12 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 - `InternalAuthFilter` enforces Bearer token validation on all `/internal/**` endpoints via SHA-256 hash comparison; mode is set by `INTERNAL_AUTH_MODE` (`enforce` rejects, `warn` logs only)
 - `RunScopeInterceptor` checks run membership on every `/{internal,worker}/runs/{runId}/node-executions/{nodeExecId}/**` route before the handler runs, and refuses a percent-escaped `/internal` path or a percent-escaped path of that same execution-scoped shape. A new route in that shape must name its variables `{runId}`/`{nodeExecId}`; `RunScopeRoutesTest` fails the build on any route the interceptor does not cover
 - The public `/api/**` surface is **open in the OSS core** (`AUTH_ENABLED=false`); `SecurityConfig` delegates `/api/**` to an `AuthConfigurer` that permits all in single-tenant mode. Do not assume a logged-in principal — every request resolves to the seeded system org
-- **Claude OAuth token (per-org)**: the system org's `CLAUDE_CODE_OAUTH_TOKEN` (long-lived, ~1-year TTL from `claude setup-token`) is seeded from the env var at startup and stored encrypted. Executors resolve it at pod-launch time and inject it into the per-execution secret. Without a token the stack still boots and serves the full API — only AI nodes fail soft
+- **Claude OAuth token**: the install's token (long-lived, ~1-year TTL from `claude setup-token`) lives in the Worker's credentials folder (`claude-oauth-token`) or its `CLAUDE_CODE_OAUTH_TOKEN` env; the API server never holds or returns it. The Worker injects it into each agent's per-execution secret. Without a token the stack still boots and serves the full API — only AI nodes fail soft
 
 ## Architecture Rules
 
 - The **Worker owns the workload executor** — it creates and manages the agent containers (a Docker container locally, a Kubernetes Job in a cluster) for each node execution. The orchestrator dispatches node work as Temporal activities; it never creates containers directly
-- **The workload executor is tenant-agnostic** — it launches into a namespace, service account, and credentials it is *given*, and never resolves an organization, namespace, or credential itself. The API server resolves per-run credentials (workload `prepare`) and records execution state (workload `complete`); it is the source of truth for state but is out of the execution hot path
+- **The workload executor is tenant-agnostic** — it launches into a namespace, service account, and credentials it is *given*, and never resolves an organization, namespace, or credential itself. The API server returns execution parameters (workload `prepare`) — a self-hosted server attaches no credential — and records execution state (workload `complete`); it is the source of truth for state but is out of the execution hot path
 - Workflows are Temporal workflows — all side effects must be in activities, not workflow functions
 - The API server is the single source of truth for run/execution state (PostgreSQL)
 - WebSocket events (STOMP) broadcast state changes — the web UI subscribes, never polls
@@ -154,8 +154,8 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 - **Templates are base-only** — no parent/child template inheritance. `git_repo_id` is a run input, not a template field. Templates are immutable seed data with no mutation endpoints
 - **Feature work runs as Story Design per Story plus Task Delivery per Task** — a Task starts only once its Story has an approved spec. A Task that finds the Story spec wrong escalates to the Story as a story conflict, and a revision is a new Story Design run, never a local override. Feature Development serves only runs started without a Task. See `docs/decisions/2026-11-01---01-design-per-story-deliver-per-task.md`
 - **GitRepo is a first-class entity** — each org gets its own Kubernetes namespace with provisioned RBAC and network policies
-- **Single-tenant identity** — there is no OIDC provider in the OSS core. `SingleTenantResolver` / `SingleTenantUserInfoProvider` resolve every request to the seeded system org; `SystemOrgSeeder` materializes it (and its credentials) at boot
-- **No new control-plane GitHub call** — a GitHub call the API server would need runs as a Worker step instead. `ControlPlaneGitHubCallsTest` fails the build on any call into a GitHub-calling method that its allowlist does not name, and on an entry whose call is gone; the list only shrinks. See `docs/decisions/2026-10-13---02-data-plane-credential-rule.md`.
+- **Single-tenant identity** — there is no OIDC provider in the OSS core. `SingleTenantResolver` / `SingleTenantUserInfoProvider` resolve every request to the seeded system org
+- **No new control-plane GitHub call** — a GitHub call the API server would need runs as a Worker step instead. `ControlPlaneGitHubCallsTest` fails the build on any call into a GitHub-calling method that its allowlist does not name, and on an entry whose call is gone; the list is empty and stays so. See `docs/decisions/2026-10-13---02-data-plane-credential-rule.md` and `docs/decisions/2026-11-10---01-self-hosted-server-holds-no-credential.md`.
 - Each component has its own Dockerfile with multi-stage builds — keep build and runtime stages separate
 
 ## Contribution Workflow

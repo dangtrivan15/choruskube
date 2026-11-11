@@ -1,6 +1,6 @@
 # Control-plane GitHub calls are allowlisted; the list only shrinks
 
-**Status:** current
+**Status:** current; its one broker entry is gone, and the list is empty, per [2026-11-10---01-self-hosted-server-holds-no-credential](2026-11-10---01-self-hosted-server-holds-no-credential.md)
 
 ## Context
 

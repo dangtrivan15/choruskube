@@ -7,15 +7,17 @@ Thanks for your interest in contributing. This is the minimal dev-setup guide.
 ChorusKube runs as a Docker Compose stack (Docker + Docker Compose v2 required):
 
 ```bash
-./scripts/setup.sh   # optional: configure Claude/GitHub secrets (all optional)
+./scripts/setup.sh   # optional: write the Worker's Claude/GitHub credentials folder
 ./scripts/up.sh      # build + start, wait until healthy  (docker compose up --build --wait)
 ./scripts/down.sh    # tear down + remove volumes          (docker compose down -v)
 ```
 
 Then open http://localhost:33000. The stack boots with zero configuration, so
-`setup.sh` is only needed for real AI runs. See [QUICKSTART.md](QUICKSTART.md#run-a-real-ai-workflow)
-for the full port map and how to supply a `CLAUDE_CODE_OAUTH_TOKEN` to run real
-AI nodes.
+`setup.sh` is only needed for real AI runs: it writes `.secrets/credentials/`, the
+folder the Worker reads its credentials from. Supply the Claude token there, not as an
+api-server environment variable — the api-server holds no credential. See
+[QUICKSTART.md](QUICKSTART.md#run-a-real-ai-workflow) for the full port map and the
+folder's layout.
 
 ## Components and per-component commands
 
@@ -79,11 +81,14 @@ With `-Pe2e`, Gradle then runs the end-to-end chain as separate tasks:
 | `e2eSmoke` | API smoke checks against the live stack |
 | `e2eSeed` | Load WireMock stubs and seed test data |
 | `e2ePlaywright` | Drive the Playwright suite end-to-end |
+| `e2eApiServerMadeNoStubCall` | Fail if WireMock journaled any request from the api-server, which holds no credential |
 
 The stack it boots is auth-free and listens on `2xxxx` ports (web UI on 23000, API on
 28080) — separate from the local development stack on `3xxxx` ports, so the two can
 coexist. The specs drive real runs through Temporal, the orchestrator, object storage
-and an agent container. Requires Docker (same requirement as the dev stack), plus
+and an agent container. Its Worker runs `local`, reading a dummy PAT and Claude token from the
+committed test-only folder `e2e/credentials/`, so every GitHub and Anthropic call reaches WireMock.
+Requires Docker (same requirement as the dev stack), plus
 Java 25 + Go 1.25 + Node 22 on the host for the unit stage.
 
 Teardown is a Gradle **finalizer** on `e2eStackUp` rather than the last link in the

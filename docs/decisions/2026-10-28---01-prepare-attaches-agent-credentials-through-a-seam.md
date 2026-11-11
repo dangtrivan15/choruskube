@@ -1,6 +1,6 @@
 # Launch preparation attaches agent credentials through one resolver seam, defaulting to none
 
-**Status:** current
+**Status:** current; its single-tenant interim resolver attaching this server's configured token is superseded by [2026-11-10---01-self-hosted-server-holds-no-credential](2026-11-10---01-self-hosted-server-holds-no-credential.md)
 
 ## Context
 

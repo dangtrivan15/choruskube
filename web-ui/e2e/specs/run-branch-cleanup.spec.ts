@@ -3,11 +3,10 @@ import { uniqueName } from "../helpers/api-client";
 import { findWireMockRequests, headerOf } from "../helpers/wiremock";
 
 /**
- * Proves the Worker, not the API server, deletes a completed run's stale branches. The API
- * server and the Worker send the same bearer token under the `control-plane` credential source,
- * so the token alone cannot tell them apart — only the Worker's requests carry its fixed
- * `User-Agent: choruskube-worker` (worker/github/client.go), which this spec reads back from
- * WireMock's own request journal.
+ * Proves the Worker, not the API server, deletes a completed run's stale branches. The bearer
+ * token is the same whichever component holds the credential, so the token alone cannot tell
+ * the callers apart — only the Worker's requests carry its fixed `User-Agent: choruskube-worker`
+ * (worker/github/client.go), which this spec reads back from WireMock's own request journal.
  *
  * Reuses the two already-seeded, genuinely clonable repos (mock-repo, mock-frontend) and the
  * `e2e-check-prs-gate` template, the same shape as pull-request-links-multi-repo.spec.ts.
@@ -88,7 +87,7 @@ test.describe("run-branch cleanup", () => {
       expect(frontendDeletes).toHaveLength(0);
 
       // No cleanup call for this run's branch, on either repo, carries any other User-Agent —
-      // i.e. the API server made none of them under the control-plane credential source.
+      // i.e. only the Worker made them.
       const anyRepoPattern = `/repos/.+/(compare/.+\\.\\.\\.${runBranch}|git/refs/heads/${runBranch})`;
       const allCleanupRequests = [
         ...(await findWireMockRequests({ method: "GET", urlPattern: anyRepoPattern })),

@@ -315,7 +315,7 @@ class RunScopeInterceptorTest extends BaseTest {
 
     @Test
     void runLevelWorkerRouteEscapedSpelling_isUnaffectedByTheGuard() throws Exception {
-        mockMvc.perform(get(URI.create("/%77orker/runs/" + runA.getId() + "/github-token")))
+        mockMvc.perform(get(URI.create("/%77orker/runs/" + runA.getId() + "/github-token-scope")))
                 .andExpect(status().isUnauthorized());
     }
 

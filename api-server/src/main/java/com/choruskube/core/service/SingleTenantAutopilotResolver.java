@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
  * <p>Gated the way every other OSS seam here is, so a downstream implementation replaces this bean
  * rather than colliding with it — see {@code NoOpScopeProvider}, {@link AllEpicsCandidateSource},
  * {@code AlwaysAllowAuthorizationStrategy}, {@code NoOpOrgSecurity}, {@code
- * EnvGitHubCredentialResolver}.
+ * NoOpCredentialPreflightChecker}.
  *
  * <p>{@code findAll()} rather than a {@code ScopeProvider} specification on purpose: {@link
  * #findAllEngaged()} is called from the tick's timer thread, and {@code ScopeProvider} reads a

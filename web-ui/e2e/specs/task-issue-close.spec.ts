@@ -5,10 +5,10 @@ import { findWireMockRequests, headerOf } from "../helpers/wiremock";
 
 /**
  * Proves the Worker, not the API server, closes a completed Task's linked GitHub issue. The
- * Task gets its issue through the roadmap-extension gate, then a person completes it. Under the
- * `control-plane` credential source the API server and the Worker send the same bearer token, so
- * only the Worker's fixed `User-Agent: choruskube-worker` (worker/github/client.go), read back
- * from WireMock's request journal, tells them apart. The journal query counts only closes whose
+ * Task gets its issue through the roadmap-extension gate, then a person completes it. The bearer
+ * token is the same whichever component holds the credential, so only the Worker's fixed
+ * `User-Agent: choruskube-worker` (worker/github/client.go), read back from WireMock's request
+ * journal, tells the Worker's calls apart. The journal query counts only closes whose
  * body sets `state: closed`, the one body the close stub answers.
  *
  * Uses the seeded `mock-repo` (a real `github.com` URL), not the `workerRepo` fixture: the
@@ -118,7 +118,7 @@ test.describe("Task issue close", () => {
       expect(headerOf(req, "User-Agent")).toBe("choruskube-worker");
     }
 
-    // No issue close on any repo carries another User-Agent: the API server made none of them.
+    // No issue close on any repo carries another User-Agent: only the Worker made them.
     const allCloses = await findWireMockRequests({
       method: "PATCH",
       urlPathPattern: "/repos/.+/issues/[0-9]+",

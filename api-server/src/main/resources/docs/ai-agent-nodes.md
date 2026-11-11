@@ -18,10 +18,12 @@ orchestrator only via the `report-result` CLI command and output artifacts in `/
 
 ### Pod Startup
 
-When the orchestrator signals the API server to execute an AI Agent Node, the API server:
+When the orchestrator dispatches an AI Agent Node, the Worker that picks it up:
 
-1. Creates a per-execution Kubernetes Secret containing the node's credentials and OAuth token.
-2. Spawns a Kubernetes Job that mounts the secret and the agent container image.
+1. Asks the API server for the node's execution parameters, which carry no credential — the
+   API server does not create a credential secret.
+2. Launches the agent workload (a Kubernetes Job, or a Docker container locally) with the
+   credentials the Worker holds, including the Claude OAuth token, in a per-execution secret.
 3. The agent's `entrypoint.sh` sets up the environment and starts the Claude Code session.
 
 ### Reading Context: config.json

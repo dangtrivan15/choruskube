@@ -34,8 +34,10 @@ queue — picks it up and creates the workload itself:
 - an **isolated Docker container** when running locally, or
 - a **Kubernetes Job** when running in a cluster.
 
-The Worker owns the executor. Before launching, it asks the **api-server** to resolve
-per-run configuration and credentials (the workload `prepare` call); when the agent
+The Worker owns the executor, and on a self-hosted install it also holds the
+credentials: the Claude token and the GitHub PAT or App key, from its own credentials
+folder. Before launching, it asks the **api-server** to resolve per-run configuration
+(the workload `prepare` call), which carries no credential; when the agent
 finishes, the Worker's own callback server receives the result and records execution
 state back to the api-server (the workload `complete` call). The api-server is the
 source of truth for state, but it is **out of the execution hot path** — it never
@@ -63,13 +65,13 @@ see [docs/decisions/2026-11-09---02-launching-executor-bounds-workload-lifetime.
 ```
    ┌──────────┐  REST / WS   ┌──────────────┐  Temporal signals  ┌──────────────────┐
    │  web-ui  │ <──────────> │  api-server  │ <────────────────> │   orchestrator   │
-   └──────────┘              │ state + creds│                    │ (Temporal driver)│
+   └──────────┘              │    state     │                    │ (Temporal driver)│
                              └──────┬───────┘                    └────────┬─────────┘
                                     │                                     │ dispatches each
                      PostgreSQL ────┤                                     │ node as an activity
                      object store ──┘                                     ▼
                                     ▲                             ┌──────────────────┐
-                     prepare (creds)│                             │      worker      │
+                     prepare        │                             │      worker      │
                      complete (state)──── worker calls ───────────┤ owns executor +  │
                                                                   │ callback server  │
                                                                   └────────┬─────────┘
@@ -83,7 +85,7 @@ see [docs/decisions/2026-11-09---02-launching-executor-bounds-workload-lifetime.
 ```
 
 The orchestrator drives the graph; the **Worker** creates and owns the agent workloads;
-the **api-server** owns state, talks to the data stores, and holds the credentials of any Worker that does not hold its own ([why](docs/decisions/2026-10-13---02-data-plane-credential-rule.md)). Its remaining GitHub calls are a named list that a test enforces and that only shrinks ([how](docs/decisions/2026-10-24---01-control-plane-github-calls-are-allowlisted.md)).
+the **api-server** owns state and talks to the data stores. On a self-hosted install it holds no credentials and makes no GitHub call ([why](docs/decisions/2026-10-13---02-data-plane-credential-rule.md), [how it got there](docs/decisions/2026-11-10---01-self-hosted-server-holds-no-credential.md)); a test fails the build on any new GitHub call from it ([how](docs/decisions/2026-10-24---01-control-plane-github-calls-are-allowlisted.md)).
 
 Once a run completes, the orchestrator asks the api-server which repos the run touched and
 each one's default branch, then dispatches a cleanup step to the run's own Worker, which
@@ -245,17 +247,17 @@ authoritative state without the UI hammering the API.
 
 The open-source core runs **single-tenant** with no external identity provider.
 There is no login and no multi-org routing: every request resolves to a single
-seeded **"system" organization**, which also holds the seeded credentials (Claude
-token, GitHub credential) used for real runs. This keeps the core simple to run
-locally and to self-host.
+seeded **"system" organization**. That organization holds no credentials: the
+Claude token and GitHub credential used for real runs live on the Worker. This
+keeps the core simple to run locally and to self-host.
 
 ## Components
 
 | Component | Stack | Responsibility |
 |-----------|-------|----------------|
-| **api-server** | Java / Spring Boot | Source of truth for state; resolves per-run credentials and records Worker-reported execution state; REST API; STOMP/WebSocket broadcasts. |
+| **api-server** | Java / Spring Boot | Source of truth for state; records Worker-reported execution state and holds no credentials; REST API; STOMP/WebSocket broadcasts. |
 | **orchestrator** | Go + Temporal | Drives the graph; dispatches each node as a Temporal activity for a Worker to execute. |
-| **worker** | Go + Temporal | Runs executors (Docker, Kubernetes) and the agent callback server; receives work from Fleets; makes the run's GitHub calls (gate merges, run-branch cleanup, roadmap issue filing). |
+| **worker** | Go + Temporal | Runs executors (Docker, Kubernetes) and the agent callback server; receives work from Fleets; holds the install's credentials and makes the run's GitHub calls (gate merges, run-branch cleanup, roadmap issue filing). |
 | **web-ui** | React + Vite | Graph visualization, live run monitoring, human-approval gates; subscribes to WebSocket events. |
 | **agent images** | container images | The containers a node runs in — the AI agent (Claude Code) and a fuller dev image built on top of it. |
 

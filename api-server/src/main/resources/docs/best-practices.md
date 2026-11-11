@@ -83,11 +83,12 @@ These secrets are injected by the platform into agent pods at runtime. Never log
 them in prompts, commit them to code, or share them. They rotate per-execution (JOB_SECRET) or
 per-deployment (ORCHESTRATOR_SECRET).
 
-### 11. Manage Per-Org Claude OAuth Tokens
+### 11. Keep the Claude OAuth Token Where the Work Runs
 
-Each org stores its own `CLAUDE_CODE_OAUTH_TOKEN` (long-lived, ~1-year TTL, generated via
-`claude setup-token`) encrypted in the `org_ai_credential` table. The system org's token is
-seeded from the `CLAUDE_CODE_OAUTH_TOKEN` env var on startup; non-system orgs configure it
-via Admin UI → Integrations. Executors resolve the per-org token at pod-launch time and inject
-it as `CLAUDE_CODE_OAUTH_TOKEN` into the per-execution K8s Secret. A missing token fails the
-AI node before its pod launches; an expired one fails the agent with an authentication error.
+An AI node's agent launches with a Claude OAuth token (long-lived, ~1-year TTL, generated via
+`claude setup-token`), injected as `CLAUDE_CODE_OAUTH_TOKEN` into its per-execution secret by
+whatever runs the work. On a self-hosted install that is the Worker: it reads the token from
+its credentials folder (`claude-oauth-token`) or, failing that, its own `CLAUDE_CODE_OAUTH_TOKEN`
+environment variable. A missing token fails the AI node before its agent launches; an expired
+one fails the agent with an authentication error. Rotate it by replacing the token where it is
+held — a file replaced in the Worker's folder takes effect on the next run.
