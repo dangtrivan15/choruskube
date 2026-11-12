@@ -118,6 +118,7 @@ public class GateFinalizeService {
     private final NodeExecutionClaimService claims;
     private final UploadService uploads;
     private final StoragePrefixResolver storagePrefixes;
+    private final RunStorageScope runStorageScope;
     private final DecisionOptionsResolver decisionOptions;
     private final RunEventPublisher events;
     private final AuditSink auditSink;
@@ -138,6 +139,7 @@ public class GateFinalizeService {
             NodeExecutionClaimService claims,
             UploadService uploads,
             StoragePrefixResolver storagePrefixes,
+            RunStorageScope runStorageScope,
             DecisionOptionsResolver decisionOptions,
             RunEventPublisher events,
             AuditSink auditSink,
@@ -156,6 +158,7 @@ public class GateFinalizeService {
         this.claims = claims;
         this.uploads = uploads;
         this.storagePrefixes = storagePrefixes;
+        this.runStorageScope = runStorageScope;
         this.decisionOptions = decisionOptions;
         this.events = events;
         this.auditSink = auditSink;
@@ -795,6 +798,9 @@ public class GateFinalizeService {
     private void recordOnGate(UUID gateExecId, String decision, String result, String artifactRefs) {
         NodeExecution gate = execRepo.findById(gateExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + gateExecId));
+        // Checked before any setter: covers the hold path's server-built guidance refs and both
+        // completion paths' stamp attachments.
+        runStorageScope.requireContainedRefs(gate.getWorkflowRunId(), artifactRefs);
         gate.setDecision(decision);
         gate.setResult(result);
         gate.setArtifactRefs(artifactRefs);

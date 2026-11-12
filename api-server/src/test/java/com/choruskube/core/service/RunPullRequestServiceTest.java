@@ -43,6 +43,9 @@ class RunPullRequestServiceTest {
     @Mock
     private RunEventPublisher eventPublisher;
 
+    @Mock
+    private GraphSnapshotBuilder graphSnapshotBuilder;
+
     private RunPullRequestService service;
 
     private static final UUID RUN_ID = UUID.randomUUID();
@@ -54,7 +57,13 @@ class RunPullRequestServiceTest {
     @BeforeEach
     void setUp() {
         service = new RunPullRequestService(
-                prRepo, runRepo, gitRepoRepo, execRepo, eventPublisher, mock(ApplicationEventPublisher.class));
+                prRepo,
+                runRepo,
+                gitRepoRepo,
+                execRepo,
+                eventPublisher,
+                mock(ApplicationEventPublisher.class),
+                graphSnapshotBuilder);
     }
 
     @Test
@@ -67,8 +76,10 @@ class RunPullRequestServiceTest {
         when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(run));
 
         GitRepo gitRepo = new GitRepo();
+        gitRepo.setId(GIT_REPO_ID_1);
         gitRepo.setUrl("https://github.com/org/backend-api");
         when(gitRepoRepo.findById(GIT_REPO_ID_1)).thenReturn(Optional.of(gitRepo));
+        when(graphSnapshotBuilder.reposForRun(run)).thenReturn(List.of(gitRepo));
 
         when(prRepo.findByWorkflowRunIdAndPrUrl(eq(RUN_ID), anyString())).thenReturn(Optional.empty());
         when(prRepo.save(any(RunPullRequest.class))).thenAnswer(inv -> {
@@ -110,8 +121,10 @@ class RunPullRequestServiceTest {
         when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(run));
 
         GitRepo gitRepo = new GitRepo();
+        gitRepo.setId(GIT_REPO_ID_1);
         gitRepo.setUrl("https://github.com/org/backend-api");
         when(gitRepoRepo.findById(GIT_REPO_ID_1)).thenReturn(Optional.of(gitRepo));
+        when(graphSnapshotBuilder.reposForRun(run)).thenReturn(List.of(gitRepo));
 
         UUID existingId = UUID.randomUUID();
         UUID priorNodeExecId = UUID.randomUUID();
@@ -187,6 +200,34 @@ class RunPullRequestServiceTest {
 
         assertThatThrownBy(() -> service.createPullRequest(RUN_ID, NODE_EXEC_ID, req))
                 .isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void createPullRequest_withRepoOutsideRun_throwsNotFoundException_savesNothing() {
+        // The execution must still resolve to RUN_ID so the run-scoping guard passes and the test
+        // reaches the repo-membership check it's actually asserting on.
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(RUN_ID);
+        when(execRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(exec));
+
+        WorkflowRun run = new WorkflowRun();
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(run));
+
+        // GIT_REPO_ID_1 exists, but it is not one of this run's own repositories.
+        GitRepo gitRepo = new GitRepo();
+        gitRepo.setId(GIT_REPO_ID_1);
+        gitRepo.setUrl("https://github.com/org/backend-api");
+        when(gitRepoRepo.findById(GIT_REPO_ID_1)).thenReturn(Optional.of(gitRepo));
+        when(graphSnapshotBuilder.reposForRun(run)).thenReturn(List.of());
+
+        CreateRunPullRequestRequest req = new CreateRunPullRequestRequest(
+                GIT_REPO_ID_1, "https://github.com/org/backend-api/pull/42", 42, "feat: add login", "backend-api");
+
+        assertThatThrownBy(() -> service.createPullRequest(RUN_ID, NODE_EXEC_ID, req))
+                .isInstanceOf(NotFoundException.class);
+
+        verifyNoInteractions(prRepo);
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test

@@ -77,6 +77,9 @@ class RunServiceSystemGateDecisionTest {
     @Mock
     private AuthorizationService authService;
 
+    @Mock
+    private RunStorageScope runStorageScope;
+
     private RunService service;
     private final UUID runId = UUID.randomUUID();
     private final UUID gateId = UUID.randomUUID();
@@ -85,6 +88,10 @@ class RunServiceSystemGateDecisionTest {
 
     @BeforeEach
     void setUp() {
+        // This file's attachmentRefs fixtures carry a placeholder value, not a path under the
+        // run's own storage tree, so the containment check must be stubbed permissive rather
+        // than exercised for real.
+        when(runStorageScope.contains(any(), any())).thenReturn(true);
         service = new RunService(
                 runRepo,
                 execRepo,
@@ -104,6 +111,7 @@ class RunServiceSystemGateDecisionTest {
                 null,
                 auditSink,
                 null,
+                runStorageScope,
                 null,
                 null,
                 null,

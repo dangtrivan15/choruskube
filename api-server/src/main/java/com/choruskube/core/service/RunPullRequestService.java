@@ -7,6 +7,7 @@ import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.RunPullRequest;
+import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.RunPullRequestRepository;
@@ -30,6 +31,7 @@ public class RunPullRequestService {
     private final NodeExecutionRepository execRepo;
     private final RunEventPublisher eventPublisher;
     private final ApplicationEventPublisher applicationEventPublisher;
+    private final GraphSnapshotBuilder graphSnapshotBuilder;
 
     public RunPullRequestService(
             RunPullRequestRepository prRepo,
@@ -37,13 +39,15 @@ public class RunPullRequestService {
             GitRepoRepository gitRepoRepo,
             NodeExecutionRepository execRepo,
             RunEventPublisher eventPublisher,
-            ApplicationEventPublisher applicationEventPublisher) {
+            ApplicationEventPublisher applicationEventPublisher,
+            GraphSnapshotBuilder graphSnapshotBuilder) {
         this.prRepo = prRepo;
         this.runRepo = runRepo;
         this.gitRepoRepo = gitRepoRepo;
         this.execRepo = execRepo;
         this.eventPublisher = eventPublisher;
         this.applicationEventPublisher = applicationEventPublisher;
+        this.graphSnapshotBuilder = graphSnapshotBuilder;
     }
 
     @Transactional
@@ -57,10 +61,19 @@ public class RunPullRequestService {
 
         // Validate the run exists; ownership of the PR row is written from the MappableCreated
         // withParent event below (resolved from the parent run), not stamped on the entity.
-        runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         GitRepo gitRepo = gitRepoRepo
                 .findById(req.gitRepoId())
                 .orElseThrow(() -> new NotFoundException("Git repo not found: " + req.gitRepoId()));
+
+        // The run's GitHub token reaches only the run's own repositories, so a report naming any
+        // other repository is refused the same way an unknown one already is.
+        boolean ownRepo = graphSnapshotBuilder.reposForRun(run).stream()
+                .anyMatch(repo -> repo.getId().equals(req.gitRepoId()));
+        if (!ownRepo) {
+            throw new NotFoundException("Git repo not found: " + req.gitRepoId());
+        }
 
         // Re-registering the same (runId, prUrl) refreshes mutable metadata in place rather
         // than inserting a duplicate row. Agents may call register-pr more than once per run

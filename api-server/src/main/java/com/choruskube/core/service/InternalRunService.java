@@ -61,6 +61,7 @@ public class InternalRunService {
     private final TaskSettlementService taskSettlement;
     private final GateRecheckService gateRecheck;
     private final StoryConflictRecorder storyConflictRecorder;
+    private final RunStorageScope runStorageScope;
 
     @Value("${artifact.enforcement.mode:warn}")
     private String artifactEnforcementMode;
@@ -95,7 +96,8 @@ public class InternalRunService {
             MilestoneService milestoneService,
             TaskSettlementService taskSettlement,
             GateRecheckService gateRecheck,
-            StoryConflictRecorder storyConflictRecorder) {
+            StoryConflictRecorder storyConflictRecorder,
+            RunStorageScope runStorageScope) {
         this.runRepo = runRepo;
         this.execRepo = execRepo;
         this.logRepo = logRepo;
@@ -126,6 +128,7 @@ public class InternalRunService {
         this.taskSettlement = taskSettlement;
         this.gateRecheck = gateRecheck;
         this.storyConflictRecorder = storyConflictRecorder;
+        this.runStorageScope = runStorageScope;
     }
 
     public NodeExecutionResponse createNodeExecution(UUID runId, InternalCreateNodeExecutionRequest req) {
@@ -154,6 +157,10 @@ public class InternalRunService {
             UUID runId, UUID nodeExecId, InternalUpdateNodeExecutionRequest req) {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
+
+        // Checked before any setter or storage read below, so a refused write mutates nothing
+        // and never reveals whether another run's objects exist.
+        runStorageScope.requireContainedRefs(exec.getWorkflowRunId(), req.artifactRefs());
 
         // A retried gate-open write can land after a reviewer's approval claimed the gate. Applied,
         // it reopens a finalizing gate, and the finalize steps then fail the node.
@@ -357,6 +364,9 @@ public class InternalRunService {
     public void writeReviewHistory(UUID runId, InternalWriteReviewHistoryRequest req) {
         NodeExecution exec = execRepo.findById(req.nodeExecutionId())
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + req.nodeExecutionId()));
+
+        // Checked before any setter, the same rule the status write applies.
+        runStorageScope.requireContainedRefs(exec.getWorkflowRunId(), req.artifactRefs());
 
         exec.setLoopGroup(req.loopGroup());
         exec.setReviewerType(ReviewerType.valueOf(req.reviewerType().toLowerCase()));

@@ -54,6 +54,12 @@ class InternalRunScopingTest {
     @Mock
     private RoadmapGraphService roadmapGraphService;
 
+    @Mock
+    private GraphSnapshotBuilder graphSnapshotBuilder;
+
+    @Mock
+    private RunStorageScope runStorageScope;
+
     private final UUID runId = UUID.randomUUID();
     private final UUID foreignExecId = UUID.randomUUID();
 
@@ -69,7 +75,13 @@ class InternalRunScopingTest {
     void createPullRequest_execBelongsToDifferentRun_throwsNotFoundAndSavesNothing() {
         stubForeignExec();
         RunPullRequestService service = new RunPullRequestService(
-                prRepo, runRepo, gitRepoRepo, execRepo, eventPublisher, mock(ApplicationEventPublisher.class));
+                prRepo,
+                runRepo,
+                gitRepoRepo,
+                execRepo,
+                eventPublisher,
+                mock(ApplicationEventPublisher.class),
+                graphSnapshotBuilder);
 
         var req = new CreateRunPullRequestRequest(
                 UUID.randomUUID(), "https://github.com/org/repo/pull/1", 1, "title", "repo");
@@ -150,6 +162,7 @@ class InternalRunScopingTest {
                 null, // milestoneService
                 null, // taskSettlement
                 null, // gateRecheck
-                mock(StoryConflictRecorder.class));
+                mock(StoryConflictRecorder.class),
+                runStorageScope);
     }
 }

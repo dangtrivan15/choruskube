@@ -130,6 +130,9 @@ class InternalRunControllerPullRequestsAuthTest extends BaseTest {
 
         run = new WorkflowRun();
         run.setGraphTemplateId(template.getId());
+        // Resolved by GraphSnapshotBuilder#reposForRun's legacy single-repo fallback, so this
+        // run's own repository is gitRepo — the same repo pull-request registration must accept.
+        run.setInputs("{\"git_repo_id\":\"" + gitRepo.getId() + "\"}");
         run = runRepo.save(run);
 
         exec = new NodeExecution();
@@ -234,5 +237,40 @@ class InternalRunControllerPullRequestsAuthTest extends BaseTest {
                                 + "/pull-requests")
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void createPullRequest_withRepoOutsideRun_isNotFound_andWritesNoRow() throws Exception {
+        // A real, existing repo — but not one of this run's own (run's git_repo_id is gitRepo).
+        GitRepo foreignRepo = new GitRepo();
+        foreignRepo.setUrl("https://github.com/test/foreign-repo");
+        foreignRepo.setName("test/foreign-repo");
+        foreignRepo.setTestCommand("npm test");
+        foreignRepo.setAgentImage("test:latest");
+        foreignRepo.setSecrets("[]");
+        foreignRepo = gitRepoRepo.save(foreignRepo);
+
+        Map<String, Object> body = Map.of(
+                "gitRepoId",
+                foreignRepo.getId().toString(),
+                "prUrl",
+                "https://github.com/test/foreign-repo/pull/1",
+                "prNumber",
+                1,
+                "title",
+                "Unrelated change",
+                "repoName",
+                foreignRepo.getName());
+
+        mockMvc.perform(post("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/pull-requests")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body))
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/pull-requests")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
     }
 }

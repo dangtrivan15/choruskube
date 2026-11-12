@@ -97,8 +97,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 class GateFinalizeServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-10-11T10:00:00Z");
-    private static final String REFS = "{\"spec.pdf\":\"k2\"}";
-    private static final String GUIDANCE = "{\"human_guidance.md\":\"k\"}";
 
     @Mock
     private WorkflowRunRepository runRepo;
@@ -155,6 +153,10 @@ class GateFinalizeServiceTest {
     private final UUID repoId = UUID.randomUUID();
     private final UUID rowId = UUID.randomUUID();
 
+    // In-tree under storagePrefixes' stubbed "acme" prefix for runId, as every real attachment ref is.
+    private final String REFS = "{\"spec.pdf\":\"acme/runs/" + runId + "/spec.pdf\"}";
+    private final String GUIDANCE = "{\"human_guidance.md\":\"acme/runs/" + runId + "/human_guidance.md\"}";
+
     private GateFinalizeService service;
     private WorkflowRun run;
     private NodeExecution gate;
@@ -185,6 +187,7 @@ class GateFinalizeServiceTest {
                 claims,
                 uploads,
                 storagePrefixes,
+                new RunStorageScope(storagePrefixes, objectMapper),
                 new DecisionOptionsResolver(),
                 events,
                 auditSink,
@@ -1015,6 +1018,19 @@ class GateFinalizeServiceTest {
         assertThat(gate.getResult()).isEqualTo(result.result());
         assertThat(gate.getArtifactRefs()).isEqualTo(REFS);
         verify(runService, never()).prepareMaterialization(any(), any(), any());
+    }
+
+    @Test
+    void complete_attachmentsOutsideRunsTree_isBadRequest_gateUnchanged() {
+        stubMergeOnly();
+        stamp.setAttachmentRefs("{\"spec.pdf\":\"acme/runs/" + UUID.randomUUID() + "/spec.pdf\"}");
+
+        assertThatThrownBy(() -> service.complete(runId, gateExecId, approvalId, mergedRow(), List.of()))
+                .isInstanceOf(BadRequestException.class);
+
+        assertThat(gate.getDecision()).isNull();
+        assertThat(gate.getResult()).isEqualTo("Tests passed");
+        assertThat(gate.getArtifactRefs()).isEqualTo("{}");
     }
 
     @Test

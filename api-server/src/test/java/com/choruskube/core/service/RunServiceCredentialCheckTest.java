@@ -139,6 +139,7 @@ class RunServiceCredentialCheckTest {
                 usageEventService,
                 null, // auditSink
                 storagePrefixResolver,
+                mock(RunStorageScope.class),
                 runPullRequestService,
                 softwareProjectRepo,
                 repoGroupMemberRepo,

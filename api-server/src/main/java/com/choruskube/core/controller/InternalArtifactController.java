@@ -7,7 +7,7 @@ import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.service.AuthorizationService;
 import com.choruskube.core.service.PresignService;
-import com.choruskube.core.service.StoragePrefixResolver;
+import com.choruskube.core.service.RunStorageScope;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.ResponseEntity;
@@ -21,19 +21,19 @@ public class InternalArtifactController {
     private final NodeExecutionRepository execRepo;
     private final WorkflowRunRepository runRepo;
     private final AuthorizationService authService;
-    private final StoragePrefixResolver storagePrefixResolver;
+    private final RunStorageScope runStorageScope;
 
     public InternalArtifactController(
             PresignService presignService,
             NodeExecutionRepository execRepo,
             WorkflowRunRepository runRepo,
             AuthorizationService authService,
-            StoragePrefixResolver storagePrefixResolver) {
+            RunStorageScope runStorageScope) {
         this.presignService = presignService;
         this.execRepo = execRepo;
         this.runRepo = runRepo;
         this.authService = authService;
-        this.storagePrefixResolver = storagePrefixResolver;
+        this.runStorageScope = runStorageScope;
     }
 
     @GetMapping("/{runId}/node-executions/{nodeExecId}/presign")
@@ -77,12 +77,7 @@ public class InternalArtifactController {
         // covering this route.
         authService.assertSameOrg("workflow_run", agentRun.getId(), "workflow_run", targetRun.getId());
 
-        String orgSlug = storagePrefixResolver.storagePrefixForRun(agentRun.getId());
-
-        // The `..` test is not redundant with the prefix test: `<org>/runs/<id>/../../other/x`
-        // satisfies startsWith and still escapes the scope.
-        String allowedPrefix = orgSlug + "/runs/" + runId + "/";
-        if (!path.startsWith(allowedPrefix) || path.contains("..")) {
+        if (!runStorageScope.contains(agentExec.getWorkflowRunId(), path)) {
             return ResponseEntity.status(403).body(Map.of("error", "Access denied: path outside allowed scope"));
         }
 

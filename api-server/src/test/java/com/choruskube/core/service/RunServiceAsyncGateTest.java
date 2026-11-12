@@ -94,6 +94,9 @@ class RunServiceAsyncGateTest {
     @Mock
     private RoadmapProposalValidator roadmapProposalValidator;
 
+    @Mock
+    private RunStorageScope runStorageScope;
+
     private RunService service;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID runId = UUID.randomUUID();
@@ -115,6 +118,10 @@ class RunServiceAsyncGateTest {
 
     @BeforeEach
     void setUp() {
+        // This file's attachmentRefs fixtures carry a placeholder value, not a path under the
+        // run's own storage tree, so the containment check must be stubbed permissive rather
+        // than exercised for real.
+        when(runStorageScope.contains(any(), any())).thenReturn(true);
         service = new RunService(
                 runRepo,
                 execRepo,
@@ -134,6 +141,7 @@ class RunServiceAsyncGateTest {
                 null,
                 auditSink,
                 null,
+                runStorageScope,
                 null,
                 null,
                 null,

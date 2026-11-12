@@ -79,7 +79,8 @@ class DecisionServiceTest {
                 null,
                 null,
                 null,
-                mock(StoryConflictRecorder.class));
+                mock(StoryConflictRecorder.class),
+                mock(RunStorageScope.class));
     }
 
     private NodeExecution stubExec() {

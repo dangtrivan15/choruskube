@@ -89,6 +89,7 @@ class RunServiceNodeExecutionScopingTest {
                 null, // usageSink
                 auditService, // auditSink
                 null, // storagePrefixResolver
+                org.mockito.Mockito.mock(RunStorageScope.class),
                 null, // runPullRequestService
                 null, // softwareProjectRepo
                 null, // repoGroupMemberRepo

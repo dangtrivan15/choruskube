@@ -250,6 +250,11 @@ class MappableCreatedPublicationTest extends BaseTest {
         repo = gitRepoRepo.save(repo);
         UUID gitRepoId = repo.getId();
 
+        // Resolved by GraphSnapshotBuilder#reposForRun's legacy single-repo fallback, so this run's
+        // own repository is `repo` — the one createPullRequest's repo-membership check now requires.
+        run.setInputs("{\"git_repo_id\":\"" + gitRepoId + "\"}");
+        run = runRepo.save(run);
+
         // Build a real NodeExecution row belonging to this run so it satisfies createPullRequest's
         // run-scoping guard, which requires a genuine node_execution row (FK'd to template_node).
         NodeDefinition nodeDef = new NodeDefinition();

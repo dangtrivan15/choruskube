@@ -137,6 +137,7 @@ class RunServiceTest {
                 null,
                 null,
                 storagePrefixResolver,
+                new RunStorageScope(storagePrefixResolver, objectMapper),
                 null,
                 softwareProjectRepo,
                 null,
@@ -213,7 +214,7 @@ class RunServiceTest {
         stubExec();
         stubRunWithEdges("approved", "rejected");
 
-        String refs = "{\"doc.pdf\":\"acme/runs/123/gate-attachments/456/doc.pdf\"}";
+        String refs = "{\"doc.pdf\":\"system/runs/" + runId + "/gate-attachments/456/doc.pdf\"}";
         service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", null, refs, null));
 
         JsonNode payload = captureSignalPayload();
@@ -238,14 +239,12 @@ class RunServiceTest {
         stubExec();
         stubRunWithEdges("approved");
 
-        service.signalHumanDecision(
-                runId,
-                nodeExecId,
-                new SignalRequest("approved", "Looks good", "{\"file.txt\":\"acme/gate/file.txt\"}", null));
+        String refs = "{\"file.txt\":\"system/runs/" + runId + "/gate-attachments/789/file.txt\"}";
+        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "Looks good", refs, null));
 
         JsonNode payload = captureSignalPayload();
         assertThat(payload.get("feedback").asText()).contains("Looks good");
-        assertThat(payload.get("attachmentRefs").asText()).isEqualTo("{\"file.txt\":\"acme/gate/file.txt\"}");
+        assertThat(payload.get("attachmentRefs").asText()).isEqualTo(refs);
     }
 
     // -----------------------------------------------------------------------
