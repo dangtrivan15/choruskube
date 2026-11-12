@@ -257,16 +257,17 @@ An agent authenticates every request with its execution's `JOB_SECRET` and names
 execution in the path. Two layers sit in front of a handler, each with a distinct job, plus a
 containment rule every write that records a reference applies before it stores anything.
 
-- **The auth filters** (`InternalAuthFilter` for `/internal/**`, `WorkerAuthFilter` for
-  `/worker/**`) decide whether a credential authenticates at all: they load the execution named at
-  the path's fixed position and check the presented secret's hash against it. Neither filter
-  compares the path's `runId` to that execution's actual run — that is a later Task's fix, tracked
-  separately.
+- **The auth filters** decide whether a credential authenticates the request, reading the raw,
+  still-escaped path. `InternalAuthFilter` gives the orchestrator secret full access to
+  `/internal/**`, and accepts an agent's `JOB_SECRET` when its hash matches the execution named
+  after `node-executions/` in the path; it does not compare the path's `runId` with that
+  execution's run. `WorkerAuthFilter` only proves a bearer was presented on `/worker/**`; each
+  handler's `WorkerAuthorizer` then checks the Fleet's pin on the path's run.
 - **The run-scope guard** (`RunScopeInterceptor`) runs after the filters and before any handler
   binds its request. It refuses a percent-escaped path with 400, and refuses an execution that does
-  not belong to the path's run with 404 — the same body an unknown execution already gets. With the
-  filters not yet comparing runs, the guard is the only layer that does, for every execution-scoped
-  route in both families.
+  not belong to the path's run with 404 — the same body an unknown execution already gets. Neither
+  filter compares runs, so the guard is the only layer that does, for every execution-scoped route
+  in both families.
 - **Write-side containment** (`RunStorageScope`, shared with presign) runs inside the handler, once
   the guard has already confirmed the execution belongs to the path's run. Every write that records
   an artifact or attachment reference — a node's status, its review history, a gate's decision —
@@ -287,7 +288,7 @@ sequenceDiagram
   participant U as Web UI
 
   A->>F: request on its own run and execution, Bearer job secret
-  F->>D: load the execution at the path's fixed position
+  F->>D: load the execution the path names
   F->>F: secret hash matches (run not compared)
   F->>G: authenticated
   G->>D: execution belongs to the path's run
@@ -318,7 +319,7 @@ sequenceDiagram
   F->>G: authenticated (the filter never loaded or compared the run)
   G-->>A: 404, same body as an unknown execution
   A->>F: escaped spelling of its own path
-  F->>G: authenticated (filter still reads the raw path)
+  F->>G: passed on (the filter reads the raw, still-escaped path)
   G-->>A: 400, escaped paths are not accepted
   O->>F: status write naming a path outside the run's tree
   F->>G: authenticated

@@ -384,6 +384,26 @@ class RunServiceStoryVersionRecheckTest {
         assertThat(exec.getStatus()).isEqualTo(NodeExecutionStatus.awaiting_human);
     }
 
+    @Test
+    void reroutedApproval_attachmentRefsOutsideRunsTree_refusedBeforeAnythingIsWritten() {
+        stubExec();
+        stubRun(STORY_RECHECK_GATE, taskId, 1);
+        currentVersion(2);
+        String foreign = "other-org/runs/" + runId + "/gate-attachments/x/a.md";
+        when(runStorageScope.contains(runId, foreign)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.signalHumanDecision(
+                        runId, nodeExecId, new SignalRequest("approved", "x", "{\"a.md\":\"" + foreign + "\"}", null)))
+                .isInstanceOfSatisfying(ValidationException.class, e -> assertThat(e.getErrors())
+                        .containsExactly("attachmentRefs must name objects inside this run's storage"));
+
+        verify(uploadService, never()).overwriteRunInput(any(), any(), any());
+        verifyNoGuidanceUploaded();
+        verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
+        verify(runRepo, never()).setStorySpecVersion(any(), anyInt());
+        verifyNoInteractions(workflowStub);
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"", "  ", "{}", "{\"a.md\":\"k\"}"})
     void attachmentRefsThatAreBlankOrFileNamesToKeys_goThroughOnAPlainApproval(String refs) {

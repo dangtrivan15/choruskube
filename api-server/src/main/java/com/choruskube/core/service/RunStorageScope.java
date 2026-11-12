@@ -1,10 +1,9 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.exception.BadRequestException;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.util.Iterator;
-import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 
@@ -17,7 +16,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class RunStorageScope {
 
-    static final String NOT_CONTAINED =
+    public static final String NOT_CONTAINED =
             "artifactRefs must be a JSON object naming only paths inside this run's own storage tree";
 
     private final StoragePrefixResolver storagePrefixResolver;
@@ -30,17 +29,7 @@ public class RunStorageScope {
 
     /** Whether {@code path} sits inside {@code runId}'s own storage tree, with no {@code ..} anywhere. */
     public boolean contains(UUID runId, String path) {
-        if (path == null) {
-            return false;
-        }
-        String prefix = storagePrefixResolver.storagePrefixForRun(runId) + "/runs/" + runId + "/";
-        return containsWithPrefix(prefix, path);
-    }
-
-    private static boolean containsWithPrefix(String prefix, String path) {
-        // `..` is not redundant with the prefix test: `<prefix>/../../other/x` satisfies
-        // startsWith and still escapes the run's tree.
-        return path.startsWith(prefix) && !path.contains("..");
+        return path != null && isInside(treeOf(runId), path);
     }
 
     /**
@@ -55,7 +44,7 @@ public class RunStorageScope {
         JsonNode refs;
         try {
             refs = objectMapper.readTree(refsJson);
-        } catch (Exception e) {
+        } catch (JsonProcessingException e) {
             throw new BadRequestException(NOT_CONTAINED);
         }
         if (!refs.isObject()) {
@@ -64,13 +53,21 @@ public class RunStorageScope {
         if (refs.isEmpty()) {
             return;
         }
-        // Resolved once per call, not once per key.
-        String prefix = storagePrefixResolver.storagePrefixForRun(runId) + "/runs/" + runId + "/";
-        for (Iterator<Map.Entry<String, JsonNode>> it = refs.fields(); it.hasNext(); ) {
-            JsonNode value = it.next().getValue();
-            if (!value.isTextual() || !containsWithPrefix(prefix, value.asText())) {
+        String tree = treeOf(runId);
+        for (JsonNode value : refs) {
+            if (!value.isTextual() || !isInside(tree, value.asText())) {
                 throw new BadRequestException(NOT_CONTAINED);
             }
         }
+    }
+
+    private String treeOf(UUID runId) {
+        return storagePrefixResolver.storagePrefixForRun(runId) + "/runs/" + runId + "/";
+    }
+
+    private static boolean isInside(String tree, String path) {
+        // `..` is not redundant with the prefix test: `<prefix>/../../other/x` satisfies
+        // startsWith and still escapes the run's tree.
+        return path.startsWith(tree) && !path.contains("..");
     }
 }

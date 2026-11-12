@@ -3,6 +3,7 @@ package com.choruskube.core.service;
 import com.choruskube.core.dto.RecordRepoBasesRequest;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.NotFoundException;
+import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.NodeExecutionRepoBase;
 import com.choruskube.core.model.WorkflowRun;
@@ -51,7 +52,7 @@ public class NodeExecutionRepoBaseService {
         WorkflowRun run =
                 runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
         Set<UUID> ownRepoIds = graphSnapshotBuilder.reposForRun(run).stream()
-                .map(repo -> repo.getId())
+                .map(GitRepo::getId)
                 .collect(Collectors.toSet());
         for (RecordRepoBasesRequest.RepoBaseReport report : request.repos()) {
             if (!ownRepoIds.contains(report.gitRepoId())) {

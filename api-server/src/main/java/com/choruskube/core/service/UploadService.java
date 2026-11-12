@@ -279,6 +279,8 @@ public class UploadService {
         int lastSep = Math.max(original.lastIndexOf('/'), original.lastIndexOf('\\'));
         String name = lastSep >= 0 ? original.substring(lastSep + 1) : original;
         if (name.isEmpty()) name = "file";
-        return name.replaceAll("[^a-zA-Z0-9._-]", "_");
+        // RunStorageScope refuses `..` anywhere in a key, so a name keeping one would yield refs
+        // that presign and every artifact-recording write then reject.
+        return name.replaceAll("[^a-zA-Z0-9._-]", "_").replaceAll("\\.{2,}", ".");
     }
 }

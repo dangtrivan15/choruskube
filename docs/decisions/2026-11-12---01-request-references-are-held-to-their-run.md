@@ -32,8 +32,8 @@ refused — before anything is read or stored.
 - A gate's own record (`GateFinalizeService.recordOnGate`) calls it before any setter, covering
   both the hold path's server-built guidance and the two completion paths' stamp attachments.
 - The gate-decision intake (`RunService.parseAttachmentRefs`) applies the same rule to each
-  attachment value, ahead of the existing shape check, the story-version re-check, the claim, and
-  the signal — so a forged attachment never reaches either gate record write.
+  attachment value, right after its existing shape check and ahead of the story-version re-check,
+  the claim, and the signal — so a forged attachment never reaches either gate record write.
 - A write that carries no artifact paths is not checked, so the orchestrator's existing answer to a
   refused completion — recording the node failed, without paths — always goes through, and the
   node fails as retryable instead of hanging.
@@ -53,16 +53,17 @@ report used to store any repository id with no check at all; an unknown or forei
 - **A repo-base report naming an unknown repository now answers 404** instead of being stored with
   204.
 - **Presign's own behaviour is unchanged** — the same test, now shared rather than duplicated.
-- **Stored rows are never rewritten.** A row written before this change that already names a path
-  outside its run's tree is not corrected by this rule; a one-time read-only check of existing rows
-  is an operator action, not a migration.
+- **Stored rows are never rewritten.** The rule holds every write from this change on; it neither
+  re-checks nor corrects a row stored before it.
+- **Keys the server builds satisfy the rule too.** An uploaded file's name is sanitised so the key
+  built from it never contains `..`; a server-built key the rule refuses would fail an honest gate
+  decision.
 
 ## Rejected
 
 - **Checking only at read time.** It would cover rows already stored, but every reader — and every
-  reader yet to be written — would have to remember to use the checked accessor, where the writers
-  needing the check number three. The one-time stored-path check covers what a write-side rule
-  cannot.
+  reader yet to be written — would have to remember to use the checked accessor, where the write
+  sites needing the check number three.
 - **Checking at both read and write time.** Covers stored rows too, but keeps the read side's cost
   in full for no write-side benefit, since an honest write can never produce a row the read-side
   check would need to catch.

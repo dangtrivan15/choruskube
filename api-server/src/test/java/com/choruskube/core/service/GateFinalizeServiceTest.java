@@ -1031,6 +1031,7 @@ class GateFinalizeServiceTest {
         assertThat(gate.getDecision()).isNull();
         assertThat(gate.getResult()).isEqualTo("Tests passed");
         assertThat(gate.getArtifactRefs()).isEqualTo("{}");
+        verify(gateRecheck, never()).consume(any());
     }
 
     @Test

@@ -11,6 +11,7 @@ import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
 import com.choruskube.core.repository.*;
+import com.choruskube.core.service.RunStorageScope;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowClient;
 import io.temporal.serviceclient.WorkflowServiceStubs;
@@ -138,7 +139,8 @@ class ArtifactRefContainmentIntegrationTest extends BaseTest {
                         .contentType("application/json")
                         .content(objectMapper.writeValueAsString(body))
                         .header("Authorization", "Bearer " + JOB_SECRET))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(RunStorageScope.NOT_CONTAINED));
 
         NodeExecution row = execRepo.findById(exec.getId()).orElseThrow();
         assertThat(row.getStatus()).isEqualTo(NodeExecutionStatus.pending);
@@ -154,11 +156,13 @@ class ArtifactRefContainmentIntegrationTest extends BaseTest {
                         .contentType("application/json")
                         .content(objectMapper.writeValueAsString(body))
                         .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(RunStorageScope.NOT_CONTAINED));
 
         NodeExecution row = execRepo.findById(exec.getId()).orElseThrow();
         assertThat(row.getStatus()).isEqualTo(NodeExecutionStatus.pending);
         assertThat(row.getArtifactRefs()).isEqualTo("{}");
+        verifyNoInteractions(s3Client);
     }
 
     @Test
@@ -169,11 +173,13 @@ class ArtifactRefContainmentIntegrationTest extends BaseTest {
                         .contentType("application/json")
                         .content(objectMapper.writeValueAsString(body))
                         .header("Authorization", "Bearer test-fleet"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(RunStorageScope.NOT_CONTAINED));
 
         NodeExecution row = execRepo.findById(exec.getId()).orElseThrow();
         assertThat(row.getStatus()).isEqualTo(NodeExecutionStatus.pending);
         assertThat(row.getArtifactRefs()).isEqualTo("{}");
+        verifyNoInteractions(s3Client);
     }
 
     // ── required outputs + escalate decision ────────────────────────────────
@@ -191,8 +197,7 @@ class ArtifactRefContainmentIntegrationTest extends BaseTest {
                         .content(objectMapper.writeValueAsString(body))
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isBadRequest())
-                .andExpect(content()
-                        .string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("escalation.md"))));
+                .andExpect(content().string(RunStorageScope.NOT_CONTAINED));
 
         verifyNoInteractions(s3Client);
         NodeExecution row = execRepo.findById(exec.getId()).orElseThrow();
@@ -219,7 +224,8 @@ class ArtifactRefContainmentIntegrationTest extends BaseTest {
                         .contentType("application/json")
                         .content(objectMapper.writeValueAsString(body))
                         .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(RunStorageScope.NOT_CONTAINED));
 
         NodeExecution row = execRepo.findById(exec.getId()).orElseThrow();
         assertThat(row.getLoopGroup()).isNull();
@@ -235,7 +241,8 @@ class ArtifactRefContainmentIntegrationTest extends BaseTest {
                         .contentType("application/json")
                         .content(objectMapper.writeValueAsString(refused))
                         .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(RunStorageScope.NOT_CONTAINED));
 
         Map<String, Object> failed = Map.of("status", "failed", "errorMessage", "timed out");
         mockMvc.perform(put("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/status")
