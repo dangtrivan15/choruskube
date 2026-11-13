@@ -58,7 +58,8 @@ class TransitivePredecessorTest {
                 null,
                 null,
                 null,
-                mock(StoryConflictRecorder.class));
+                mock(StoryConflictRecorder.class),
+                mock(RunStorageScope.class));
     }
 
     // --- helpers ---

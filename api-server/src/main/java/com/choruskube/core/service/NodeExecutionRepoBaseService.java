@@ -3,15 +3,19 @@ package com.choruskube.core.service;
 import com.choruskube.core.dto.RecordRepoBasesRequest;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.NotFoundException;
+import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.NodeExecutionRepoBase;
+import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.repository.NodeExecutionRepoBaseRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
+import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.NodeExecutionUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,12 +28,20 @@ public class NodeExecutionRepoBaseService {
     private final NodeExecutionRepository execRepo;
     private final NodeExecutionRepoBaseRepository baseRepo;
     private final ObjectMapper objectMapper;
+    private final WorkflowRunRepository runRepo;
+    private final GraphSnapshotBuilder graphSnapshotBuilder;
 
     public NodeExecutionRepoBaseService(
-            NodeExecutionRepository execRepo, NodeExecutionRepoBaseRepository baseRepo, ObjectMapper objectMapper) {
+            NodeExecutionRepository execRepo,
+            NodeExecutionRepoBaseRepository baseRepo,
+            ObjectMapper objectMapper,
+            WorkflowRunRepository runRepo,
+            GraphSnapshotBuilder graphSnapshotBuilder) {
         this.execRepo = execRepo;
         this.baseRepo = baseRepo;
         this.objectMapper = objectMapper;
+        this.runRepo = runRepo;
+        this.graphSnapshotBuilder = graphSnapshotBuilder;
     }
 
     @Transactional
@@ -37,6 +49,16 @@ public class NodeExecutionRepoBaseService {
         NodeExecution exec = execRepo.findById(nodeExecId)
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
         NodeExecutionUtil.requireInRun(exec, runId);
+        WorkflowRun run =
+                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        Set<UUID> ownRepoIds = graphSnapshotBuilder.reposForRun(run).stream()
+                .map(GitRepo::getId)
+                .collect(Collectors.toSet());
+        for (RecordRepoBasesRequest.RepoBaseReport report : request.repos()) {
+            if (!ownRepoIds.contains(report.gitRepoId())) {
+                throw new NotFoundException("Git repo not found: " + report.gitRepoId());
+            }
+        }
         for (RecordRepoBasesRequest.RepoBaseReport report : request.repos()) {
             if (!OUTCOMES.contains(report.outcome())) {
                 throw new BadRequestException(

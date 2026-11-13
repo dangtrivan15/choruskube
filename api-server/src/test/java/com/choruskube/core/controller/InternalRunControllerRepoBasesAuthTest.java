@@ -115,6 +115,9 @@ class InternalRunControllerRepoBasesAuthTest extends BaseTest {
 
         run = new WorkflowRun();
         run.setGraphTemplateId(template.getId());
+        // Resolved by GraphSnapshotBuilder#reposForRun's legacy single-repo fallback, so this
+        // run's own repository is gitRepo — the same repo a repo-base report must be able to name.
+        run.setInputs("{\"git_repo_id\":\"" + gitRepo.getId() + "\"}");
         run = runRepo.save(run);
 
         exec = new NodeExecution();
@@ -185,6 +188,54 @@ class InternalRunControllerRepoBasesAuthTest extends BaseTest {
 
         post(run.getId(), exec.getId(), OTHER_RUN_JOB_SECRET, body("clean", "x"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void unknownRepoId_isNotFound_andWritesNoRow() throws Exception {
+        UUID unknownRepoId = UUID.randomUUID();
+        String body = "{\"repos\":[{\"gitRepoId\":\"" + unknownRepoId
+                + "\",\"outcome\":\"clean\",\"baseSha\":\"sha-1\",\"conflictedFiles\":[]}]}";
+
+        post(run.getId(), exec.getId(), JOB_SECRET, body).andExpect(status().isNotFound());
+
+        assertThat(baseRepo.findByNodeExecutionId(exec.getId())).isEmpty();
+    }
+
+    @Test
+    void repoOutsideRun_isNotFound_andWritesNoRow() throws Exception {
+        GitRepo foreignRepo = new GitRepo();
+        foreignRepo.setUrl("https://github.com/test/foreign-repo-base");
+        foreignRepo.setName("test/foreign-repo-base");
+        foreignRepo.setTestCommand("npm test");
+        foreignRepo.setAgentImage("test:latest");
+        foreignRepo.setSecrets("[]");
+        foreignRepo = gitRepoRepo.save(foreignRepo);
+
+        String body = "{\"repos\":[{\"gitRepoId\":\"" + foreignRepo.getId()
+                + "\",\"outcome\":\"clean\",\"baseSha\":\"sha-1\",\"conflictedFiles\":[]}]}";
+
+        post(run.getId(), exec.getId(), JOB_SECRET, body).andExpect(status().isNotFound());
+
+        assertThat(baseRepo.findByNodeExecutionId(exec.getId())).isEmpty();
+    }
+
+    @Test
+    void repoOutsideRunMixedWithOwnRepo_isNotFound_andWritesNeitherRow() throws Exception {
+        GitRepo foreignRepo = new GitRepo();
+        foreignRepo.setUrl("https://github.com/test/foreign-repo-base-2");
+        foreignRepo.setName("test/foreign-repo-base-2");
+        foreignRepo.setTestCommand("npm test");
+        foreignRepo.setAgentImage("test:latest");
+        foreignRepo.setSecrets("[]");
+        foreignRepo = gitRepoRepo.save(foreignRepo);
+
+        String body = "{\"repos\":[" + "{\"gitRepoId\":\"" + gitRepo.getId()
+                + "\",\"outcome\":\"clean\",\"baseSha\":\"sha-1\",\"conflictedFiles\":[]}," + "{\"gitRepoId\":\""
+                + foreignRepo.getId() + "\",\"outcome\":\"clean\",\"baseSha\":\"sha-1\",\"conflictedFiles\":[]}" + "]}";
+
+        post(run.getId(), exec.getId(), JOB_SECRET, body).andExpect(status().isNotFound());
+
+        assertThat(baseRepo.findByNodeExecutionId(exec.getId())).isEmpty();
     }
 
     @Test

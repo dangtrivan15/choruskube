@@ -58,6 +58,8 @@ public class RunService {
 
     private static final String ATTACHMENT_REFS_NOT_AN_OBJECT =
             "attachmentRefs must be a JSON object of file names to object keys";
+    private static final String ATTACHMENT_REFS_NOT_CONTAINED =
+            "attachmentRefs must name objects inside this run's storage";
 
     private final WorkflowRunRepository runRepo;
     private final NodeExecutionRepository execRepo;
@@ -77,6 +79,7 @@ public class RunService {
     private final UsageSink usageSink;
     private final AuditSink auditSink;
     private final StoragePrefixResolver storagePrefixResolver;
+    private final RunStorageScope runStorageScope;
     private final RunPullRequestService runPullRequestService;
     private final SoftwareProjectRepository softwareProjectRepo;
     private final RepoGroupMemberRepository repoGroupMemberRepo;
@@ -121,6 +124,7 @@ public class RunService {
             UsageSink usageSink,
             AuditSink auditSink,
             StoragePrefixResolver storagePrefixResolver,
+            RunStorageScope runStorageScope,
             RunPullRequestService runPullRequestService,
             SoftwareProjectRepository softwareProjectRepo,
             RepoGroupMemberRepository repoGroupMemberRepo,
@@ -160,6 +164,7 @@ public class RunService {
         this.usageSink = usageSink;
         this.auditSink = auditSink;
         this.storagePrefixResolver = storagePrefixResolver;
+        this.runStorageScope = runStorageScope;
         this.runPullRequestService = runPullRequestService;
         this.softwareProjectRepo = softwareProjectRepo;
         this.repoGroupMemberRepo = repoGroupMemberRepo;
@@ -532,7 +537,7 @@ public class RunService {
         UUID nodeExecId = exec.getId();
 
         // Every decision's refs are checked first, so a refusal leaves the gate as it was.
-        ObjectNode reviewerRefs = parseAttachmentRefs(request.attachmentRefs());
+        ObjectNode reviewerRefs = parseAttachmentRefs(runId, request.attachmentRefs());
 
         // Ahead of the async hand-over and the claim, so a refusal leaves the gate as it was.
         Optional<SignalResponse> rerouted = recheckStoryVersion(run, exec, request, reviewerRefs);
@@ -670,7 +675,7 @@ public class RunService {
         return Optional.of(SignalResponse.rerouted(stale.get().reason()));
     }
 
-    private ObjectNode parseAttachmentRefs(String attachmentRefs) {
+    private ObjectNode parseAttachmentRefs(UUID runId, String attachmentRefs) {
         if (attachmentRefs == null || attachmentRefs.isBlank()) {
             return objectMapper.createObjectNode();
         }
@@ -680,10 +685,17 @@ public class RunService {
         } catch (JsonProcessingException e) {
             throw new ValidationException(List.of(ATTACHMENT_REFS_NOT_AN_OBJECT));
         }
-        if (refs instanceof ObjectNode object && allValuesAreText(object)) {
-            return object;
+        if (!(refs instanceof ObjectNode object && allValuesAreText(object))) {
+            throw new ValidationException(List.of(ATTACHMENT_REFS_NOT_AN_OBJECT));
         }
-        throw new ValidationException(List.of(ATTACHMENT_REFS_NOT_AN_OBJECT));
+        // Checked before the story-version re-check, the claim, requestApproval or the signal, so
+        // a forged attachment never reaches either gate record write.
+        for (JsonNode value : object) {
+            if (!runStorageScope.contains(runId, value.asText())) {
+                throw new ValidationException(List.of(ATTACHMENT_REFS_NOT_CONTAINED));
+            }
+        }
+        return object;
     }
 
     private static boolean allValuesAreText(ObjectNode refs) {

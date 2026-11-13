@@ -251,6 +251,87 @@ seeded **"system" organization**. That organization holds no credentials: the
 Claude token and GitHub credential used for real runs live on the Worker. This
 keeps the core simple to run locally and to self-host.
 
+## Agent-route authentication
+
+An agent authenticates every request with its execution's `JOB_SECRET` and names its run and
+execution in the path. Two layers sit in front of a handler, each with a distinct job, plus a
+containment rule every write that records a reference applies before it stores anything.
+
+- **The auth filters** decide whether a credential authenticates the request, reading the raw,
+  still-escaped path. `InternalAuthFilter` gives the orchestrator secret full access to
+  `/internal/**`, and accepts an agent's `JOB_SECRET` when its hash matches the execution named
+  after `node-executions/` in the path; it does not compare the path's `runId` with that
+  execution's run. `WorkerAuthFilter` only proves a bearer was presented on `/worker/**`; each
+  handler's `WorkerAuthorizer` then checks the Fleet's pin on the path's run.
+- **The run-scope guard** (`RunScopeInterceptor`) runs after the filters and before any handler
+  binds its request. It refuses a percent-escaped path with 400, and refuses an execution that does
+  not belong to the path's run with 404 — the same body an unknown execution already gets. Neither
+  filter compares runs, so the guard is the only layer that does, for every execution-scoped route
+  in both families.
+- **Write-side containment** (`RunStorageScope`, shared with presign) runs inside the handler, once
+  the guard has already confirmed the execution belongs to the path's run. Every write that records
+  an artifact or attachment reference — a node's status, its review history, a gate's decision —
+  refuses a path outside the run's own storage tree with 400, before reading or storing anything.
+  Pull-request registration and a repo-base report apply the equivalent rule to a repository,
+  refusing one that is not among `GraphSnapshotBuilder.reposForRun` with 404.
+
+```mermaid
+sequenceDiagram
+  participant A as Agent container
+  participant W as Worker
+  participant O as Orchestrator
+  participant F as API auth filter
+  participant G as Run-scope guard
+  participant H as Route handler
+  participant D as Database
+  participant S as Object storage
+  participant U as Web UI
+
+  A->>F: request on its own run and execution, Bearer job secret
+  F->>D: load the execution the path names
+  F->>F: secret hash matches (run not compared)
+  F->>G: authenticated
+  G->>D: execution belongs to the path's run
+  G->>H: dispatch, before the request is bound
+  H-->>A: presigned URL for a path inside the run's tree
+  A->>S: upload outputs with the presigned URL
+  A->>W: callback with result and artifact path, Bearer job secret
+  W-)O: activity completes through Temporal
+  O->>F: status write with artifact path, Bearer orchestrator secret
+  F->>G: orchestrator tier, full access
+  G->>H: execution belongs to the path's run
+  H->>H: artifact path inside the run's storage tree (RunStorageScope)
+  H->>D: store status and artifact path
+  U->>H: list the node's artifacts, user session
+  H->>S: list and read under the recorded path
+```
+
+```mermaid
+sequenceDiagram
+  participant A as Agent container
+  participant O as Orchestrator
+  participant U as Web UI
+  participant F as API auth filter
+  participant G as Run-scope guard
+  participant H as Route handler
+
+  A->>F: its own execution under another run's id
+  F->>G: authenticated (the filter never loaded or compared the run)
+  G-->>A: 404, same body as an unknown execution
+  A->>F: escaped spelling of its own path
+  F->>G: passed on (the filter reads the raw, still-escaped path)
+  G-->>A: 400, escaped paths are not accepted
+  O->>F: status write naming a path outside the run's tree
+  F->>G: authenticated
+  G->>H: dispatch
+  H-->>O: 400, nothing read or stored
+  O->>F: status write as failed, without the path
+  F->>G: authenticated
+  G->>H: node recorded failed and retryable
+  U->>H: gate decision naming an attachment outside the run's tree, user session
+  H-->>U: 400, the gate stays as it was
+```
+
 ## Components
 
 | Component | Stack | Responsibility |

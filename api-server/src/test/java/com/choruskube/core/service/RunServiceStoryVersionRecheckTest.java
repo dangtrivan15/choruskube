@@ -81,6 +81,9 @@ class RunServiceStoryVersionRecheckTest {
     private StoragePrefixResolver storagePrefixResolver;
 
     @Mock
+    private RunStorageScope runStorageScope;
+
+    @Mock
     private TaskRepository taskRepo;
 
     @Mock
@@ -124,6 +127,7 @@ class RunServiceStoryVersionRecheckTest {
                 null, // usageSink
                 auditSink,
                 storagePrefixResolver,
+                runStorageScope,
                 null, // runPullRequestService
                 null, // softwareProjectRepo
                 null, // repoGroupMemberRepo
@@ -147,6 +151,9 @@ class RunServiceStoryVersionRecheckTest {
                 storySpecService);
 
         when(storagePrefixResolver.storagePrefixForRun(runId)).thenReturn("acme");
+        // Containment itself is RunStorageScopeTest's and ArtifactRefContainmentIntegrationTest's
+        // job; this file's fixtures use opaque values ("k", "theirs"), not real paths.
+        lenient().when(runStorageScope.contains(any(), any())).thenReturn(true);
         when(uploadService.uploadGateText(
                         eq("acme"), eq(runId), eq(nodeExecId), any(UUID.class), eq("human_guidance.md"), anyString()))
                 .thenReturn("{\"human_guidance.md\":\"k\"}");
@@ -356,6 +363,44 @@ class RunServiceStoryVersionRecheckTest {
                         .containsExactly("attachmentRefs must be a JSON object of file names to object keys"));
 
         verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
+        verifyNoInteractions(workflowStub);
+    }
+
+    @Test
+    void attachmentRefsOutsideRunsTree_refusedOnAnyDecisionBeforeTheClaim() {
+        NodeExecution exec = stubExec();
+        stubRun(PLAIN_GATE, taskId, 1);
+        String refs = "{\"a.md\":\"other-org/runs/" + runId + "/gate-attachments/x/a.md\"}";
+        when(runStorageScope.contains(runId, "other-org/runs/" + runId + "/gate-attachments/x/a.md"))
+                .thenReturn(false);
+
+        assertThatThrownBy(() ->
+                        service.signalHumanDecision(runId, nodeExecId, new SignalRequest("approved", "x", refs, null)))
+                .isInstanceOfSatisfying(ValidationException.class, e -> assertThat(e.getErrors())
+                        .containsExactly("attachmentRefs must name objects inside this run's storage"));
+
+        verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
+        verifyNoInteractions(workflowStub);
+        assertThat(exec.getStatus()).isEqualTo(NodeExecutionStatus.awaiting_human);
+    }
+
+    @Test
+    void reroutedApproval_attachmentRefsOutsideRunsTree_refusedBeforeAnythingIsWritten() {
+        stubExec();
+        stubRun(STORY_RECHECK_GATE, taskId, 1);
+        currentVersion(2);
+        String foreign = "other-org/runs/" + runId + "/gate-attachments/x/a.md";
+        when(runStorageScope.contains(runId, foreign)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.signalHumanDecision(
+                        runId, nodeExecId, new SignalRequest("approved", "x", "{\"a.md\":\"" + foreign + "\"}", null)))
+                .isInstanceOfSatisfying(ValidationException.class, e -> assertThat(e.getErrors())
+                        .containsExactly("attachmentRefs must name objects inside this run's storage"));
+
+        verify(uploadService, never()).overwriteRunInput(any(), any(), any());
+        verifyNoGuidanceUploaded();
+        verify(nodeExecutionClaimService, never()).compareAndSetStatus(any(), any(), any());
+        verify(runRepo, never()).setStorySpecVersion(any(), anyInt());
         verifyNoInteractions(workflowStub);
     }
 

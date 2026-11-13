@@ -29,6 +29,7 @@ class InternalRunServiceOutputValidationTest {
     private TemplateNodeRepository templateNodeRepo;
     private NodeDefinitionRepository nodeDefinitionRepo;
     private ArtifactService artifactService;
+    private RunStorageScope runStorageScope;
 
     @BeforeEach
     void setUp() {
@@ -38,6 +39,7 @@ class InternalRunServiceOutputValidationTest {
         templateNodeRepo = Mockito.mock(TemplateNodeRepository.class);
         nodeDefinitionRepo = Mockito.mock(NodeDefinitionRepository.class);
         artifactService = Mockito.mock(ArtifactService.class);
+        runStorageScope = Mockito.mock(RunStorageScope.class);
         // templateNodeRepo returns empty by default → enforceOutputSpec exits early (no NPE)
         Mockito.when(templateNodeRepo.findById(Mockito.any())).thenReturn(Optional.empty());
         service = new InternalRunService(
@@ -70,7 +72,8 @@ class InternalRunServiceOutputValidationTest {
                 null,
                 null,
                 null,
-                Mockito.mock(StoryConflictRecorder.class));
+                Mockito.mock(StoryConflictRecorder.class),
+                runStorageScope);
     }
 
     private NodeExecution stubExec(UUID id) {
@@ -234,7 +237,7 @@ class InternalRunServiceOutputValidationTest {
                         e -> e.getStatus() == com.choruskube.core.model.enums.NodeExecutionStatus.paused));
     }
 
-    private static final String ARTIFACT_REFS = "{\"output\":\"runs/r/e/out/\"}";
+    private static final String ARTIFACT_REFS = "{\"output\":\"system/runs/r/e/out/\"}";
 
     @Test
     void escalateWithoutEscalationMd_throws() {

@@ -108,6 +108,7 @@ class RunServiceSoftwareProjectDisplayTest {
                 null, // usageSink
                 null, // auditSink
                 null, // storagePrefixResolver — not invoked by getRun
+                org.mockito.Mockito.mock(RunStorageScope.class),
                 null, // runPullRequestService — NPE caught gracefully in toResponse()
                 softwareProjectRepo,
                 null, // repoGroupMemberRepo

@@ -97,6 +97,7 @@ class HumanDecisionValidationTest {
                 null,
                 null,
                 null,
+                org.mockito.Mockito.mock(RunStorageScope.class),
                 null,
                 null,
                 null,

@@ -57,6 +57,7 @@ class RunServicePlacementTest {
                 null, // usageSink
                 null, // auditSink
                 storagePrefixResolver,
+                org.mockito.Mockito.mock(RunStorageScope.class),
                 null, // runPullRequestService
                 null, // softwareProjectRepo
                 null, // repoGroupMemberRepo

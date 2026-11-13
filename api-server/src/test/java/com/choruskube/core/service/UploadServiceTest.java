@@ -144,6 +144,20 @@ class UploadServiceTest {
     }
 
     @Test
+    void uploadGateFiles_nameWithDoubleDot_returnsRefsTheRunsContainmentRuleAccepts() throws Exception {
+        UUID runId = UUID.randomUUID();
+        UUID nodeExecId = UUID.randomUUID();
+        when(storagePrefixResolver.storagePrefixForRun(runId)).thenReturn("acme");
+        MockMultipartFile file = new MockMultipartFile("files", "spec..v2...md", "text/plain", "x".getBytes());
+
+        String refs = uploadService.uploadGateFiles("acme", runId, nodeExecId, List.of(file));
+
+        assertThat(objectMapper.readTree(refs).get("spec.v2.md").asText())
+                .isEqualTo("acme/runs/" + runId + "/gate-attachments/" + nodeExecId + "/spec.v2.md");
+        new RunStorageScope(storagePrefixResolver, objectMapper).requireContainedRefs(runId, refs);
+    }
+
+    @Test
     void uploadGateFiles_emptyFileList_returnsEmptyJson() throws Exception {
         String result = uploadService.uploadGateFiles("acme", UUID.randomUUID(), UUID.randomUUID(), List.of());
 
