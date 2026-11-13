@@ -274,6 +274,9 @@ containment rule every write that records a reference applies before it stores a
   refuses a path outside the run's own storage tree with 400, before reading or storing anything.
   Pull-request registration and a repo-base report apply the equivalent rule to a repository,
   refusing one that is not among `GraphSnapshotBuilder.reposForRun` with 404.
+- **The live cross-run proof** (`web-ui/e2e/specs/agent-run-scope.spec.ts`) presents two runs' real
+  `JOB_SECRET`s to the running stack, on every route the filters and the guard cover above, and
+  proves the deployed stack refuses one run's secret everywhere outside that run.
 
 ```mermaid
 sequenceDiagram
