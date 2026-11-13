@@ -39,8 +39,9 @@ the way the per-route checks did before the run-scope guard existed.
 ## Consequences
 
 - The spec is tied to the Docker executor: `agentWorkload()` has nothing to read on a stack running
-  a different executor. Both e2e stacks run the Docker executor today, and the in-process audit
+  a different executor. The e2e stack runs the Docker executor today, and the in-process audit
   still covers every route regardless of executor.
 - Every probe goes through a plain `fetch` (`web-ui/e2e/specs/agent-run-scope.spec.ts`'s `probe()`
   helper), never Playwright's `request` fixture, and `agentWorkload()`'s own errors never carry
-  `docker`'s stdout/stderr — so a real job secret never lands in a trace, HAR, or report.
+  `docker`'s output or quote the text they failed to parse — so a real job secret never lands in a
+  trace, HAR, or report.

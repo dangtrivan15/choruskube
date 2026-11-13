@@ -1,10 +1,6 @@
 /**
- * Live proof that a real agent's `JOB_SECRET` reaches nothing outside its own run -- the
- * in-process `RunScopeRouteAudit` fixture proves the same rules against mock requests, but no
- * other test presents a real secret, minted for a real execution, to the running stack. See
- * ARCHITECTURE.md's "Agent-route authentication" section for the layers this spec probes
- * (the auth filters and the run-scope guard) and docs/decisions/ for why this spec reads real
- * secrets from containers rather than fabricating one.
+ * Why this spec reads real secrets from containers and its routes from `/v3/api-docs`:
+ * docs/decisions/2026-11-13---03-live-cross-run-proof-reads-containers-and-the-api-description.md.
  */
 import { test, expect } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
@@ -20,17 +16,13 @@ const API_BASE_URL = process.env.E2E_API_URL ?? "http://localhost:28080";
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-interface ProbeResult {
-  status: number;
-}
+// An agent's own execution under another run's id. InternalAuthFilter does not compare the path's
+// run, so it authenticates this pair and the run-scope guard refuses it; a filter that compares runs
+// answers 401 itself.
+const OWN_EXECUTION_IN_OTHER_RUN_STATUS = 404;
 
-/**
- * One bare `fetch`, never Playwright's `request` fixture -- that fixture traces every call it
- * makes into the test's report/HAR, which would print a real job secret there. A write method
- * always sends a body (`{}` unless the caller supplies one), matching what every write route
- * here actually expects.
- */
-async function probe(method: string, path: string, bearer: string, body?: unknown): Promise<ProbeResult> {
+/** Plain `fetch`, never Playwright's `request` fixture, whose traces would record the secret. */
+async function probe(method: string, path: string, bearer: string, body?: unknown): Promise<number> {
   const headers: Record<string, string> = { Authorization: `Bearer ${bearer}` };
   let requestBody: string | undefined;
   if (WRITE_METHODS.has(method)) {
@@ -38,10 +30,8 @@ async function probe(method: string, path: string, bearer: string, body?: unknow
     headers["Content-Type"] = "application/json";
   }
   const res = await fetch(`${API_BASE_URL}${path}`, { method, headers, body: requestBody });
-  // Draining the body (without keeping it) is required for Node's fetch to release the
-  // connection back to its pool; this spec never needs the response's content.
-  await res.text();
-  return { status: res.status };
+  await res.text(); // releases the connection to Node's pool
+  return res.status;
 }
 
 /** `path`'s own run-storage prefix (its first segment) replaced, so it sits outside every run's tree. */
@@ -56,8 +46,8 @@ test.describe("Agent run-scope boundary", () => {
     api,
     workerRepo,
   }) => {
-    // Stays within branch_b's `slow --delay 120` (E2eTestDataSeeder#seedParallelFanout) so both
-    // runs' agent containers are still alive for every probe below.
+    // agentWorkload's `docker exec` needs branch_b's container running; its `slow --delay 120`
+    // (E2eTestDataSeeder#seedParallelFanout) outlasts this timeout.
     test.setTimeout(120_000);
 
     const template = await api.getTemplateByName("e2e-parallel-fanout");
@@ -79,13 +69,11 @@ test.describe("Agent run-scope boundary", () => {
       expect(apiDocsRes.ok).toBe(true);
       const ops = executionScopedOperations(await apiDocsRes.json());
 
-      // Non-vacuity floor: fail loudly if the enumeration ever misses a well-known agent route,
-      // rather than silently probing fewer routes than this spec claims to.
       expect(missingFloorRoutes(ops)).toEqual([]);
 
       const mismatches: string[] = [];
       const check = async (label: string, expected: number, method: string, path: string, body?: unknown) => {
-        const { status } = await probe(method, path, secretA, body);
+        const status = await probe(method, path, secretA, body);
         if (status !== expected) {
           mismatches.push(`${label}: expected ${expected}, got ${status}`);
         }
@@ -106,18 +94,15 @@ test.describe("Agent run-scope boundary", () => {
           op.method,
           expandPath(op.template, runA.id, execIdB),
         );
-        // The run-scope guard answers this one today (the filter doesn't yet compare runs); a
-        // later Task that fixes the filter moves this expectation to 401.
         await check(
           `${label} [A's execution in B's path]`,
-          404,
+          OWN_EXECUTION_IN_OTHER_RUN_STATUS,
           op.method,
           expandPath(op.template, runB.id, execIdA),
         );
       }
 
-      // Positive control: a broken secret (or a route expanded wrongly above) cannot pass every
-      // refusal by accident if it also fails the one case that must succeed.
+      // Positive control: without it, a secret no route accepts would pass every refusal above.
       await check(
         "GET positive control",
         200,

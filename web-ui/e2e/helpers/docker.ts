@@ -116,15 +116,8 @@ export interface AgentWorkload {
 }
 
 /**
- * The real job secret and output path for execId's agent container, read from the container
- * itself rather than fabricated -- `agent-run-scope.spec.ts` presents this secret to the running
- * stack as proof of what a real agent can and cannot reach outside its own run. Filters on
- * `choruskube/exec-id` and excludes the DinD sidecar (`choruskube/dind=true`), which carries the
- * same `choruskube/run-id` but no `JOB_SECRET` or `/workspace/config.json` of its own.
- *
- * Every failure is re-thrown with a plain message only, never the originating error (whose
- * `stdout`/`stderr` can hold `docker inspect`'s full container environment, secret included) --
- * so a report or trace that captures a rejected promise still never prints one.
+ * The `JOB_SECRET` and `output_path` execId's agent container was launched with. The DinD sidecar
+ * carries the same `choruskube/exec-id` but neither value, so it is skipped by `choruskube/dind`.
  */
 export async function agentWorkload(execId: string): Promise<AgentWorkload> {
   try {
@@ -144,7 +137,7 @@ export async function agentWorkload(execId: string): Promise<AgentWorkload> {
     }
 
     const { stdout: envOut } = await run("docker", ["inspect", "--format", "{{json .Config.Env}}", container]);
-    const env: string[] = JSON.parse(envOut);
+    const env = parseJsonQuietly(envOut, "container environment") as string[];
     const jobSecretEntry = env.find((entry) => entry.startsWith("JOB_SECRET="));
     if (!jobSecretEntry) {
       throw new Error(`container for exec id ${execId} has no JOB_SECRET in its environment`);
@@ -152,14 +145,27 @@ export async function agentWorkload(execId: string): Promise<AgentWorkload> {
     const jobSecret = jobSecretEntry.slice("JOB_SECRET=".length);
 
     const { stdout: configOut } = await run("docker", ["exec", container, "cat", "/workspace/config.json"]);
-    const outputPath: unknown = JSON.parse(configOut).output_path;
+    const config = parseJsonQuietly(configOut, "config.json") as { output_path?: unknown };
+    const outputPath = config.output_path;
     if (typeof outputPath !== "string" || outputPath.length === 0) {
       throw new Error(`container for exec id ${execId} has no output_path in its config.json`);
     }
 
     return { jobSecret, outputPath };
   } catch (err) {
+    // A fresh error holding one line: the original carries docker's stdout and stderr, so a report
+    // that prints it can carry the container environment, secret included.
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`agentWorkload(${execId}): ${message.split("\n")[0]}`);
+  }
+}
+
+// JSON.parse's own message quotes the text around the fault, which here is the container
+// environment holding JOB_SECRET.
+function parseJsonQuietly(text: string, what: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${what} is not valid JSON`);
   }
 }

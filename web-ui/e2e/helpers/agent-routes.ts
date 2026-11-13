@@ -1,9 +1,4 @@
-/**
- * agent-routes.ts — pure route-enumeration helpers for `specs/agent-run-scope.spec.ts`.
- *
- * No `@playwright/test` import: this module is Vitest-unit-tested on its own
- * (`agent-routes.test.ts`) against a hand-built `/v3/api-docs` shape, with no running stack.
- */
+/** agent-routes.ts — route enumeration for `specs/agent-run-scope.spec.ts`, unit-tested without a stack. */
 import { randomUUID } from "node:crypto";
 
 export interface AgentOperation {
@@ -12,20 +7,16 @@ export interface AgentOperation {
 }
 
 /**
- * Every agent route lives under this one path -- `InternalRunController` and
- * `InternalArtifactController`'s node-execution-scoped endpoints. A route elsewhere in
- * `/internal/**`, or under `/worker/runs/{runId}/node-executions/{nodeExecId}`, is reachable only
- * with the orchestrator secret or a Worker's Fleet credential, never an agent's `JOB_SECRET`, so
- * this spec has no probe for it.
+ * `InternalAuthFilter` accepts a `JOB_SECRET` only on a path naming its execution in this shape, so
+ * every route an agent can reach sits under it. Narrowing it silently drops agent routes from the probe.
  */
 export const EXECUTION_SCOPED_PREFIX = "/internal/runs/{runId}/node-executions/{nodeExecId}";
 
 const HTTP_METHODS = new Set(["get", "put", "post", "delete", "patch", "options", "head"]);
 
 /**
- * The well-known agent routes the enumeration must never miss. If `/v3/api-docs` ever stops
- * listing one of these -- a springdoc config change, a route moved behind a different base path
- * -- the spec fails loudly instead of silently probing fewer routes than it claims to.
+ * Agent routes the enumeration must never miss: without this floor, an API description that stops
+ * listing them would leave the spec passing while it probes fewer routes than it claims to.
  */
 export const FLOOR_ROUTES: AgentOperation[] = [
   { method: "PUT", template: `${EXECUTION_SCOPED_PREFIX}/status` },
@@ -46,12 +37,7 @@ function isExecutionScoped(path: string): boolean {
   return path === EXECUTION_SCOPED_PREFIX || path.startsWith(`${EXECUTION_SCOPED_PREFIX}/`);
 }
 
-/**
- * Every operation from a `/v3/api-docs` document (OpenAPI's `paths` map) whose path is the
- * execution-scoped prefix itself, or sits under it -- a run-level `/internal/runs/{runId}/...`
- * route, a `/worker/...` route, an `/api/**` route, or a path that merely contains
- * `node-executions` elsewhere, are all excluded.
- */
+/** Every operation in an OpenAPI document whose path is {@link EXECUTION_SCOPED_PREFIX} or sits under it. */
 export function executionScopedOperations(apiDocs: unknown): AgentOperation[] {
   const paths = isRecord(apiDocs) && isRecord(apiDocs.paths) ? apiDocs.paths : {};
   const ops: AgentOperation[] = [];

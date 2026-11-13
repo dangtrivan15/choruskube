@@ -57,6 +57,7 @@ describe("executionScopedOperations", () => {
     const docs = apiDocs({
       "/internal/runs/{runId}/other/node-executions/{nodeExecId}": { get: {} },
       "/internal/node-executions/{nodeExecId}/foo": { get: {} },
+      "/internal/runs/{runId}/node-executions/{nodeExecId}-suffix": { get: {} },
     });
 
     expect(executionScopedOperations(docs)).toEqual([]);
@@ -69,6 +70,20 @@ describe("executionScopedOperations", () => {
 
     const ops = executionScopedOperations(docs);
     expect(ops.map((o) => o.method).sort()).toEqual(["DELETE", "GET", "PUT"]);
+  });
+
+  it("skips a path item's non-operation keys", () => {
+    const docs = apiDocs({
+      "/internal/runs/{runId}/node-executions/{nodeExecId}/logs": {
+        summary: "logs",
+        parameters: [],
+        post: {},
+      },
+    });
+
+    expect(executionScopedOperations(docs)).toEqual([
+      { method: "POST", template: "/internal/runs/{runId}/node-executions/{nodeExecId}/logs" },
+    ]);
   });
 
   it("returns nothing for a malformed or missing paths map", () => {
