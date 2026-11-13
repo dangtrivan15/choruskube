@@ -1,14 +1,16 @@
 # docker-compose.yaml — ChorusKube reference stack
 #
-# The canonical single-user, no-auth stack. Boots from a clean volume with ZERO
-# configuration: no OIDC provider, no GitHub App, no Claude token required just
-# to come up. The api-server runs in single-tenant mode (`AUTH_ENABLED=false` →
-# /api/v1/** is open and scoped to the system org). The orchestrator drives each
-# run and hands every agent/script node to the worker, which owns the Docker
-# workload executor (`EXECUTOR_TYPE=docker`), spawning agent containers on the
-# host Docker daemon (DooD via the mounted socket).
+# The canonical single-user, no-auth stack. Boots from a clean volume with ONE setup
+# step, every prompt optional: ./scripts/setup.sh generates this install's own Worker
+# Fleet token (WORKER_REGISTRATION_TOKEN below); no OIDC provider, no GitHub App, no
+# Claude token is required just to come up. The api-server runs in single-tenant mode
+# (`AUTH_ENABLED=false` → /api/v1/** is open and scoped to the system org). The
+# orchestrator drives each run and hands every agent/script node to the worker, which
+# owns the Docker workload executor (`EXECUTOR_TYPE=docker`), spawning agent containers
+# on the host Docker daemon (DooD via the mounted socket).
 #
 # Usage:
+#   ./scripts/setup.sh         # run once; generates the Worker's Fleet token
 #   ./scripts/up.sh            # build & start, wait until healthy
 #   ./scripts/down.sh          # tear down + remove volumes
 #   open http://localhost:33000
@@ -144,8 +146,8 @@ services:
       # told to poll it.
       TEMPORAL_WORKER_TASK_QUEUE: choruskube-worker
       # Must equal the worker's FLEET_TOKEN, or /worker/register is refused and no node ever runs.
-      # Local-dev default; set your own in .env for any shared deployment.
-      WORKER_REGISTRATION_TOKEN: ${WORKER_REGISTRATION_TOKEN:-choruskube-local-worker-token}
+      # Generated per install into .env by ./scripts/setup.sh; no default is published here.
+      WORKER_REGISTRATION_TOKEN: "${WORKER_REGISTRATION_TOKEN:?Run ./scripts/setup.sh to generate a Worker token first}"
       OBJECT_STORE_ENDPOINT: http://object-storage:9000
       OBJECT_STORE_ACCESS_KEY: objectstore-dev
       OBJECT_STORE_SECRET_KEY: objectstore-dev-secret
@@ -222,8 +224,9 @@ services:
     environment:
       API_SERVER_URL: http://api-server:8080
       # Must equal the api-server's WORKER_REGISTRATION_TOKEN or /worker/register is refused. Being
-      # set selects registration: the api-server answers with the queue to poll.
-      FLEET_TOKEN: ${WORKER_REGISTRATION_TOKEN:-choruskube-local-worker-token}
+      # set selects registration: the api-server answers with the queue to poll. Generated per
+      # install into .env by ./scripts/setup.sh; no default is published here.
+      FLEET_TOKEN: "${WORKER_REGISTRATION_TOKEN:?Run ./scripts/setup.sh to generate a Worker token first}"
       WORKER_CAPABILITIES: docker=true
       TEMPORAL_ADDRESS: temporal:7233
       # This Temporal serves plaintext gRPC, and the SDK turns TLS on whenever a credential is present.

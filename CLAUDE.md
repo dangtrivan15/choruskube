@@ -118,10 +118,10 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 
 ## Local Stack
 
-`docker-compose.yaml` is the reference environment: API server, orchestrator, worker, web UI, PostgreSQL, Temporal, and S3-compatible object storage (SeaweedFS). A Worker runs the Docker executor, launching agent containers as siblings on the host Docker socket, so the local stack exercises the real workload path, not a stub. Bring it up with `./scripts/up.sh` and down (wiping volumes) with `./scripts/down.sh` — see [QUICKSTART.md](QUICKSTART.md#quick-start).
+`docker-compose.yaml` is the reference environment: API server, orchestrator, worker, web UI, PostgreSQL, Temporal, and S3-compatible object storage (SeaweedFS). A Worker runs the Docker executor, launching agent containers as siblings on the host Docker socket, so the local stack exercises the real workload path, not a stub. Bring it up with `./scripts/setup.sh` (run once; generates the Worker's Fleet token) then `./scripts/up.sh`, and down (wiping volumes) with `./scripts/down.sh` — see [QUICKSTART.md](QUICKSTART.md#quick-start).
 
 **Keep `docker-compose.yaml` in sync when touching wiring:**
-- **New API env var / secret** → supply a working default in `docker-compose.yaml` so the stack boots from a clean volume with **zero configuration** (the OSS promise: no OIDC, no GitHub App, no Claude token required just to come up)
+- **New API env var / secret** → supply a working default in `docker-compose.yaml` so the stack boots from a clean volume with **one setup step, every prompt optional** (the OSS promise: no OIDC, no GitHub App, no Claude token required just to come up). The one exception is a generated secret shared between services, like the Worker's Fleet token: it has no compose default and is instead a required variable that `./scripts/setup.sh` writes into `.env` per install — see `docs/decisions/2026-11-13---02-compose-worker-token-generated-per-install.md`
 - **Temporal version** → compose image tag + matching Go SDK in `orchestrator/go.mod`
 - **Object storage** → the `OBJECT_STORE_*` env vars (`OBJECT_STORE_ENDPOINT`, `_ACCESS_KEY`, `_SECRET_KEY`, `_BUCKET`) configure the API server; the agent never sees them (presigned URLs only)
 - **Agent entrypoint contract** (`agent-images/claude-code/entrypoint.sh`: env vars set, CLI tools on PATH, workspace layout) changes ripple to every agent run

@@ -3,10 +3,15 @@
 #
 # Usage:
 #   ./scripts/up.sh                 # build + up --wait
-#   ./scripts/setup.sh              # configure credentials first (writes .secrets/credentials/), then runs this
+#   ./scripts/setup.sh              # generates the Worker's Fleet token and configures
+#                                    # credentials first (writes .secrets/credentials/), then runs this
 set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+
+# Fails fast with compose's own required-variable message (naming ./scripts/setup.sh) before
+# the agent-image build below, which is not a compose service and can take minutes on a cold cache.
+compose config --quiet
 
 # The Worker's credentials-folder mount source must exist user-owned before compose: Docker
 # would otherwise create it as root, and setup.sh could no longer write it. Harmless when empty.

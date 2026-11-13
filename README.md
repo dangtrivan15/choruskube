@@ -50,8 +50,9 @@ App key — in its own credentials folder; see
 
 ## Getting started
 
-Needs Docker + Docker Compose v2. See **[QUICKSTART.md](QUICKSTART.md)** to boot
-the stack, **[ARCHITECTURE.md](ARCHITECTURE.md)** for how it fits together, and
+Needs Docker + Docker Compose v2. A first boot runs `./scripts/setup.sh` once, which
+generates this install's own Worker Fleet token. See **[QUICKSTART.md](QUICKSTART.md)**
+to boot the stack, **[ARCHITECTURE.md](ARCHITECTURE.md)** for how it fits together, and
 **[PRIVACY.md](PRIVACY.md)** for the anonymous opt-out telemetry.
 
 ## License

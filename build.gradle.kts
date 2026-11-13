@@ -241,11 +241,32 @@ val agentScriptTest = tasks.register<Exec>("agentScriptTest") {
     )
 }
 
+// scripts/ has no Gradle project of its own either; mirrors agentScriptTest for
+// scripts/test/test-*.sh so a regression there (e.g. in setup.sh's token generation)
+// is equally visible to CI rather than invisible until someone runs the script by hand.
+val scriptTest = tasks.register<Exec>("scriptTest") {
+    description = "Run the repo-root scripts' bash unit tests"
+    group = "verification"
+    workingDir = rootDir
+    commandLine(
+        "bash", "-c",
+        """
+        set -u
+        failed=0
+        for t in scripts/test/test-*.sh; do
+          echo "=== ${'$'}t ==="
+          bash "${'$'}t" || failed=1
+        done
+        exit ${'$'}failed
+        """.trimIndent()
+    )
+}
+
 // The unit suites run before the e2e chain but do not gate it: org.gradle.continue=true runs the
 // chain after a unit failure too, so one run reports both. mustRunAfter (not dependsOn) keeps
 // the e2e tasks individually invokable — the constraint simply disappears when the unit
 // tasks are not in the graph.
-val unitStage = listOf(":api-server:test", ":orchestrator:test", ":worker:test", ":web-ui:test", agentScriptTest)
+val unitStage = listOf(":api-server:test", ":orchestrator:test", ":worker:test", ":web-ui:test", agentScriptTest, scriptTest)
 
 val e2eDown = tasks.register<Exec>("e2eDown") {
     description = "Tear down the e2e stack and wipe its volumes"
