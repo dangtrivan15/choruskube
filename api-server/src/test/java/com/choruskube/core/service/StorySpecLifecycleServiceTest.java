@@ -14,7 +14,6 @@ import ch.qos.logback.core.read.ListAppender;
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.StoryDesignGraph;
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.StoryRequest;
@@ -92,12 +91,6 @@ class StorySpecLifecycleServiceTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
-
-    @MockitoBean
-    private GitHubAppService gitHubAppService;
-
-    @MockitoBean
-    private GitHubCredentialResolver gitHubCredentialResolver;
 
     @MockitoBean
     private S3Client s3Client;

@@ -225,9 +225,6 @@ services:
       # set selects registration: the api-server answers with the queue to poll.
       FLEET_TOKEN: ${WORKER_REGISTRATION_TOKEN:-choruskube-local-worker-token}
       WORKER_CAPABILITIES: docker=true
-      # This Worker holds the install's credentials: the api-server holds none, so any other
-      # mode leaves every AI node and GitHub step without a credential.
-      CREDENTIAL_SOURCE: local
       TEMPORAL_ADDRESS: temporal:7233
       # This Temporal serves plaintext gRPC, and the SDK turns TLS on whenever a credential is present.
       TEMPORAL_TLS_DISABLED: "true"

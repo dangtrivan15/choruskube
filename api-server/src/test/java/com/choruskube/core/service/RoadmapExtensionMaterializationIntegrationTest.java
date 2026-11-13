@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
 import com.choruskube.core.config.GraphIds;
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.CandidateDependency;
 import com.choruskube.core.dto.CandidateEpicProposal;
 import com.choruskube.core.dto.CandidateStoryProposal;
@@ -70,12 +69,6 @@ class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
 
     @MockitoBean
     private WorkflowClient workflowClient;
-
-    @MockitoBean
-    private GitHubAppService gitHubAppService;
-
-    @MockitoBean
-    private GitHubCredentialResolver gitHubCredentialResolver;
 
     @Autowired
     private RunService runService;
@@ -239,7 +232,6 @@ class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
         String result = gateFinalize
                 .complete(run.getId(), exec.getId(), approvalId, List.of(), issues)
                 .result();
-        Mockito.verifyNoInteractions(gitHubAppService, gitHubCredentialResolver);
         return result;
     }
 

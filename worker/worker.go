@@ -9,7 +9,6 @@ package worker
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/dangtrivan15/choruskube/worker/executor"
 )
@@ -74,32 +73,16 @@ type Config struct {
 	// Executor launches and manages each node execution's workload. Required: Validate
 	// rejects a nil Executor.
 	Executor executor.Executor
-	// CredentialSource is CredentialSourceControlPlane or CredentialSourceLocal. Required, with
-	// no default: Validate rejects a blank or unknown value rather than guessing which mode a
-	// Worker runs in. Local is for a Worker serving a single tenant's own Fleet: it reads one set
-	// of credentials for every run it executes.
-	CredentialSource string
-	// CredentialsDir is the folder the local source reads credentials from. Unused by the
-	// control-plane source.
-	CredentialsDir string
-	// GitHubAPIURL is the GitHub API root for the Worker's own GitHub calls, including minting
-	// App tokens in the local source.
+	// CredentialPlane supplies this Worker's credentials. Required, with no default: Validate
+	// rejects a zero value rather than guessing where a Worker's credentials come from. The
+	// open-source binary always passes LocalCredentialPlane; an embedding binary may supply its
+	// own.
+	CredentialPlane CredentialPlane
+	// GitHubAPIURL is the GitHub API root for the Worker's own GitHub calls.
 	GitHubAPIURL string
-	// AnthropicAPIURL is the Anthropic API root the local source's credential health check
-	// reads a Claude token against.
-	AnthropicAPIURL string
 }
 
-const (
-	// CredentialSourceControlPlane asks the API server for each run's GitHub token.
-	CredentialSourceControlPlane = "control-plane"
-	// CredentialSourceLocal reads credentials from CredentialsDir, falling back to the environment.
-	CredentialSourceLocal = "local"
-
-	defaultCredentialsDir  = "/etc/choruskube/credentials"
-	defaultGitHubAPIURL    = "https://api.github.com"
-	defaultAnthropicAPIURL = "https://api.anthropic.com"
-)
+const defaultGitHubAPIURL = "https://api.github.com"
 
 // Validate reports the first missing required field. Run calls it; callers building a
 // Config from flags or env may call it earlier to fail before any connection is made.
@@ -113,10 +96,8 @@ func (c Config) Validate() error {
 		return errors.New("CallbackURL is required")
 	case c.Provider == nil:
 		return errors.New("Provider is required")
-	case c.CredentialSource == "":
-		return errors.New("CredentialSource is required")
-	case c.CredentialSource != CredentialSourceControlPlane && c.CredentialSource != CredentialSourceLocal:
-		return fmt.Errorf("CredentialSource %q is not %q or %q", c.CredentialSource, CredentialSourceControlPlane, CredentialSourceLocal)
+	case c.CredentialPlane.New == nil || c.CredentialPlane.Source == "":
+		return errors.New("CredentialPlane is required")
 	case c.Executor == nil:
 		return errors.New("Executor is required")
 	}
@@ -133,14 +114,8 @@ func (c Config) withDefaults() Config {
 	if c.CallbackPort == 0 {
 		c.CallbackPort = defaultCallbackPort
 	}
-	if c.CredentialsDir == "" {
-		c.CredentialsDir = defaultCredentialsDir
-	}
 	if c.GitHubAPIURL == "" {
 		c.GitHubAPIURL = defaultGitHubAPIURL
-	}
-	if c.AnthropicAPIURL == "" {
-		c.AnthropicAPIURL = defaultAnthropicAPIURL
 	}
 	return c
 }

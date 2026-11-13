@@ -35,8 +35,9 @@ type TokenFleetProvider struct {
 	// registration call, including renewals -- never nil, so the wire body carries "{}" rather
 	// than "null" for a Worker that reports none.
 	capabilities map[string]string
-	// credentialSource is the CredentialSource this Worker resolved to, reported at every
-	// registration call so the API server can tell the two modes apart.
+	// credentialSource is the wire value of the CredentialPlane this Worker was built with,
+	// reported at every registration call so the API server can tell providers apart. Set by
+	// attachCredentialSource; a registration sent before that call carries "".
 	credentialSource string
 	// healthSource supplies the latest credential-health report, consulted on every
 	// registration call. Set once by attachHealth before the first call; Fleets refuses to
@@ -50,7 +51,13 @@ func (p *TokenFleetProvider) attachHealth(source func() []credprov.HealthResult)
 	p.healthSource = source
 }
 
-func NewTokenFleetProvider(apiServerURL, fleetToken string, capabilities map[string]string, credentialSource string, hc *http.Client) *TokenFleetProvider {
+// attachCredentialSource sets the declared credential source every subsequent registration call
+// reports, following the same set-before-first-call pattern as attachHealth.
+func (p *TokenFleetProvider) attachCredentialSource(source string) {
+	p.credentialSource = source
+}
+
+func NewTokenFleetProvider(apiServerURL, fleetToken string, capabilities map[string]string, hc *http.Client) *TokenFleetProvider {
 	if hc == nil {
 		hc = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -58,12 +65,11 @@ func NewTokenFleetProvider(apiServerURL, fleetToken string, capabilities map[str
 		capabilities = map[string]string{}
 	}
 	return &TokenFleetProvider{
-		baseURL:          strings.TrimRight(apiServerURL, "/"),
-		token:            fleetToken,
-		hc:               hc,
-		instanceID:       uuid.NewString(),
-		capabilities:     capabilities,
-		credentialSource: credentialSource,
+		baseURL:      strings.TrimRight(apiServerURL, "/"),
+		token:        fleetToken,
+		hc:           hc,
+		instanceID:   uuid.NewString(),
+		capabilities: capabilities,
 	}
 }
 

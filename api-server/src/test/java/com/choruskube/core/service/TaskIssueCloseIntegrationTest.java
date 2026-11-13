@@ -16,7 +16,6 @@ import static org.mockito.Mockito.when;
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
 import com.choruskube.core.config.WorkflowClientRegistry;
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.CloseTaskIssueWorkflowInput;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -118,12 +117,6 @@ public class TaskIssueCloseIntegrationTest extends BaseTest {
     private RunEventPublisher runEventPublisher;
 
     @MockitoBean
-    private GitHubAppService gitHubAppService;
-
-    @MockitoBean
-    private GitHubCredentialResolver gitHubCredentialResolver;
-
-    @MockitoBean
     private WorkflowClientRegistry workflowClientRegistry;
 
     @MockitoSpyBean
@@ -178,7 +171,6 @@ public class TaskIssueCloseIntegrationTest extends BaseTest {
         assertThat(startedInput())
                 .isEqualTo(new CloseTaskIssueWorkflowInput(taskId, run.getId(), repo.getName(), 42, workerQueue));
         assertThat(statusOf(taskId)).isEqualTo(WorkItemStatus.done);
-        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver);
     }
 
     @Test
@@ -190,7 +182,6 @@ public class TaskIssueCloseIntegrationTest extends BaseTest {
         taskService.updateStatus(taskId, WorkItemStatus.done, run.getId(), null);
 
         assertThat(startedInput().runId()).isEqualTo(run.getId());
-        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver);
     }
 
     @Test
@@ -203,7 +194,6 @@ public class TaskIssueCloseIntegrationTest extends BaseTest {
                 taskId, WorkItemStatus.done, run.getId(), repo.getId(), run.getId(), "agent done");
 
         assertThat(startedInput().runId()).isEqualTo(run.getId());
-        verifyNoInteractions(gitHubAppService, gitHubCredentialResolver);
     }
 
     @Test

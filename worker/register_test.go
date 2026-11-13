@@ -19,8 +19,8 @@ func noHealthReport() []credprov.HealthResult {
 
 // registeringProvider builds a *TokenFleetProvider with a health source already attached, so a
 // test not about the report itself can call Fleets without thinking about it.
-func registeringProvider(apiServerURL, fleetToken string, capabilities map[string]string, credentialSource string, hc *http.Client) *TokenFleetProvider {
-	p := NewTokenFleetProvider(apiServerURL, fleetToken, capabilities, credentialSource, hc)
+func registeringProvider(apiServerURL, fleetToken string, capabilities map[string]string, hc *http.Client) *TokenFleetProvider {
+	p := NewTokenFleetProvider(apiServerURL, fleetToken, capabilities, hc)
 	p.attachHealth(noHealthReport)
 	return p
 }
@@ -37,7 +37,7 @@ func TestTokenFleetProviderReturnsOneFleet(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reg, err := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background())
+	reg, err := registeringProvider(srv.URL, "ckf_secret", nil, srv.Client()).Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestTokenFleetProviderReusesOneInstanceIDPerProcess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
+	p := registeringProvider(srv.URL, "ckf_secret", nil, srv.Client())
 	_, _ = p.Fleets(context.Background())
 	_, _ = p.Fleets(context.Background())
 
@@ -93,7 +93,7 @@ func TestTokenFleetProviderRejectsNon2xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := registeringProvider(srv.URL, "bad", nil, "", srv.Client()).Fleets(context.Background())
+	_, err := registeringProvider(srv.URL, "bad", nil, srv.Client()).Fleets(context.Background())
 	if err == nil {
 		t.Fatal("want an error for 403, got nil")
 	}
@@ -106,7 +106,7 @@ func TestTokenFleetProviderReturnsTheMintedInternalToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reg, err := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background())
+	reg, err := registeringProvider(srv.URL, "ckf_secret", nil, srv.Client()).Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestTokenFleetProviderFallsBackToTheFleetTokenBeforeAnyMint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	reg, err := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background())
+	reg, err := registeringProvider(srv.URL, "ckf_secret", nil, srv.Client()).Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestTokenFleetProviderPropagatesABlankAfterAMint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
+	p := registeringProvider(srv.URL, "ckf_secret", nil, srv.Client())
 	first, err := p.Fleets(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error on the first registration: %v", err)
@@ -181,7 +181,7 @@ func TestTokenFleetProviderFallsBackOnEveryBlankFromAServerThatNeverMints(t *tes
 	}))
 	defer srv.Close()
 
-	p := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
+	p := registeringProvider(srv.URL, "ckf_secret", nil, srv.Client())
 	for call := 1; call <= 2; call++ {
 		reg, err := p.Fleets(context.Background())
 		if err != nil {
@@ -203,7 +203,7 @@ func TestTokenFleetProviderSendsConfiguredCapabilities(t *testing.T) {
 	defer srv.Close()
 
 	caps := map[string]string{"docker": "true"}
-	if _, err := registeringProvider(srv.URL, "ckf_secret", caps, "", srv.Client()).Fleets(context.Background()); err != nil {
+	if _, err := registeringProvider(srv.URL, "ckf_secret", caps, srv.Client()).Fleets(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	sent, ok := gotBody["capabilities"].(map[string]any)
@@ -212,7 +212,7 @@ func TestTokenFleetProviderSendsConfiguredCapabilities(t *testing.T) {
 	}
 }
 
-func TestTokenFleetProviderSendsTheDeclaredCredentialSource(t *testing.T) {
+func TestTokenFleetProviderSendsTheAttachedCredentialSource(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -221,7 +221,8 @@ func TestTokenFleetProviderSendsTheDeclaredCredentialSource(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := registeringProvider(srv.URL, "ckf_secret", nil, CredentialSourceLocal, srv.Client())
+	p := registeringProvider(srv.URL, "ckf_secret", nil, srv.Client())
+	p.attachCredentialSource("local")
 	if _, err := p.Fleets(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -238,10 +239,9 @@ func TestTokenFleetProviderSendsTheDeclaredCredentialSource(t *testing.T) {
 	}
 }
 
-// There is no tolerant default here: a caller that passes an unset CredentialSource gets it sent
-// exactly as blank, not silently upgraded to "control-plane". The real binary never reaches this
-// constructor with one -- main's credentialSourceOf already failed startup by then.
-func TestTokenFleetProviderSendsBlankCredentialSourceWhenUnset(t *testing.T) {
+// There is no tolerant default here: a provider nobody has called attachCredentialSource on sends
+// it exactly as blank, not silently upgraded to any mode.
+func TestTokenFleetProviderSendsBlankCredentialSourceWhenNeverAttached(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -250,7 +250,7 @@ func TestTokenFleetProviderSendsBlankCredentialSourceWhenUnset(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := registeringProvider(srv.URL, "ckf_secret", nil, "", srv.Client()).Fleets(context.Background()); err != nil {
+	if _, err := registeringProvider(srv.URL, "ckf_secret", nil, srv.Client()).Fleets(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotBody["credentialSource"] != "" {
@@ -275,7 +275,7 @@ func TestTokenFleetProviderSendsCredentialHealthOnFirstCallAndRenewal(t *testing
 		{Kind: credprov.KindClaude, Status: credprov.StatusExpired, Detail: "token expired", CheckedAt: now},
 		{Kind: credprov.KindRegistry, Status: credprov.StatusNotHeld, CheckedAt: now},
 	}
-	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
+	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, srv.Client())
 	p.attachHealth(func() []credprov.HealthResult { return results })
 
 	for _, label := range []string{"first call", "renewal"} {
@@ -313,7 +313,7 @@ func TestTokenFleetProviderWithoutAHealthSourceRefusesToRegister(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client())
+	p := NewTokenFleetProvider(srv.URL, "ckf_secret", nil, srv.Client())
 	_, err := p.Fleets(context.Background())
 
 	if err == nil {

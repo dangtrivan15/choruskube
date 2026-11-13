@@ -2,7 +2,9 @@ package com.choruskube.core.service;
 
 import com.choruskube.core.dto.WorkerRegisterRequest;
 import com.choruskube.core.dto.WorkerRegisterResponse;
+import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.ForbiddenException;
+import com.choruskube.core.model.WorkerCredentialSource;
 
 /**
  * The default {@link WorkerRegistrar}: this server has exactly one Fleet, and it is the Temporal
@@ -16,13 +18,12 @@ import com.choruskube.core.exception.ForbiddenException;
  * <p>No Worker record is kept, so the response echoes the {@code instanceId} the Worker generated
  * rather than inventing an id nothing can later resolve. Revoking one Worker is therefore not
  * possible here; rotating {@code worker.registration.token} stops all of them. {@code
- * request.credentialSource()} is validated by {@link WorkerRegisterRequest} before this class
- * ever sees it, but is otherwise unused here: this server serves exactly one Fleet, so which mode
- * it runs is a fact about the deployment, not something to learn from whichever Worker happens to
- * register, and there is nothing per-Worker to record it against. {@code
- * request.credentialHealth()} is likewise validated before this class sees it and otherwise
- * ignored: this class receives every Worker's credential-health report and keeps none of it,
- * because there is no Worker record here for a report to lapse with.
+ * request.credentialSource()} is checked: a self-hosted server holds no credential to broker, so a
+ * Worker declaring {@link WorkerCredentialSource#CONTROL_PLANE} is refused rather than registered
+ * and left to fail its first node. {@code request.credentialHealth()} is validated by {@link
+ * WorkerRegisterRequest} before this class sees it and otherwise ignored: this class receives every
+ * Worker's credential-health report and keeps none of it, because there is no Worker record here
+ * for a report to lapse with.
  *
  * <p><b>Not a Spring bean.</b> {@code WorkerRegistrationController} holds it as the fallback
  * behind an {@code ObjectProvider}, the same arrangement as {@link ShufflingTickOrder}, so an
@@ -51,6 +52,10 @@ public class SingleFleetWorkerRegistrar implements WorkerRegistrar {
     @Override
     public WorkerRegisterResponse register(String fleetToken, WorkerRegisterRequest request) {
         requireConfiguredToken(fleetToken);
+        if (request.credentialSource() == WorkerCredentialSource.CONTROL_PLANE) {
+            throw new ConflictException(
+                    "This server holds no credentials to broker; the Worker must hold its own credentials (declare credentialSource=local)");
+        }
         // Blank Temporal token: an OSS Temporal runs without an authorizer, and the Worker must send
         // no credential at all rather than an empty one -- the SDK enables TLS on their mere presence.
         // Blank endpoint: the Worker already knows where Temporal is; there is only one.

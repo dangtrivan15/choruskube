@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.choruskube.core.dto.WorkerCredentialHealth;
 import com.choruskube.core.dto.WorkerRegisterRequest;
 import com.choruskube.core.dto.WorkerRegisterResponse;
+import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.ForbiddenException;
 import com.choruskube.core.model.CredentialHealthStatus;
 import com.choruskube.core.model.CredentialKind;
@@ -33,7 +34,7 @@ class SingleFleetWorkerRegistrarTest {
 
     private static WorkerRegisterRequest request(String hostname) {
         return new WorkerRegisterRequest(
-                hostname, UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE, notHeldHealth());
+                hostname, UUID.randomUUID(), Map.of(), WorkerCredentialSource.LOCAL, notHeldHealth());
     }
 
     @Test
@@ -126,32 +127,40 @@ class SingleFleetWorkerRegistrarTest {
                 .register(
                         "tok",
                         new WorkerRegisterRequest(
-                                "host",
-                                UUID.randomUUID(),
-                                Map.of(),
-                                WorkerCredentialSource.CONTROL_PLANE,
-                                notHeldHealth()));
+                                "host", UUID.randomUUID(), Map.of(), WorkerCredentialSource.LOCAL, notHeldHealth()));
 
         assertThat(response.internalToken()).isEmpty();
     }
 
-    /**
-     * {@code credentialSource} is accepted and ignored: this server has exactly one Fleet whose
-     * mode is a fact about the deployment, not something to learn from whichever Worker registers,
-     * so neither value changes what a Worker is told.
-     */
+    /** This server holds no credential to broker, so a Worker that wants one is refused, not registered. */
     @Test
-    void register_acceptsEitherDeclaredCredentialSourceWithNoDifferenceInTheResponse() {
-        WorkerRegisterResponse local = registrar.register(
-                TOKEN,
-                new WorkerRegisterRequest(
-                        "host-1", UUID.randomUUID(), Map.of(), WorkerCredentialSource.LOCAL, notHeldHealth()));
-        WorkerRegisterResponse controlPlane = registrar.register(
-                TOKEN,
-                new WorkerRegisterRequest(
-                        "host-2", UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE, notHeldHealth()));
+    void register_declaredControlPlane_isConflict() {
+        WorkerRegisterRequest controlPlane = new WorkerRegisterRequest(
+                "host-1", UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE, notHeldHealth());
 
-        assertThat(local.temporalNamespace()).isEqualTo(controlPlane.temporalNamespace());
-        assertThat(local.taskQueue()).isEqualTo(controlPlane.taskQueue());
+        assertThatThrownBy(() -> registrar.register(TOKEN, controlPlane))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("must hold its own credentials");
+    }
+
+    @Test
+    void register_declaredLocal_isAccepted() {
+        WorkerRegisterRequest local = new WorkerRegisterRequest(
+                "host-1", UUID.randomUUID(), Map.of(), WorkerCredentialSource.LOCAL, notHeldHealth());
+
+        WorkerRegisterResponse response = registrar.register(TOKEN, local);
+
+        assertThat(response.temporalNamespace()).isEqualTo("ns-1");
+        assertThat(response.taskQueue()).isEqualTo("queue-1");
+    }
+
+    /** The token check happens before the credential-source check, so a bad token is what surfaces first. */
+    @Test
+    void register_declaredControlPlane_withWrongToken_isForbiddenNotConflict() {
+        WorkerRegisterRequest controlPlane = new WorkerRegisterRequest(
+                "host-1", UUID.randomUUID(), Map.of(), WorkerCredentialSource.CONTROL_PLANE, notHeldHealth());
+
+        assertThatThrownBy(() -> registrar.register("ckf_not_the_secret", controlPlane))
+                .isInstanceOf(ForbiddenException.class);
     }
 }

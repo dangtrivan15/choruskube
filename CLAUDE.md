@@ -156,7 +156,7 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 - **Feature work runs as Story Design per Story plus Task Delivery per Task** — a Task starts only once its Story has an approved spec. A Task that finds the Story spec wrong escalates to the Story as a story conflict, and a revision is a new Story Design run, never a local override. Feature Development serves only runs started without a Task. See `docs/decisions/2026-11-01---01-design-per-story-deliver-per-task.md`
 - **GitRepo is a first-class entity** — each org gets its own Kubernetes namespace with provisioned RBAC and network policies
 - **Single-tenant identity** — there is no OIDC provider in the OSS core. `SingleTenantResolver` / `SingleTenantUserInfoProvider` resolve every request to the seeded system org
-- **No new control-plane GitHub call** — a GitHub call the API server would need runs as a Worker step instead. `ControlPlaneGitHubCallsTest` fails the build on any call into a GitHub-calling method that its allowlist does not name, and on an entry whose call is gone; the list is empty and stays so. See `docs/decisions/2026-10-13---02-data-plane-credential-rule.md` and `docs/decisions/2026-11-10---01-self-hosted-server-holds-no-credential.md`.
+- **Core has no GitHub client** — a GitHub call the API server would need runs as a Worker step instead. `ControlPlaneGitHubCallsTest` fails the build on any production source naming the GitHub API. See `docs/decisions/2026-10-13---02-data-plane-credential-rule.md` and `docs/decisions/2026-11-13---01-the-open-source-worker-is-local-only.md`.
 - Each component has its own Dockerfile with multi-stage builds — keep build and runtime stages separate
 
 ## Contribution Workflow

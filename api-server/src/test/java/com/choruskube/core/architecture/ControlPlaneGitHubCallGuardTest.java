@@ -19,8 +19,10 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * {@link ControlPlaneGitHubCallGuard}'s own test, run over the synthetic fixtures in {@code
- * com.choruskube.core.architecture.fixtures} rather than real production code — {@link
- * ControlPlaneGitHubCallsTest} is what proves the guard against this repo's actual call sites.
+ * com.choruskube.core.architecture.fixtures} rather than real production code. {@link
+ * ControlPlaneGitHubCallsTest} now runs only the source-only form ({@link
+ * ControlPlaneGitHubCallGuard#requireNoGitHubApiNamed}) over this repo's real sources; the
+ * call-graph form (the rest of the public API this class builds against) is proven only here.
  */
 class ControlPlaneGitHubCallGuardTest {
 
@@ -224,5 +226,38 @@ class ControlPlaneGitHubCallGuardTest {
                 .sourceRoot(sourceRoot);
 
         assertThatThrownBy(() -> guard.check(Map.of())).hasMessageContaining("No guarded class");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"github.api.url", "GITHUB_API_URL", "https://API.GitHub.com/repos"})
+    void requireNoGitHubApiNamed_failsOnAnySpelling(String token, @TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("Leaky.java"), "class Leaky { String x = \"" + token + "\"; }");
+
+        assertThatThrownBy(() -> ControlPlaneGitHubCallGuard.requireNoGitHubApiNamed(root))
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("Leaky.java:1")
+                .hasMessageContaining(ControlPlaneGitHubCallGuard.RULE);
+    }
+
+    @Test
+    void requireNoGitHubApiNamed_passesOnCleanSource(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("Clean.java"), "class Clean { String x = \"nothing to see\"; }");
+
+        assertThatCode(() -> ControlPlaneGitHubCallGuard.requireNoGitHubApiNamed(root))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void requireNoGitHubApiNamed_failsOnMissingRoot(@TempDir Path root) {
+        Path missing = root.resolve("does-not-exist");
+
+        assertThatThrownBy(() -> ControlPlaneGitHubCallGuard.requireNoGitHubApiNamed(missing))
+                .hasMessageContaining("missing");
+    }
+
+    @Test
+    void requireNoGitHubApiNamed_failsVacuouslyOnNoJavaFiles(@TempDir Path emptyDir) {
+        assertThatThrownBy(() -> ControlPlaneGitHubCallGuard.requireNoGitHubApiNamed(emptyDir))
+                .hasMessageContaining("no .java file");
     }
 }

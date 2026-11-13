@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
 import com.choruskube.core.StorySpecFixtures;
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -106,12 +105,6 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
-
-    @MockitoBean
-    private GitHubAppService gitHubAppService;
-
-    @MockitoBean
-    private GitHubCredentialResolver gitHubCredentialResolver;
 
     @MockitoBean
     private S3Client s3Client;

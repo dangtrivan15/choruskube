@@ -13,7 +13,6 @@ import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.OrgSecurity;
 import com.choruskube.core.config.TaskDeliveryGraph;
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.RunResponse;
@@ -35,7 +34,6 @@ import com.choruskube.core.repository.StoryConflictRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.service.EpicService;
-import com.choruskube.core.service.GitHubAppService;
 import com.choruskube.core.service.RunEventPublisher;
 import com.choruskube.core.service.StoryDesignService;
 import com.choruskube.core.service.StoryService;
@@ -117,12 +115,6 @@ class StorySpecControllerTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
-
-    @MockitoBean
-    private GitHubAppService gitHubAppService;
-
-    @MockitoBean
-    private GitHubCredentialResolver gitHubCredentialResolver;
 
     @MockitoBean
     private S3Client s3Client;

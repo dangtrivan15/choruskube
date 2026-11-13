@@ -32,10 +32,14 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * Finds every production call into a guarded GitHub-calling method and fails the build on a call
- * site an allowlist does not name, on a listed call site that no longer exists, or on production
- * source outside a guarded class that names the GitHub API location. See
- * {@link #RULE} and {@code docs/decisions/2026-10-24---01-control-plane-github-calls-are-allowlisted.md}.
+ * Two entry points over one shared source scan. The call-graph form ({@link #scanning},
+ * {@link #guarding}, {@link #sourceRoot}, {@link #check}) finds every production call into a
+ * guarded GitHub-calling method and fails on a call site an allowlist does not name, a listed
+ * site that no longer exists, or production source outside a guarded class that names the GitHub
+ * API location — for a build that holds a GitHub client and allowlists its call sites into it.
+ * {@link #requireNoGitHubApiNamed} is the source-only form, for a build with no GitHub client at
+ * all: it fails if any production {@code .java} file under the root names the GitHub API
+ * location, with no exemption. See {@link #RULE}.
  *
  * <p>A guarded class's GitHub-calling methods are derived from its bytecode, never hand-listed:
  * see {@link #guarding}. Each repo that uses this guard scans only its own production classes
@@ -162,6 +166,36 @@ public final class ControlPlaneGitHubCallGuard {
             appendRulePointer(message);
         }
 
+        if (message.length() > 0) {
+            throw new AssertionError(message.toString().strip());
+        }
+    }
+
+    /**
+     * Fails the build if any production {@code .java} file under {@code sourceRoot} names the
+     * GitHub API location, or if the root is missing or holds no {@code .java} file at all (a
+     * vacuous pass). Unlike the call-graph form's bypass scan, nothing is exempt: a build with no
+     * GitHub client has no guarded class whose own source is allowed to name it.
+     */
+    public static void requireNoGitHubApiNamed(Path sourceRoot) {
+        List<String> problems = rootProblems(sourceRoot);
+        List<String> findings = problems.isEmpty() ? findGitHubApiLines(sourceRoot, Set.of()) : List.of();
+
+        StringBuilder message = new StringBuilder();
+        if (!findings.isEmpty()) {
+            message.append("GitHub API location named in production source — this build has no GitHub client:\n");
+            for (String finding : findings) {
+                message.append(finding).append('\n');
+            }
+            appendRulePointer(message);
+        }
+        if (!problems.isEmpty()) {
+            message.append("Problems:\n");
+            for (String problem : new TreeSet<>(problems)) {
+                message.append(problem).append('\n');
+            }
+            appendRulePointer(message);
+        }
         if (message.length() > 0) {
             throw new AssertionError(message.toString().strip());
         }
@@ -366,20 +400,25 @@ public final class ControlPlaneGitHubCallGuard {
     }
 
     private List<String> sourceRootProblems() {
+        return rootProblems(productionSources);
+    }
+
+    /** Shared by the call-graph form's vacuity check and {@link #requireNoGitHubApiNamed}. */
+    private static List<String> rootProblems(Path sourceRoot) {
         List<String> problems = new ArrayList<>();
-        if (productionSources == null || !Files.exists(productionSources)) {
-            problems.add("Production source root is missing: " + productionSources);
+        if (sourceRoot == null || !Files.exists(sourceRoot)) {
+            problems.add("Production source root is missing: " + sourceRoot);
             return problems;
         }
-        if (!Files.isDirectory(productionSources)) {
-            problems.add("Production source root is not a directory: " + productionSources);
+        if (!Files.isDirectory(sourceRoot)) {
+            problems.add("Production source root is not a directory: " + sourceRoot);
             return problems;
         }
-        try (Stream<Path> walk = Files.walk(productionSources)) {
+        try (Stream<Path> walk = Files.walk(sourceRoot)) {
             long javaFileCount =
                     walk.filter(path -> path.toString().endsWith(".java")).count();
             if (javaFileCount == 0) {
-                problems.add("Production source root contains no .java file: " + productionSources);
+                problems.add("Production source root contains no .java file: " + sourceRoot);
             }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -398,23 +437,30 @@ public final class ControlPlaneGitHubCallGuard {
         Set<String> guardedClassOwnFiles = guardedClasses.stream()
                 .map(guardedClass -> guardedClass.getName().replace('.', '/') + ".java")
                 .collect(Collectors.toSet());
+        return findGitHubApiLines(productionSources, guardedClassOwnFiles);
+    }
 
+    /** True if {@code line} names the GitHub API location via any of the spellings this guard watches for. */
+    private static boolean namesGitHubApiLocation(String line) {
+        String lower = line.toLowerCase(Locale.ROOT);
+        return lower.contains("github.api.url") || lower.contains("github_api_url") || lower.contains("api.github.com");
+    }
+
+    /** Every {@code <relative path>:<line>} under {@code sourceRoot} naming the GitHub API location, skipping {@code exemptRelativeFiles}. */
+    private static List<String> findGitHubApiLines(Path sourceRoot, Set<String> exemptRelativeFiles) {
         List<String> findings = new ArrayList<>();
-        try (Stream<Path> walk = Files.walk(productionSources)) {
+        try (Stream<Path> walk = Files.walk(sourceRoot)) {
             List<Path> javaFiles = walk.filter(path -> path.toString().endsWith(".java"))
                     .sorted()
                     .collect(Collectors.toList());
             for (Path file : javaFiles) {
-                String relative = productionSources.relativize(file).toString().replace('\\', '/');
-                if (guardedClassOwnFiles.contains(relative)) {
+                String relative = sourceRoot.relativize(file).toString().replace('\\', '/');
+                if (exemptRelativeFiles.contains(relative)) {
                     continue;
                 }
                 List<String> lines = Files.readAllLines(file);
                 for (int i = 0; i < lines.size(); i++) {
-                    String lower = lines.get(i).toLowerCase(Locale.ROOT);
-                    if (lower.contains("github.api.url")
-                            || lower.contains("github_api_url")
-                            || lower.contains("api.github.com")) {
+                    if (namesGitHubApiLocation(lines.get(i))) {
                         findings.add(relative + ":" + (i + 1));
                     }
                 }

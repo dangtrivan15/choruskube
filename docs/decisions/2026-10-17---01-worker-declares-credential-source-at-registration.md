@@ -1,6 +1,6 @@
 # A Worker declares its credential source at every registration call
 
-**Status:** current; its statement that the open-source stack still runs `control-plane` is superseded by [2026-11-10---01-self-hosted-server-holds-no-credential](2026-11-10---01-self-hosted-server-holds-no-credential.md)
+**Status:** current; its statement that the open-source stack still runs `control-plane` is superseded by [2026-11-10---01-self-hosted-server-holds-no-credential](2026-11-10---01-self-hosted-server-holds-no-credential.md); the Worker's `CREDENTIAL_SOURCE` mode setting, including the static path accepting it, and the single-Fleet server accepting a `control-plane` declaration, are superseded by [2026-11-13---01-the-open-source-worker-is-local-only](2026-11-13---01-the-open-source-worker-is-local-only.md)
 
 ## Context
 

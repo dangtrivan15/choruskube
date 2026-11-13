@@ -9,13 +9,11 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
 import com.choruskube.core.config.WorkflowClientRegistry;
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.CloseTaskIssueWorkflowInput;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -106,12 +104,6 @@ public class TaskSettlementIntegrationTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
-
-    @MockitoBean
-    private GitHubAppService gitHubAppService;
-
-    @MockitoBean
-    private GitHubCredentialResolver gitHubCredentialResolver;
 
     @MockitoBean
     private WorkflowClientRegistry workflowClientRegistry;
@@ -281,8 +273,6 @@ public class TaskSettlementIntegrationTest extends BaseTest {
             assertThat(in.ownerRepo()).isEqualTo(repo.getName());
             assertThat(in.issueNumber()).isEqualTo(42);
         });
-        verifyNoInteractions(gitHubAppService);
-        verify(gitHubCredentialResolver, never()).getTokenForRun(any());
     }
 
     /**

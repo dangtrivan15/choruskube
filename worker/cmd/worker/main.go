@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -25,22 +26,21 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	if err := refuseRetiredCredentialSource(os.Getenv); err != nil {
+		log.Fatalf("%v", err)
+	}
+
 	cfg := worker.Config{
 		TemporalAddress: os.Getenv("TEMPORAL_ADDRESS"),
 		APIServerURL:    os.Getenv("API_SERVER_URL"),
 		CallbackURL:     os.Getenv("CALLBACK_URL"),
 		// Opt-in, so a deployment against a TLS Temporal cannot lose TLS by omission.
 		TemporalTLSDisabled: os.Getenv("TEMPORAL_TLS_DISABLED") == "true",
+		GitHubAPIURL:        os.Getenv("GITHUB_API_URL"),
 	}
-
-	credentialSource, err := credentialSourceOf(os.Getenv("CREDENTIAL_SOURCE"))
-	if err != nil {
-		log.Fatalf("invalid CREDENTIAL_SOURCE: %v", err)
-	}
-	cfg.CredentialSource = credentialSource
-	cfg.CredentialsDir = os.Getenv("CREDENTIALS_DIR")
-	cfg.GitHubAPIURL = os.Getenv("GITHUB_API_URL")
-	cfg.AnthropicAPIURL = os.Getenv("ANTHROPIC_API_URL")
+	// This binary always holds its own credentials: there is no other plane to offer it.
+	cfg.CredentialPlane = worker.LocalCredentialPlane(
+		os.Getenv("CREDENTIALS_DIR"), cfg.GitHubAPIURL, os.Getenv("ANTHROPIC_API_URL"))
 
 	// worker.Run requires an Executor, so a binary that cannot construct one must fail fast here.
 	executorType, err := executorTypeOf(os.Getenv("EXECUTOR_TYPE"))
@@ -110,9 +110,8 @@ func main() {
 		TaskQueue:     os.Getenv("TEMPORAL_TASK_QUEUE"),
 		// Only the static path needs this: the registration path is handed a credential, or
 		// falls back to the Fleet token it registered with.
-		InternalToken:    os.Getenv("WORKER_INTERNAL_TOKEN"),
-		Capabilities:     capabilities,
-		CredentialSource: cfg.CredentialSource,
+		InternalToken: os.Getenv("WORKER_INTERNAL_TOKEN"),
+		Capabilities:  capabilities,
 	}.Provider(nil)
 	if err != nil {
 		log.Fatalf("%v: set FLEET_TOKEN to register with the API server, "+
@@ -145,20 +144,14 @@ func executorTypeOf(raw string) (string, error) {
 	}
 }
 
-// credentialSourceOf validates CREDENTIAL_SOURCE. It is required and has no default: which mode
-// a Worker runs in is a fact about its deployment, and guessing it wrong in either direction would
-// send a Worker meant to hold its own credentials to the API server for them, or the reverse.
-func credentialSourceOf(raw string) (string, error) {
-	switch raw {
-	case worker.CredentialSourceControlPlane, worker.CredentialSourceLocal:
-		return raw, nil
-	case "":
-		return "", fmt.Errorf("CREDENTIAL_SOURCE is required: must be %q or %q",
-			worker.CredentialSourceControlPlane, worker.CredentialSourceLocal)
-	default:
-		return "", fmt.Errorf("unknown CREDENTIAL_SOURCE %q: must be %q or %q",
-			raw, worker.CredentialSourceControlPlane, worker.CredentialSourceLocal)
+// refuseRetiredCredentialSource fails startup if CREDENTIAL_SOURCE is set to anything at all: this
+// binary always holds its own credentials now, so the variable has nothing left to select between
+// and a value set by an un-upgraded deployment manifest would silently go unread otherwise.
+func refuseRetiredCredentialSource(getenv func(string) string) error {
+	if getenv("CREDENTIAL_SOURCE") != "" {
+		return errors.New("CREDENTIAL_SOURCE is no longer read: this Worker always holds its own credentials; unset it")
 	}
+	return nil
 }
 
 // k8sConfigFromEnv builds a k8s.Config from environment variables, resolved through getenv so

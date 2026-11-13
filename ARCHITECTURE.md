@@ -85,7 +85,7 @@ see [docs/decisions/2026-11-09---02-launching-executor-bounds-workload-lifetime.
 ```
 
 The orchestrator drives the graph; the **Worker** creates and owns the agent workloads;
-the **api-server** owns state and talks to the data stores. On a self-hosted install it holds no credentials and makes no GitHub call ([why](docs/decisions/2026-10-13---02-data-plane-credential-rule.md), [how it got there](docs/decisions/2026-11-10---01-self-hosted-server-holds-no-credential.md)); a test fails the build on any new GitHub call from it ([how](docs/decisions/2026-10-24---01-control-plane-github-calls-are-allowlisted.md)).
+the **api-server** owns state and talks to the data stores. It holds no credentials and has no GitHub client at all ([why](docs/decisions/2026-10-13---02-data-plane-credential-rule.md), [how it got there](docs/decisions/2026-11-10---01-self-hosted-server-holds-no-credential.md)); a test fails the build on any production source naming the GitHub API ([how](docs/decisions/2026-11-13---01-the-open-source-worker-is-local-only.md)).
 
 Once a run completes, the orchestrator asks the api-server which repos the run touched and
 each one's default branch, then dispatches a cleanup step to the run's own Worker, which

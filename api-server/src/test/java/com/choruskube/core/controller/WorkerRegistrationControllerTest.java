@@ -1,5 +1,6 @@
 package com.choruskube.core.controller;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -44,7 +45,7 @@ class WorkerRegistrationControllerTest extends BaseTest {
 
     private static final String BODY =
             "{\"hostname\":\"oss-worker-1\",\"instanceId\":\"11111111-1111-1111-1111-111111111111\","
-                    + "\"credentialSource\":\"control-plane\"," + NOT_HELD_HEALTH + "}";
+                    + "\"credentialSource\":\"local\"," + NOT_HELD_HEALTH + "}";
 
     @Autowired
     private MockMvc mockMvc;
@@ -139,6 +140,17 @@ class WorkerRegistrationControllerTest extends BaseTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(bodyWithCredentialSource("11111111-1111-1111-1111-111111111111", "local")))
                 .andExpect(status().isOk());
+    }
+
+    /** This server holds no credential to broker, so a Worker that declares it wants one is refused at registration. */
+    @Test
+    void register_controlPlane_returns409() throws Exception {
+        mockMvc.perform(post("/worker/register")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bodyWithCredentialSource("22222222-2222-2222-2222-222222222222", "control-plane")))
+                .andExpect(status().isConflict())
+                .andExpect(content().string(containsString("must hold its own credentials")));
     }
 
     /** A Worker binary built before this field existed cannot register at all; there is no default. */

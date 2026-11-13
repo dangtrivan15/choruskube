@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# e2e/check-api-server-made-no-stub-call.sh — after the Playwright suite, prove the api-server
-# made no GitHub or Anthropic call: a self-hosted server holds no credential, so every call
-# WireMock journaled must have come from the Worker.
+# e2e/check-api-server-made-no-stub-call.sh — after the Playwright suite, prove that no request
+# from the api-server's JDK HTTP client ever reached WireMock, and that the Worker's did. The
+# api-server is given no stub URL at all in this stack (it has no GitHub client to point at one);
+# core's source-only guard (ControlPlaneGitHubCallsTest) is what proves that in source, at build
+# time — this check instead proves it held at runtime, against the one journal both processes share.
 #
 # Reads WireMock's request journal. The api-server's JDK client sends `User-Agent:
 # Java-http-client/<version>`; the Worker always sends `User-Agent: choruskube-worker`
