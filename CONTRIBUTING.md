@@ -7,15 +7,17 @@ Thanks for your interest in contributing. This is the minimal dev-setup guide.
 ChorusKube runs as a Docker Compose stack (Docker + Docker Compose v2 required):
 
 ```bash
-./scripts/setup.sh   # optional: write the Worker's Claude/GitHub credentials folder
+./scripts/setup.sh   # run once: generates the Worker's Fleet token; writing the Claude/GitHub
+                      # credentials folder is optional
 ./scripts/up.sh      # build + start, wait until healthy  (docker compose up --build --wait)
 ./scripts/down.sh    # tear down + remove volumes          (docker compose down -v)
 ```
 
-Then open http://localhost:33000. The stack boots with zero configuration, so
-`setup.sh` is only needed for real AI runs: it writes `.secrets/credentials/`, the
-folder the Worker reads its credentials from. Supply the Claude token there, not as an
-api-server environment variable — the api-server holds no credential. See
+Then open http://localhost:33000. The stack boots with one setup step, every prompt
+optional: `setup.sh` generates `WORKER_REGISTRATION_TOKEN` into `.env` (both compose
+services require it to start) and, for real AI runs, writes `.secrets/credentials/`, the
+folder the Worker reads its other credentials from. Supply the Claude token there, not as
+an api-server environment variable — the api-server holds no credential. See
 [QUICKSTART.md](QUICKSTART.md#run-a-real-ai-workflow) for the full port map and the
 folder's layout.
 

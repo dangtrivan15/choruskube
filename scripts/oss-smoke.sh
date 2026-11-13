@@ -14,7 +14,9 @@
 # smoke uses a THROWAWAY dummy: the published agent image is pulled & started (the
 # guard), then the real agent fails auth harmlessly — no real Claude call, no PR.
 # With MANAGE_STACK=true the script puts that dummy in the folder when no token is
-# there yet (never overwriting one) and removes it again on exit.
+# there yet (never overwriting one) and removes it again on exit. It also runs
+# `setup.sh --worker-token-only` before booting and leaves the generated Worker Fleet
+# token in .env, since it becomes the install's own token from then on.
 #
 # The spawned container is NOT auto-removed (cleanup is a separate later call),
 # so `docker ps -a` reliably catches it via its choruskube/run-id label even
@@ -53,6 +55,7 @@ if [ "$MANAGE_STACK" = true ]; then
     trap cleanup EXIT
     # Smoke runs must not emit anonymous telemetry (overrides docker-compose.yaml default-on).
     export CHORUSKUBE_TELEMETRY=off
+    bash "$SCRIPTS_DIR/setup.sh" --worker-token-only
     bash "$SCRIPTS_DIR/up.sh"
 fi
 

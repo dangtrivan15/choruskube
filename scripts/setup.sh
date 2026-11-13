@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
-# scripts/setup.sh — Interactively configure credentials for a real ChorusKube run.
+# scripts/setup.sh — Generate this install's Worker Fleet token, then interactively
+# configure credentials for a real ChorusKube run.
+#
+# Every invocation starts with ensure_worker_token: it generates WORKER_REGISTRATION_TOKEN
+# into .env when the install has none (an existing non-empty value is kept), the value both
+# docker-compose.yaml services require to start.
+#   --worker-token-only     run that step alone — no credential prompts, no stack start.
+#                            This is the non-interactive form unattended callers use
+#                            (see scripts/oss-smoke.sh).
+#   --rotate-worker-token   replace an existing token instead of keeping it. Combine
+#                            with --worker-token-only for a non-interactive rotation.
+# With neither flag, the token step is followed by the credential prompts below.
 #
 # Prompts one input at a time and writes them into the gitignored folder
 # .secrets/credentials/, which docker-compose.yaml mounts read-only on the Worker
@@ -18,8 +29,37 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 CRED_DIR="$REPO_ROOT/.secrets/credentials"
 ENV_FILE="$REPO_ROOT/.env"
 
+usage() {
+  cat >&2 <<'EOF'
+Usage: setup.sh [--worker-token-only] [--rotate-worker-token]
+
+With no arguments: generates this install's Worker Fleet token if it has none,
+then walks through the optional Claude/GitHub credential prompts and offers to
+start the stack.
+
+  --worker-token-only     Generate (or rotate) the Worker's Fleet token only;
+                           no credential prompts, no stack start.
+  --rotate-worker-token   Replace an existing Worker Fleet token instead of
+                           keeping it.
+EOF
+}
+
+WORKER_TOKEN_ONLY=false
+ROTATE_WORKER_TOKEN=false
+for arg in "$@"; do
+  case "$arg" in
+    --worker-token-only) WORKER_TOKEN_ONLY=true ;;
+    --rotate-worker-token) ROTATE_WORKER_TOKEN=true ;;
+    *)
+      usage
+      exit 2
+      ;;
+  esac
+done
+
 # Credentials used to live in .env for the api-server; nothing reads those lines now.
-# Only point at them: .env may hold the operator's other settings, so it is never edited here.
+# Only point at them: .env may hold the operator's other settings, and setup edits only
+# its own WORKER_REGISTRATION_TOKEN line in it.
 notice_stale_env() {
   if [[ -f "$ENV_FILE" ]] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?(CLAUDE_CODE_OAUTH_TOKEN=|GITHUB_PAT=|GITHUB_APP_)' "$ENV_FILE"; then
     echo
@@ -28,10 +68,91 @@ notice_stale_env() {
   fi
 }
 
+# Owns the single WORKER_REGISTRATION_TOKEN line of .env: generates it when the line is
+# missing or holds no value (blank, or only quote characters — every unquoted form of that
+# is already empty to compose, and a quoted one is not a token anyone set on purpose), keeps
+# any other existing value unless $1 is "true", and never prints the value itself.
+ensure_worker_token() {
+  local rotate="$1"
+  local line_re='^[[:space:]]*(export[[:space:]]+)?WORKER_REGISTRATION_TOKEN='
+  local existing_line=""
+
+  if [[ -f "$ENV_FILE" ]]; then
+    existing_line="$(grep -E "$line_re" "$ENV_FILE" | tail -1 || true)"
+  fi
+
+  local status=""
+  if [[ -n "$existing_line" ]]; then
+    local value stripped
+    value="${existing_line#*=}"
+    stripped="$(printf '%s' "$value" | tr -d '[:space:]')"
+    stripped="${stripped//\'/}"
+    stripped="${stripped//\"/}"
+    if [[ -n "$stripped" ]]; then
+      if [[ "$rotate" != true ]]; then
+        echo "Worker token: kept (WORKER_REGISTRATION_TOKEN in .env)"
+        return 0
+      fi
+      status=rotated
+    else
+      status=generated
+    fi
+  else
+    status=generated
+  fi
+
+  # 32 random bytes, hex-encoded without depending on openssl.
+  local new_token new_line
+  new_token="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
+  new_line="WORKER_REGISTRATION_TOKEN=${new_token}"
+
+  if [[ -f "$ENV_FILE" ]]; then
+    local tmp no_trailing_nl=false
+    [[ -s "$ENV_FILE" ]] && [[ -n "$(tail -c1 "$ENV_FILE")" ]] && no_trailing_nl=true
+    # cp -p (not a fresh redirect) so the temp file starts with the existing file's mode;
+    # every edit below only truncates/appends it in place, which never resets that mode.
+    tmp="$(mktemp "$ENV_FILE.XXXXXX")"
+    cp -p "$ENV_FILE" "$tmp"
+
+    if [[ -n "$existing_line" ]]; then
+      # Rewrite through a second temp file rather than `sed -i` (no in-place flag on BSD
+      # sed without a backup suffix): every other line is printed back unchanged, and
+      # only the matched line is replaced.
+      awk -v re="$line_re" -v repl="$new_line" '
+        $0 ~ re { print repl; next }
+        { print }
+      ' "$tmp" > "$tmp.new"
+      cat "$tmp.new" > "$tmp"
+      rm -f "$tmp.new"
+      # awk always terminates its last printed line; undo that one byte when the file's
+      # true last line (unrelated to the match) had no final newline to begin with.
+      if [[ "$no_trailing_nl" == true ]]; then
+        truncate -s -1 "$tmp"
+      fi
+    else
+      if [[ "$no_trailing_nl" == true ]]; then
+        printf '\n' >> "$tmp"
+      fi
+      printf '%s\n' "$new_line" >> "$tmp"
+    fi
+    mv "$tmp" "$ENV_FILE"
+  else
+    (umask 077; printf '%s\n' "$new_line" > "$ENV_FILE")
+  fi
+
+  echo "Worker token: ${status} (WORKER_REGISTRATION_TOKEN in .env)"
+}
+
+ensure_worker_token "$ROTATE_WORKER_TOKEN"
+
+if [[ "$WORKER_TOKEN_ONLY" == true ]]; then
+  exit 0
+fi
+
 if [[ -d "$CRED_DIR" ]] && [[ -n "$(ls -A "$CRED_DIR" 2>/dev/null)" ]]; then
   read -r -p "$CRED_DIR already holds credentials. Overwrite them? [y/N] " ans
   if ! [[ "$ans" =~ ^[Yy]$ ]]; then
-    echo "Keeping existing credentials. Nothing changed."
+    echo "Keeping existing credentials."
     notice_stale_env
     exit 0
   fi

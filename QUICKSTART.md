@@ -15,24 +15,33 @@ stack and, optionally, a real AI workflow. For the project overview see
 ## Quick start
 
 ```bash
-./scripts/setup.sh         # configure credentials (all optional), then offers to start the stack
+./scripts/setup.sh         # run once: generates the Worker's Fleet token; every other prompt is optional
 ./scripts/up.sh            # build + start, wait until healthy
 ```
 
+The first run of `setup.sh` generates this install's own Worker Fleet token into the
+gitignored `.env` (see [Rotating or sharing the Worker token](#rotating-or-sharing-the-worker-token)) —
+`up.sh` and a bare compose start both refuse without it. Beyond that one step,
 `setup.sh` walks you through the optional Claude and GitHub credentials one value
 at a time and writes them into the gitignored folder `.secrets/credentials/`, which
 the stack mounts read-only on the Worker (see
-[Run a real AI workflow](#run-a-real-ai-workflow)). Every credential is optional —
-**skip `setup.sh` and run `up.sh` directly to boot with zero configuration.** To
-start the stack yourself instead of going through the scripts, `up.sh` maps to:
+[Run a real AI workflow](#run-a-real-ai-workflow)). Every credential is optional, and
+you can run the token step alone, with no prompts: `./scripts/setup.sh --worker-token-only`.
+To start the stack yourself instead of going through the scripts, `up.sh` maps to:
 
 ```bash
 docker compose up --build --wait
 ```
 
-The stack boots from a clean volume with **zero configuration** — no OIDC provider,
-no GitHub App, no Claude token required just to come up. The API server serves
-templates and runs out of the box.
+The stack boots from a clean volume with **one setup step, every prompt optional** —
+no OIDC provider, no GitHub App, no Claude token required just to come up, only the
+generated Worker token. The API server serves templates and runs out of the box.
+
+> **Upgrading an install from before this token step?** `up.sh` (or a bare
+> `docker compose up`) now stops with a message naming `./scripts/setup.sh` — run it once
+> to generate the token into `.env`, then start the stack again. A Worker running on
+> another host takes the same value: copy `WORKER_REGISTRATION_TOKEN` from `.env` into
+> its own `FLEET_TOKEN`.
 
 Then open the web UI and explore:
 
@@ -51,6 +60,20 @@ Tear down (and wipe the Postgres/object storage volumes):
 ```bash
 ./scripts/down.sh          # docker compose down -v
 ```
+
+## Rotating or sharing the Worker token
+
+The api-server and the Worker must present the same `WORKER_REGISTRATION_TOKEN`
+(stored only in `.env`) or the Worker's registration is refused and no run node ever
+executes. To replace it:
+
+```bash
+./scripts/setup.sh --worker-token-only --rotate-worker-token
+./scripts/up.sh
+```
+
+A Worker running on another host (not this compose stack) takes the same value as its
+own `FLEET_TOKEN` — copy it out of `.env` by hand after rotating.
 
 ## Run a real AI workflow
 
@@ -103,10 +126,11 @@ Without any of these the stack still boots and serves the full API — only the
 steps that need them (AI nodes, repo pushes) fail; everything else, including
 script and human-gate nodes, runs.
 
-> Starting with a bare `docker compose up`? Run `mkdir -p .secrets/credentials`
-> once first (`./scripts/up.sh` does it for you), so the credentials folder is
-> created owned by you rather than by Docker as root — `setup.sh` could not
-> write a root-owned one.
+> Starting with a bare `docker compose up`? Run `./scripts/setup.sh --worker-token-only`
+> first — compose refuses without a generated `WORKER_REGISTRATION_TOKEN` in `.env`.
+> Also run `mkdir -p .secrets/credentials` once (`./scripts/up.sh` does it for you), so
+> the credentials folder is created owned by you rather than by Docker as root —
+> `setup.sh` could not write a root-owned one.
 
 ## Next steps
 
