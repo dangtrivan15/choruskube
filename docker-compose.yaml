@@ -2,8 +2,8 @@
 #
 # The canonical single-user, no-auth stack. Boots from a clean volume with ONE setup
 # step, every prompt optional: ./scripts/setup.sh generates this install's own Worker
-# Fleet token (WORKER_REGISTRATION_TOKEN below — no OIDC provider, no GitHub App, no
-# Claude token required just to come up). The api-server runs in single-tenant mode
+# Fleet token (WORKER_REGISTRATION_TOKEN below); no OIDC provider, no GitHub App, no
+# Claude token is required just to come up. The api-server runs in single-tenant mode
 # (`AUTH_ENABLED=false` → /api/v1/** is open and scoped to the system org). The
 # orchestrator drives each run and hands every agent/script node to the worker, which
 # owns the Docker workload executor (`EXECUTOR_TYPE=docker`), spawning agent containers

@@ -68,6 +68,19 @@ notice_stale_env() {
   fi
 }
 
+# stdin to stdout with each line matching $1 given the value $2 (its key prefix kept), or one
+# line appended when none matches; every other byte, a missing final newline ($3=false)
+# included, is copied as-is. Plain awk: `sed -i` and `truncate` differ or are absent on macOS.
+rewrite_token_line() {
+  awk -v re="$1" -v tok="$2" -v ends_nl="$3" '
+    match($0, re) { $0 = substr($0, 1, RLENGTH) tok; found = 1 }
+    { printf "%s%s", sep, $0; sep = "\n" }
+    END {
+      if (!found) printf "%sWORKER_REGISTRATION_TOKEN=%s\n", sep, tok
+      else if (ends_nl == "true") printf "\n"
+    }'
+}
+
 # Owns the single WORKER_REGISTRATION_TOKEN line of .env: generates it when the line is
 # missing or holds no value (blank, or only quote characters — every unquoted form of that
 # is already empty to compose, and a quoted one is not a token anyone set on purpose), keeps
@@ -81,7 +94,7 @@ ensure_worker_token() {
     existing_line="$(grep -E "$line_re" "$ENV_FILE" | tail -1 || true)"
   fi
 
-  local status=""
+  local status=generated
   if [[ -n "$existing_line" ]]; then
     local value stripped
     value="${existing_line#*=}"
@@ -94,50 +107,28 @@ ensure_worker_token() {
         return 0
       fi
       status=rotated
-    else
-      status=generated
     fi
-  else
-    status=generated
   fi
 
   # 32 random bytes, hex-encoded without depending on openssl.
-  local new_token new_line
+  local new_token
   new_token="$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')"
-  new_line="WORKER_REGISTRATION_TOKEN=${new_token}"
 
   if [[ -f "$ENV_FILE" ]]; then
-    local tmp no_trailing_nl=false
-    [[ -s "$ENV_FILE" ]] && [[ -n "$(tail -c1 "$ENV_FILE")" ]] && no_trailing_nl=true
-    # cp -p (not a fresh redirect) so the temp file starts with the existing file's mode;
-    # every edit below only truncates/appends it in place, which never resets that mode.
+    local tmp ends_nl=true
+    [[ -n "$(tail -c1 "$ENV_FILE")" ]] && ends_nl=false
     tmp="$(mktemp "$ENV_FILE.XXXXXX")"
-    cp -p "$ENV_FILE" "$tmp"
-
-    if [[ -n "$existing_line" ]]; then
-      # Rewrite through a second temp file rather than `sed -i` (no in-place flag on BSD
-      # sed without a backup suffix): every other line is printed back unchanged, and
-      # only the matched line is replaced.
-      awk -v re="$line_re" -v repl="$new_line" '
-        $0 ~ re { print repl; next }
-        { print }
-      ' "$tmp" > "$tmp.new"
-      cat "$tmp.new" > "$tmp"
-      rm -f "$tmp.new"
-      # awk always terminates its last printed line; undo that one byte when the file's
-      # true last line (unrelated to the match) had no final newline to begin with.
-      if [[ "$no_trailing_nl" == true ]]; then
-        truncate -s -1 "$tmp"
-      fi
-    else
-      if [[ "$no_trailing_nl" == true ]]; then
-        printf '\n' >> "$tmp"
-      fi
-      printf '%s\n' "$new_line" >> "$tmp"
+    # cp -p gives $tmp the existing file's mode; the redirect only truncates it. A failed
+    # rewrite must remove $tmp: it holds the token, and .gitignore covers only .env itself.
+    if ! { cp -p "$ENV_FILE" "$tmp" &&
+      rewrite_token_line "$line_re" "$new_token" "$ends_nl" < "$ENV_FILE" > "$tmp" &&
+      mv "$tmp" "$ENV_FILE"; }; then
+      rm -f "$tmp"
+      echo "ERROR: could not update $ENV_FILE" >&2
+      exit 1
     fi
-    mv "$tmp" "$ENV_FILE"
   else
-    (umask 077; printf '%s\n' "$new_line" > "$ENV_FILE")
+    (umask 077; printf 'WORKER_REGISTRATION_TOKEN=%s\n' "$new_token" > "$ENV_FILE")
   fi
 
   echo "Worker token: ${status} (WORKER_REGISTRATION_TOKEN in .env)"

@@ -197,6 +197,44 @@ test_other_lines_untouched() {
     || fail "case4: after rotation, mode is $(file_mode "$root/.env"), want 640"
 }
 
+# --- Case 4b: replacing a line keeps every other byte -------------------------------------------
+# The token line already exists and the file has no final newline: only the value changes,
+# the line keeps its own key prefix, and the missing final newline stays missing.
+test_replace_keeps_other_bytes() {
+  local root fixture flags tok out rc expected actual
+  local -a fixtures=(
+    '# a comment\nexport WORKER_REGISTRATION_TOKEN=\nCHORUSKUBE_TELEMETRY=off'
+    'FOO=bar\nWORKER_REGISTRATION_TOKEN='
+  )
+  for fixture in "${fixtures[@]}"; do
+    root="$(make_root)"
+    # shellcheck disable=SC2059 # the fixture is the format: it carries the \n escapes
+    printf "$fixture" > "$root/.env"
+    chmod 640 "$root/.env"
+    for flags in "--worker-token-only" "--worker-token-only --rotate-worker-token"; do
+      set +e
+      # shellcheck disable=SC2086 # $flags is deliberately split into two arguments
+      out="$(in_root "$root" bash scripts/setup.sh $flags </dev/null 2>&1)"; rc=$?
+      set -e
+      [[ "$rc" -eq 0 ]] || { fail "case4b ($flags): run exited $rc: $out"; continue; }
+      tok="$(token_of "$root/.env")"
+      # shellcheck disable=SC2059
+      expected="$(printf "${fixture/TOKEN=/TOKEN=$tok}"; printf x)"
+      actual="$(cat "$root/.env"; printf x)"
+      [[ -n "$tok" && "$actual" == "$expected" ]] \
+        && ok "case4b ($flags): only the token value changed, final newline still absent" \
+        || fail "case4b ($flags): .env is $(od -c "$root/.env" | head -3)"
+      [[ "$(file_mode "$root/.env")" == 640 ]] && ok "case4b ($flags): mode is still 640" \
+        || fail "case4b ($flags): mode is $(file_mode "$root/.env"), want 640"
+    done
+    if ls -A "$root" | grep -q '^\.env\.'; then
+      fail "case4b: a temp copy of .env was left beside it"
+    else
+      ok "case4b: no temp copy of .env is left beside it"
+    fi
+  done
+}
+
 # --- Case 5: no value is missing --------------------------------------------------------------
 test_no_value_is_missing() {
   local variants descs i root out rc val
@@ -296,11 +334,12 @@ test_wiring() {
   token="$(token_of "$root/.env")"
 
   set +e
-  rendered="$(in_root "$root" env "WORKER_REGISTRATION_TOKEN=$token" docker compose -f "$root/docker-compose.yaml" config 2>&1)"
+  # No token passed in: compose must find the one setup wrote, in the .env beside the file.
+  rendered="$(in_root "$root" docker compose -f "$root/docker-compose.yaml" config 2>&1)"
   rc=$?
   set -e
-  [[ "$rc" -eq 0 ]] && ok "case10: compose config succeeds once the token is set" \
-    || { fail "case10: compose config failed with a token set: $rendered"; return; }
+  [[ "$rc" -eq 0 ]] && ok "case10: compose config succeeds on the .env setup wrote" \
+    || { fail "case10: compose config failed after setup wrote .env: $rendered"; return; }
 
   set +e
   api_val="$(grep -E '^[[:space:]]*WORKER_REGISTRATION_TOKEN:' <<< "$rendered" | head -1 | awk '{print $2}')"
@@ -347,6 +386,7 @@ test_fresh_installs_differ
 test_rerun_keeps
 test_rotate
 test_other_lines_untouched
+test_replace_keeps_other_bytes
 test_no_value_is_missing
 test_keeping_credentials_still_generates
 test_no_value_printed
