@@ -7,7 +7,6 @@ import static org.assertj.core.api.Assertions.tuple;
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.dto.EpicRequest;
@@ -125,12 +124,6 @@ public class DefaultTaskServiceTest extends BaseTest {
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;
-
-    @MockitoBean
-    private GitHubAppService gitHubAppService;
-
-    @MockitoBean
-    private GitHubCredentialResolver gitHubCredentialResolver;
 
     @MockitoBean
     private S3Client s3Client;
@@ -715,7 +708,7 @@ public class DefaultTaskServiceTest extends BaseTest {
     // covers the start itself. These pin that completion never calls GitHub from the server.
 
     @Test
-    void complete_withOpenLinkedIssue_completesWithoutCallingGitHub() {
+    void complete_withOpenLinkedIssue_completesWithNoGitHubClient() {
         GitRepo r = makeRepo("https://github.com/acme/task-issue-linked.git");
         StoryResponse story = makeStory(r.getId());
         TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
@@ -726,15 +719,13 @@ public class DefaultTaskServiceTest extends BaseTest {
         TaskResponse completed = service.complete(task.id());
 
         assertThat(completed.status()).isEqualTo("done");
-        Mockito.verifyNoInteractions(gitHubAppService);
-        Mockito.verify(gitHubCredentialResolver, Mockito.never()).getTokenForRun(ArgumentMatchers.any());
         TaskGithubIssue reloaded =
                 taskGithubIssueRepository.findById(linkage.getId()).orElseThrow();
         assertThat(reloaded.getState()).isEqualTo(GithubIssueState.open);
     }
 
     @Test
-    void complete_withNoLinkedIssue_doesNotCallGitHub() {
+    void complete_withNoLinkedIssue_completesWithNoGitHubClient() {
         GitRepo r = makeRepo("https://github.com/acme/task-issue-none.git");
         StoryResponse story = makeStory(r.getId());
         TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
@@ -744,12 +735,10 @@ public class DefaultTaskServiceTest extends BaseTest {
         TaskResponse completed = service.complete(task.id());
 
         assertThat(completed.status()).isEqualTo("done");
-        Mockito.verifyNoInteractions(gitHubAppService);
-        Mockito.verify(gitHubCredentialResolver, Mockito.never()).getTokenForRun(ArgumentMatchers.any());
     }
 
     @Test
-    void complete_withAlreadyClosedLinkedIssue_doesNotCallGitHub() {
+    void complete_withAlreadyClosedLinkedIssue_completesWithNoGitHubClient() {
         GitRepo r = makeRepo("https://github.com/acme/task-issue-already-closed.git");
         StoryResponse story = makeStory(r.getId());
         TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
@@ -760,8 +749,6 @@ public class DefaultTaskServiceTest extends BaseTest {
         TaskResponse completed = service.complete(task.id());
 
         assertThat(completed.status()).isEqualTo("done");
-        Mockito.verifyNoInteractions(gitHubAppService);
-        Mockito.verify(gitHubCredentialResolver, Mockito.never()).getTokenForRun(ArgumentMatchers.any());
     }
 
     private TaskGithubIssue makeLinkage(UUID taskId, UUID gitRepoId, int issueNumber, GithubIssueState state) {

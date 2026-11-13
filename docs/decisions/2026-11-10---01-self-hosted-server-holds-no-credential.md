@@ -1,6 +1,6 @@
 # A self-hosted server holds no credential; its Worker holds them all
 
-**Status:** current
+**Status:** current; its broker route being served in multi-tenant mode, `ControlPlaneGitHubCallsTest` asserting no call site into `GitHubAppService`, the consequence that a Worker outside compose is given `CREDENTIAL_SOURCE=local`, the consequence that a `control-plane` Worker registers and then fails its first node, and the claim that `github.api.url` stays in core, are superseded by [2026-11-13---01-the-open-source-worker-is-local-only](2026-11-13---01-the-open-source-worker-is-local-only.md)
 
 ## Context
 

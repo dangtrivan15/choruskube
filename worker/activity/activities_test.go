@@ -180,7 +180,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor(t *testing.T) {
 	acts := NewWithExecutor(mockClient, mockExec, hashCache)
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
-	acts.SetCredentials(credential.NewControlPlane(&stubTokenClient{}))
+	acts.SetCredentials(passThroughCredentials{})
 
 	params := ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{
@@ -368,7 +368,7 @@ func TestExecuteAINodeFromSnapshot_CallsExecutor_ForwardsRegistryCredentials(t *
 	acts := NewWithExecutor(mockClient, mockExec, callback.NewHashCache())
 	acts.CallbackURL = "http://worker:9090/api/v1/callback"
 	acts.APIServerURL = "http://api-server.invalid"
-	acts.SetCredentials(credential.NewControlPlane(&stubTokenClient{}))
+	acts.SetCredentials(passThroughCredentials{})
 
 	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
 		Identity: Identity{
@@ -2237,14 +2237,6 @@ func (passThroughCredentials) AgentCredentials(
 }
 
 func (passThroughCredentials) CheckHealth(context.Context) []credential.HealthResult { return nil }
-
-// stubTokenClient is a credential.TokenClient a test never expects to be called: these tests
-// exercise the control-plane provider's AgentCredentials, not its GitHubToken.
-type stubTokenClient struct{}
-
-func (stubTokenClient) GitHubToken(context.Context, uuid.UUID) (string, error) {
-	return "", errors.New("stubTokenClient.GitHubToken must not be called by this test")
-}
 
 // launchWithCredentials runs one local execution of a node of executorType against a prepare
 // response that carries the API server's own agent credentials, and returns what the executor

@@ -42,10 +42,6 @@ dependencies {
 
     // Security (single-tenant mode only)
     api 'org.springframework.boot:spring-boot-starter-security'
-    // Nimbus JOSE+JWT: used by GitHubAppService to sign GitHub App JWTs (RSA/RS256).
-    // Pinned to Spring Boot 3.4.5's nimbus version (dependency-management does not manage
-    // this artifact directly).
-    implementation 'com.nimbusds:nimbus-jose-jwt:9.37.3'
 
     // API docs
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.7.0'

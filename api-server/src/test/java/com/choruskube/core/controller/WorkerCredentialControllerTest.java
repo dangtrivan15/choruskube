@@ -46,9 +46,9 @@ class WorkerCredentialControllerTest extends BaseTest {
     @MockitoBean
     private GitHubTokenScopeResolver scopeResolver;
 
-    /** A single-tenant server holds no credential, so it serves no broker route even to a valid Worker. */
+    /** Core holds no credential and has no broker route at all, even for a valid Worker. */
     @Test
-    void brokerRoute_isNotServedInSingleTenantMode() throws Exception {
+    void brokerRoute_isNotServed() throws Exception {
         mockMvc.perform(get("/worker/runs/{r}/github-token", runId).header("Authorization", "Bearer test-fleet"))
                 .andExpect(status().isNotFound());
     }

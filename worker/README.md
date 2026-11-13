@@ -20,8 +20,9 @@ That single Fleet is not a stripped-down mode; it is the whole concept at its sm
 Placing runs across several Fleets — separate queues per team, per customer, or per cluster,
 with credentials issued and revoked per Fleet — is what the commercial control plane adds. It
 does so by supplying its own implementation of two seams the api-server already declares
-(`WorkerRegistrar` and `RunPlacementResolver`), not by replacing anything in this module. The
-Worker binary is the same either way.
+(`WorkerRegistrar` and `RunPlacementResolver`), not by replacing anything in this module. A
+binary embedding this module supplies its own `CredentialPlane` the same way — this open-source
+binary (`cmd/worker`) always passes the local one; see [Credentials](#credentials).
 
 ## Configuring which Fleet a Worker serves
 
@@ -42,16 +43,16 @@ The api-server compares the token against `WORKER_REGISTRATION_TOKEN`, so the tw
 Leaving the server's side unset admits no Worker at all — registration fails closed rather
 than leaving the endpoint anonymous on a server whose operator never set it.
 
-Every registration call also reports the Worker's resolved `CREDENTIAL_SOURCE`, so the
-api-server can tell the two modes apart on a `/worker/**` call that cares. The field is
-required: a missing, blank, or unrecognized value is refused with no default, so a Worker
-binary built before this field existed cannot register until it is upgraded. This server has
-exactly one Fleet, whose mode is a fact about the deployment rather than something to learn
-from whichever Worker registers, so it keeps no record of what any one Worker declared.
+Every registration call also reports the declared `Source` of this Worker's `CredentialPlane` —
+`local` for this open-source binary — a required field with no default, so a Worker binary built
+before this field existed cannot register until it is upgraded. This server has exactly one
+Fleet, whose mode is a fact about the deployment rather than something to learn from whichever
+Worker registers, so it keeps no record of what any one Worker declared; declaring
+`control-plane` is refused with 409, since this server holds no credential to broker.
 
 Registration also carries the Worker's latest credential-health report (see
 [Credential health](#credential-health)) — another required field with no default, on the same
-hard-cutover terms as `CREDENTIAL_SOURCE`.
+hard-cutover terms as the declared mode.
 
 Use this path when you want one place to change the answer, or when you intend to grow into a
 deployment that has more than one Fleet.
@@ -75,10 +76,10 @@ differs satisfies the startup guard — which only asks that it is set — and t
 with a 403, which is the failure the guard exists to prevent. Leaving the server's side unset
 admits no Worker on either path.
 
-This path never calls `/worker/register`, so `CREDENTIAL_SOURCE` is never reported anywhere, and
-neither is a credential-health report — there is nowhere for either to go. `local` here reads
-`CREDENTIALS_DIR` exactly as it does on the registration path. Registration takes priority over
-these static settings whenever both are configured.
+This path never calls `/worker/register`, so neither the declared mode nor a credential-health
+report goes anywhere — there is nowhere for either to go. The Worker reads `CREDENTIALS_DIR` the
+same way on either path. Registration takes priority over these static settings whenever both
+are configured.
 
 Use this path when the answer is already known and constant, and a round-trip to ask for it
 would only return what you configured.
@@ -98,8 +99,8 @@ would only return what you configured.
 | `EXECUTOR_TYPE` | no | `docker` (default) or `k8s` — which executor this process builds at startup. Any other value fails startup. |
 | `WORKLOAD_RETENTION` | no | Go duration (e.g. `1h30m`); default `1h`. How long a finished workload (Kubernetes Job, Docker container/sidecar/volumes) is kept before its executor removes it. Floored at the node's own heartbeat timeout plus 2 minutes — never set it below that, or the configured value is silently stamped up to the floor. An unparseable or non-positive value fails startup. Applies to whichever executor `EXECUTOR_TYPE` selects. |
 | `WORKER_CALLBACK_PORT` | no | Port the callback server listens on for agent completion/heartbeat callbacks. Default `9090`. |
-| `CREDENTIAL_SOURCE` | yes | `local` or `control-plane` — where GitHub and agent credentials come from; see [Credentials](#credentials). Every self-hosted install sets `local`. No default: a missing or unrecognized value fails startup, since guessing wrong would send a Worker meant to hold its own credentials to the API server for them, or the reverse. `local` is for a single tenant's own Fleet only. Reported at every registration call so the api-server can tell the two modes apart. |
-| `CREDENTIALS_DIR` | no | Folder the `local` source reads. Default `/etc/choruskube/credentials`. |
+| `CREDENTIAL_SOURCE` | — | Removed: this Worker always holds its own credentials. The Worker refuses to start while it is set. |
+| `CREDENTIALS_DIR` | no | Folder the local credential plane reads. Default `/etc/choruskube/credentials`. |
 | `GITHUB_API_URL` | no | GitHub API root for the Worker's own GitHub calls (gate compares and merges, run-branch cleanup, roadmap issue filing and closing). Default `https://api.github.com`. |
 | `ANTHROPIC_API_URL` | no | Anthropic API root the `local` source's credential health check reads a Claude token against. Default `https://api.anthropic.com`. |
 
@@ -125,18 +126,16 @@ An agent pod fetches its GitHub token from the Worker that launched it
 refused unless the execution belongs to the run it names), so the Worker decides where the token
 comes from.
 
-- **`local`** reads one set of credentials from `CREDENTIALS_DIR` and mints GitHub App tokens
-  itself. It is what every self-hosted install runs, on Docker or Kubernetes: the open-source
-  api-server holds no credential to hand out. It has no notion of a tenant, so every run on the
-  Worker gets the same credentials: use it only for a Worker that serves a single tenant's own
-  Fleet.
-- **`control-plane`** exists only for a hosted control plane's shared Fleet, whose Workers serve
-  every tenant and hold nothing. It asks the api-server for each run's token, which that control
-  plane resolves per organization, and launches with the Claude token and registry login prepare
-  attaches. An open-source api-server serves neither: a `control-plane` Worker against it fails
-  its first node for want of a credential.
+This open-source binary always runs the **local** credential plane: it reads one set of
+credentials from `CREDENTIALS_DIR` and mints GitHub App tokens itself. It has no notion of a
+tenant, so every run on the Worker gets the same credentials — use it only for a Worker that
+serves a single tenant's own Fleet. A binary embedding the `worker` module may supply its own
+`CredentialPlane` around a `credential.Provider` of its own, declaring a different `Source` at
+registration; this is the seam a hosted control plane's own Worker build uses to hold nothing and
+ask its control plane for each run's token instead.
 
-Why the mode is declared rather than detected, and why `local` must never serve more than one tenant: [2026-10-13---02](../docs/decisions/2026-10-13---02-data-plane-credential-rule.md).
+Why the mode is declared rather than detected, and why the local plane must never serve more than
+one tenant: [2026-10-13---02](../docs/decisions/2026-10-13---02-data-plane-credential-rule.md).
 
 A `local` GitHub App token covers only the run's own GitHub repositories and the fixed run
 permission list (`contents`, `pull_requests`, `issues` and `workflows` write; `actions`, `checks`,
@@ -158,9 +157,9 @@ gate's pull requests, to delete a completed run's branch once it is confirmed no
 repo's default branch, and to file the GitHub issues a gate's approved roadmap extension asks for
 (an issue per new task, deduplicated by a hidden key so a retried step never files one twice). The
 merge and branch-deletion calls need Contents read/write on the repository; filing issues needs
-Issues read/write — a `local` credential must carry it too, since the Worker files with whatever
-credential it was given regardless of mode. Every GitHub request the Worker makes identifies itself
-with `User-Agent: choruskube-worker`.
+Issues read/write — the local credential must carry it too, since the Worker files with whatever
+credential it holds. Every GitHub request the Worker makes identifies itself with
+`User-Agent: choruskube-worker`.
 
 | File under `CREDENTIALS_DIR` | Environment fallback | Purpose |
 |------------------------------|----------------------|---------|
@@ -169,9 +168,10 @@ with `User-Agent: choruskube-worker`.
 | `claude-oauth-token` | `CLAUDE_CODE_OAUTH_TOKEN` | The Claude token agent pods launch with. Required for AI nodes; a `local` Worker never uses one from the api-server, which on a self-hosted install holds none. |
 | `registry/host`, `registry/username`, `registry/password` | `REGISTRY_HOST`, `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` | Registry login for the agent image. Optional — none means an anonymous pull; all three or none. |
 
-A `local` Worker launches only with what it holds; an AI node with no Claude token fails before
-launch with a message naming this folder. A `control-plane` Worker launches with what its hosted
-control plane attaches and fails the node the same way when none is attached.
+This Worker launches only with what it holds; an AI node with no Claude token fails before
+launch with a message naming this folder. A Worker running a plane that holds nothing of its own
+launches with what its control plane attaches instead, and fails the node the same way when none
+is attached.
 
 ### Credential health
 
@@ -188,9 +188,9 @@ folder in place is picked up by the next check.
 Each result names the credential kind, a status, a short detail, and when it was checked. The
 status is one of `VALID`, `EXPIRED` (any rejected credential), `INSUFFICIENT_PERMISSIONS`,
 `UNREACHABLE` (the check itself could not be made — a network error, a timeout, or an
-unexpected server error), or `NOT_HELD` (this Worker holds nothing of that kind). A
-`control-plane` Worker holds nothing and reports every kind `NOT_HELD`, with no outbound call at
-all. A result never carries any part of a secret.
+unexpected server error), or `NOT_HELD` (this Worker holds nothing of that kind). A Worker running
+a plane that holds no credential of its own reports every kind `NOT_HELD`, with no outbound call
+at all. A result never carries any part of a secret.
 
 Repository reachability is a property of a run, not of the credential alone, so it is checked
 separately: on a run's first use of a PAT, the Worker reads each of the run's repositories once
@@ -233,10 +233,9 @@ service account, or credential itself — see
 | `K8S_AGENT_CPU_LIMIT` | `1` | Default agent-container CPU limit; overridable per node. |
 | `K8S_AGENT_MEMORY_LIMIT` | — | Removed: the limit is derived from the request. The Worker refuses to start while it is set. |
 
-**Credentials on Kubernetes.** A self-hosted Worker on Kubernetes takes its credentials the
-same way as on Docker: from a Secret mounted read-only at `CREDENTIALS_DIR`, with
-`CREDENTIAL_SOURCE=local`. A Secret's keys are flat, so the volume's `items` map them onto the
-folder's nested paths:
+**Credentials on Kubernetes.** A self-hosted Worker on Kubernetes takes its credentials the same
+way as on Docker: from a Secret mounted read-only at `CREDENTIALS_DIR`. A Secret's keys are flat,
+so the volume's `items` map them onto the folder's nested paths:
 
 ```yaml
 volumes:

@@ -1,6 +1,6 @@
 # Control-plane GitHub calls are allowlisted; the list only shrinks
 
-**Status:** current; its one broker entry is gone, and the list is empty, per [2026-11-10---01-self-hosted-server-holds-no-credential](2026-11-10---01-self-hosted-server-holds-no-credential.md)
+**Status:** current; its one broker entry is gone, and the list is empty, per [2026-11-10---01-self-hosted-server-holds-no-credential](2026-11-10---01-self-hosted-server-holds-no-credential.md); core guarding `GitHubAppService` is superseded — core now runs the source-only check instead — by [2026-11-13---01-the-open-source-worker-is-local-only](2026-11-13---01-the-open-source-worker-is-local-only.md)
 
 ## Context
 

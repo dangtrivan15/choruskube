@@ -18,7 +18,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
 import com.choruskube.core.config.GraphIds;
-import com.choruskube.core.credential.GitHubCredentialResolver;
 import com.choruskube.core.dto.InternalUpdateNodeExecutionRequest;
 import com.choruskube.core.model.DriftRecheckConfig.StampMode;
 import com.choruskube.core.model.GateStamp;
@@ -80,12 +79,6 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
 
     @MockitoBean
     private WorkflowClient workflowClient;
-
-    @MockitoBean
-    private GitHubAppService gitHubAppService;
-
-    @MockitoBean
-    private GitHubCredentialResolver credentialResolver;
 
     @MockitoBean
     private AuditSink auditSink;
@@ -242,11 +235,10 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
         assertThat(gate.getStatus()).isEqualTo(NodeExecutionStatus.finalizing);
         assertThat(epicRepo.findBySoftwareProjectIdOrderByCreatedAtDesc(repoId)).isEmpty();
         assertThat(roadmapCounts()).containsExactly(0, 0, 0);
-        verifyNoInteractions(gitHubAppService, credentialResolver);
     }
 
     @Test
-    void approve_thenPlanMaterializeComplete_linksIssues_andCallsNoGitHub() throws Exception {
+    void approve_thenPlanMaterializeComplete_linksIssues_withNoGitHubClient() throws Exception {
         RunPullRequest pr = pullRequest(21, "https://github.com/" + ownerRepo + "/pull/21");
 
         mockMvc.perform(post("/api/v1/runs/{id}/nodes/{exec}/signal", runId, gateExec.getId())
@@ -282,7 +274,6 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
         assertThat(issues.get(0).get("ownerRepo")).isEqualTo(ownerRepo);
         assertThat(stampRepo.findById(approvalId).orElseThrow().getIssueRequests())
                 .isNotNull();
-        verifyNoInteractions(gitHubAppService, credentialResolver);
 
         String completeBody = "{\"merges\":[{\"rowId\":\"" + pr.getId()
                 + "\",\"kind\":\"MERGED\",\"mergedAt\":\"2026-10-11T10:00:00Z\",\"mergeSha\":\"m1\"}],"
@@ -310,7 +301,6 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
                     assertThat(i.getGitRepoId()).isEqualTo(repoId);
                 });
         verify(auditSink, times(1)).record(eq(AuditSink.PULL_REQUESTS_MERGED), eq("workflow_run"), eq(runId), any());
-        verifyNoInteractions(gitHubAppService, credentialResolver);
 
         String repeatComplete = mockMvc.perform(
                         post(STEPS + "/{approval}/complete", runId, gateExec.getId(), approvalId)
@@ -428,7 +418,6 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
 
         assertThat(second).isEqualTo(first);
         assertThat(roadmapCounts()).containsExactly(1, 2, 1);
-        verifyNoInteractions(gitHubAppService, credentialResolver);
     }
 
     @Test
@@ -614,7 +603,6 @@ class AsyncGateFinalizeIntegrationTest extends BaseTest {
         assertThat(stampRepo.findByWorkflowRunIdOrderByCreatedAtAsc(runId)).isEmpty();
         assertThat(payload()).contains("rereview").contains("approvalId=null");
         assertThat(prRepo.findById(pr.getId()).orElseThrow().getMergedAt()).isNull();
-        verifyNoInteractions(gitHubAppService, credentialResolver);
     }
 
     private void completedTestRun(Instant completedAt, String baseSha, int iteration) {

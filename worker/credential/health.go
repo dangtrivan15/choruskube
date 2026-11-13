@@ -43,9 +43,9 @@ type HealthResult struct {
 	CheckedAt time.Time
 }
 
-// NotHeldReport is every kind reported NotHeld, checked at now — what a Worker holding nothing
-// (control-plane) always reports, and the credential package's own answer when a check finds
-// nothing configured for a given kind.
+// NotHeldReport is every kind reported NotHeld, checked at now — what a Provider holding no
+// credential of its own always reports, and the credential package's own answer when a check
+// finds nothing configured for a given kind.
 func NotHeldReport(now time.Time) []HealthResult {
 	out := make([]HealthResult, len(allKinds))
 	for i, k := range allKinds {

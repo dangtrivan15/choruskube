@@ -32,24 +32,17 @@ func TestBuildExecutor_K8sSelected(t *testing.T) {
 	assert.Equal(t, "k8s", typ)
 }
 
-func TestCredentialSourceOf(t *testing.T) {
-	for raw, want := range map[string]string{"control-plane": "control-plane", "local": "local"} {
-		got, err := credentialSourceOf(raw)
-		require.NoError(t, err, "%q", raw)
-		assert.Equal(t, want, got)
+func TestRefuseRetiredCredentialSource_RefusesAnyValue(t *testing.T) {
+	for _, raw := range []string{"local", "control-plane", "x"} {
+		err := refuseRetiredCredentialSource(envMap(map[string]string{"CREDENTIAL_SOURCE": raw}))
+		require.Error(t, err, "%q", raw)
+		assert.Contains(t, err.Error(), "CREDENTIAL_SOURCE")
 	}
 }
 
-func TestCredentialSourceOf_RequiresAValue(t *testing.T) {
-	_, err := credentialSourceOf("")
-	require.Error(t, err, "an unset CREDENTIAL_SOURCE must fail startup, not silently become control-plane")
-}
-
-func TestCredentialSourceOf_RejectsAnythingElse(t *testing.T) {
-	for _, raw := range []string{"vault", "Local", "control_plane", " local"} {
-		_, err := credentialSourceOf(raw)
-		require.Error(t, err, "a typo must fail startup, not silently fall back to the control plane: %q", raw)
-	}
+func TestRefuseRetiredCredentialSource_AllowsUnset(t *testing.T) {
+	err := refuseRetiredCredentialSource(envMap(map[string]string{}))
+	require.NoError(t, err)
 }
 
 func TestK8sConfigFromEnv_RetentionFromEnv(t *testing.T) {

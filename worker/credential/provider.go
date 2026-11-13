@@ -1,10 +1,10 @@
 // Package credential is where a Worker gets the credentials its runs need: a GitHub token for a
-// run, and the Claude token and registry login its agent pods launch with — supplied either by
-// the Worker itself (local) or passed through from what the control plane attached (control-plane).
+// run, and the Claude token and registry login its agent pods launch with.
 //
-// ControlPlane asks the API server per run. Local reads the Worker's own mounted folder; an App
-// token it mints is narrowed to the run's GitHub token scope, fetched from the API server, while
-// a PAT is passed through unchanged.
+// NewLocal reads the Worker's own mounted folder; an App token it mints is narrowed to the run's
+// GitHub token scope, fetched from the API server, while a PAT is passed through unchanged. A
+// binary embedding this package may supply its own Provider for another credential source — see
+// worker.CredentialPlane.
 package credential
 
 import (

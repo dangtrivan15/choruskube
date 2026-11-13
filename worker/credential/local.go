@@ -54,9 +54,8 @@ type RegistryChecker func(ctx context.Context, host, username, password string) 
 // one that lapses mid-clone.
 const refreshMargin = 5 * time.Minute
 
-// installationTTL caches an installation lookup for this long — see the shared contract in
-// GitHubAppService#installation (API server): keyed by credential fingerprint, never by
-// installation id alone.
+// installationTTL caches an installation lookup for this long, keyed by credential fingerprint
+// (never by installation id alone, which two different App credentials could share).
 const installationTTL = 10 * time.Minute
 
 // ScopeClient fetches a run's GitHub token scope from the control plane — the repositories and
@@ -272,8 +271,7 @@ func (l *local) AgentCredentials(_ context.Context, _ uuid.UUID, _ Agent, runsCl
 		return Agent{}, err
 	}
 	if claude == "" {
-		return Agent{}, fmt.Errorf("%w: this Worker holds its own credentials (CREDENTIAL_SOURCE=local) and never uses "+
-			"the control plane's; put claude-oauth-token in CREDENTIALS_DIR (%s) or set CLAUDE_CODE_OAUTH_TOKEN",
+		return Agent{}, fmt.Errorf("%w: put claude-oauth-token in CREDENTIALS_DIR (%s) or set CLAUDE_CODE_OAUTH_TOKEN",
 			ErrNoClaudeToken, l.dirLabel())
 	}
 	return Agent{ClaudeOAuthToken: claude, Registry: registry}, nil

@@ -13,12 +13,10 @@ import (
 	tworker "go.temporal.io/sdk/worker"
 
 	"github.com/dangtrivan15/choruskube/worker/activity"
-	"github.com/dangtrivan15/choruskube/worker/anthropic"
 	"github.com/dangtrivan15/choruskube/worker/callback"
 	credprov "github.com/dangtrivan15/choruskube/worker/credential"
 	"github.com/dangtrivan15/choruskube/worker/executor"
 	"github.com/dangtrivan15/choruskube/worker/github"
-	"github.com/dangtrivan15/choruskube/worker/registry"
 	"github.com/dangtrivan15/choruskube/worker/workload"
 )
 
@@ -33,51 +31,20 @@ func wireExecutorCredential(exec executor.Executor, get func() string) {
 	}
 }
 
-// newCredentialProvider picks where this process gets its credentials; anything but the local
-// source asks the API server. The local source still asks the API server for each run's GitHub
-// token scope — the repositories and permissions an App credential's mint is narrowed to.
-func newCredentialProvider(cfg Config, api interface {
-	credprov.TokenClient
-	credprov.ScopeClient
-}) credprov.Provider {
-	if cfg.CredentialSource == CredentialSourceLocal {
-		ghClient := github.New(cfg.GitHubAPIURL)
-		return credprov.NewLocal(cfg.CredentialsDir, ghClient, api, time.Now, ghClient, anthropic.New(cfg.AnthropicAPIURL), registry.Check)
-	}
-	return credprov.NewControlPlane(api)
-}
-
-// lateBoundAPI implements credential.TokenClient and credential.ScopeClient by delegating to a
-// *workload.Client that exists only once registration has produced the token it authenticates
-// with. The credential provider is built, and its startup health check run, before the first
-// registration call -- so attachHealth and the first Fleets call both happen before any run needs
-// a token through this binding, which is the only reason it is safe to leave api nil until bind
-// is called.
+// lateBoundAPI implements credential.ScopeClient by delegating to a *workload.Client that exists
+// only once registration has produced the token it authenticates with. The credential provider is
+// built, and its startup health check run, before the first registration call -- so attachHealth
+// and the first Fleets call both happen before any run needs a scope lookup through this binding,
+// which is the only reason it is safe to leave api nil until bind is called.
 type lateBoundAPI struct {
 	mu  sync.RWMutex
-	api interface {
-		credprov.TokenClient
-		credprov.ScopeClient
-	}
+	api credprov.ScopeClient
 }
 
-func (b *lateBoundAPI) bind(api interface {
-	credprov.TokenClient
-	credprov.ScopeClient
-}) {
+func (b *lateBoundAPI) bind(api credprov.ScopeClient) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.api = api
-}
-
-func (b *lateBoundAPI) GitHubToken(ctx context.Context, runID uuid.UUID) (string, error) {
-	b.mu.RLock()
-	api := b.api
-	b.mu.RUnlock()
-	if api == nil {
-		return "", errors.New("GitHub token requested before this Worker finished registering")
-	}
-	return api.GitHubToken(ctx, runID)
 }
 
 func (b *lateBoundAPI) GitHubTokenScope(ctx context.Context, runID uuid.UUID) ([]string, map[string]string, error) {
@@ -538,16 +505,24 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	cfg = cfg.withDefaults()
 
+	// The cache, and the workload client reading it, exist before the credential plane's Provider
+	// is built: the plane's PlaneDeps.API is apiBinding, bound to this client immediately, so a
+	// plane whose Provider calls the API server (the local plane's run-scope lookup) can do so
+	// the moment it is asked, rather than only after registration happens to complete first.
+	credentials := newCredentialCache("")
+	wc := workload.NewClient(cfg.APIServerURL, credentials.get, nil)
+	apiBinding := &lateBoundAPI{}
+	apiBinding.bind(wc)
+
 	// The provider is built, and its startup health check run, before the first Fleets call: a
 	// TokenFleetProvider's registration now carries that check's report, so it must exist before
-	// registration happens. Its scope client binds to the real workload client only once
-	// registration produces the credential that client authenticates with -- see lateBoundAPI.
-	apiBinding := &lateBoundAPI{}
-	provider := newCredentialProvider(cfg, apiBinding)
+	// registration happens.
+	provider := cfg.CredentialPlane.New(PlaneDeps{API: apiBinding, Credential: credentials.get})
 	monitor := newHealthMonitor(provider, healthCheckInterval)
 	monitor.checkNow(ctx)
 	if tfp, ok := cfg.Provider.(*TokenFleetProvider); ok {
 		tfp.attachHealth(monitor.latest)
+		tfp.attachCredentialSource(cfg.CredentialPlane.Source)
 	}
 
 	reg, err := cfg.Provider.Fleets(ctx)
@@ -563,10 +538,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if reg.InternalToken == "" {
 		return errors.New("no API server credential resolved: registration minted none and WORKER_INTERNAL_TOKEN is unset")
 	}
-
-	credentials := newCredentialCache(reg.InternalToken)
-	wc := workload.NewClient(cfg.APIServerURL, credentials.get, nil)
-	apiBinding.bind(wc)
+	credentials.set(reg.InternalToken)
 
 	// Activities gets a HashCache so the callback server started below can verify an agent's
 	// completion POST without a network round trip to re-resolve it.

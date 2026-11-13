@@ -53,7 +53,7 @@ public class WorkerCredentialController {
     }
 
     /** An encoded path skips {@code WorkerAuthFilter}'s raw-prefix check, so absence is re-checked here. */
-    static String credentialOf(HttpServletRequest httpRequest) {
+    private static String credentialOf(HttpServletRequest httpRequest) {
         Object credential = httpRequest.getAttribute(WorkerAuthFilter.FLEET_TOKEN_ATTRIBUTE);
         return (credential instanceof String c && !c.isBlank()) ? c : null;
     }

@@ -417,8 +417,9 @@ func (a *Activities) executeLocally(ctx context.Context, runID uuid.UUID, params
 			Password: prep.Registry.Password,
 		}
 	}
-	// The provider is the single authority on what the pod launches with: local ignores
-	// attached and uses only its own; control-plane passes attached straight through.
+	// The provider is the single authority on what the pod launches with: one holding its own
+	// credentials ignores attached and uses only its own; one that holds nothing passes attached
+	// straight through.
 	agent, err := a.credentials.AgentCredentials(ctx, runID, attached, runsClaude(params.Node.ExecutorType))
 	if err != nil {
 		if errors.Is(err, credential.ErrNoClaudeToken) {

@@ -41,8 +41,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * A single-tenant server holds no credential even when its environment still sets the settings it
- * used to read: nothing resolves them, prepare attaches nothing, and no route returns a credential.
+ * Core holds no credential, and no broker route exists at all, even when its environment still sets
+ * the settings it used to read: nothing resolves them, and prepare attaches nothing.
  */
 @AutoConfigureMockMvc
 @Transactional
@@ -144,7 +144,6 @@ class RetiredCredentialSettingsIntegrationTest extends BaseTest {
     void noCredentialResolverIsRegistered() {
         assertThat(context.getBeanNamesForType(WorkloadAgentCredentialResolver.class))
                 .isEmpty();
-        assertThat(context.getBeanNamesForType(GitHubCredentialResolver.class)).isEmpty();
     }
 
     @Test

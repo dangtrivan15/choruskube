@@ -43,7 +43,7 @@ func TestRunSurfacesProviderFailure(t *testing.T) {
 	boom := errors.New("boom")
 	err := Run(context.Background(), Config{
 		TemporalAddress: "t:7233", APIServerURL: "http://a", CallbackURL: "http://cb", Provider: errProvider{boom},
-		CredentialSource: CredentialSourceControlPlane, Executor: nopExecutor{},
+		CredentialPlane: stubCredentialPlane("stub"), Executor: nopExecutor{},
 	})
 	if !errors.Is(err, boom) {
 		t.Fatalf("want the provider's error wrapped, got %v", err)
@@ -53,19 +53,19 @@ func TestRunSurfacesProviderFailure(t *testing.T) {
 func TestRunRejectsEmptyFleetList(t *testing.T) {
 	err := Run(context.Background(), Config{
 		TemporalAddress: "t:7233", APIServerURL: "http://a", CallbackURL: "http://cb", Provider: fixedProvider{},
-		CredentialSource: CredentialSourceControlPlane, Executor: nopExecutor{},
+		CredentialPlane: stubCredentialPlane("stub"), Executor: nopExecutor{},
 	})
 	if err == nil {
 		t.Fatal("want an error when no Fleet is served, got nil")
 	}
 }
 
-// TestRunFirstRegistrationCarriesAFullReport_ControlPlane proves Run wires the startup health
-// check into a *TokenFleetProvider before its first Fleets call, for a Worker holding no
-// credentials of its own. TemporalAddress names a port nothing listens on, so Run fails fast
+// TestRunFirstRegistrationCarriesAFullReport_StubPlane proves Run wires the startup health check
+// into a *TokenFleetProvider before its first Fleets call, and declares the attached plane's
+// Source on that same call. TemporalAddress names a port nothing listens on, so Run fails fast
 // once it tries to dial Temporal -- after the registration this test cares about has already
 // happened, which is why the returned error is never asserted.
-func TestRunFirstRegistrationCarriesAFullReport_ControlPlane(t *testing.T) {
+func TestRunFirstRegistrationCarriesAFullReport_StubPlane(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -74,35 +74,37 @@ func TestRunFirstRegistrationCarriesAFullReport_ControlPlane(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	plane := stubCredentialPlane("stub-source")
 	cfg := Config{
-		TemporalAddress:  "127.0.0.1:1", // connection refused: fails Run fast, after registration
-		APIServerURL:     srv.URL,
-		CallbackURL:      "http://cb",
-		CallbackPort:     19191,
-		Provider:         NewTokenFleetProvider(srv.URL, "ckf_secret", nil, "", srv.Client()),
-		CredentialSource: CredentialSourceControlPlane,
-		Executor:         nopExecutor{},
+		TemporalAddress: "127.0.0.1:1", // connection refused: fails Run fast, after registration
+		APIServerURL:    srv.URL,
+		CallbackURL:     "http://cb",
+		CallbackPort:    19191,
+		Provider:        NewTokenFleetProvider(srv.URL, "ckf_secret", nil, srv.Client()),
+		CredentialPlane: plane,
+		Executor:        nopExecutor{},
 	}
 
 	_ = Run(context.Background(), cfg)
 
 	require.NotNil(t, gotBody, "Run must have registered before failing to dial Temporal")
+	assert.Equal(t, plane.Source, gotBody["credentialSource"])
 	health, ok := gotBody["credentialHealth"].([]any)
 	require.True(t, ok, "credentialHealth = %v", gotBody["credentialHealth"])
 	require.Len(t, health, 3)
 	for _, e := range health {
 		entry, ok := e.(map[string]any)
 		require.True(t, ok)
-		assert.Equal(t, "NOT_HELD", entry["status"], "a control-plane Worker holds nothing")
+		assert.Equal(t, "NOT_HELD", entry["status"], "the stub plane's provider holds nothing")
 	}
 }
 
-// TestRunFirstRegistrationCarriesAFullReport_Local proves the same wiring for the local source,
-// reaching local.CheckHealth rather than controlPlane.CheckHealth. An empty credentials
-// directory means every kind is still reported NOT_HELD, but by a different code path -- and,
-// critically, with no outbound network call, since nothing is configured to check.
-// clearLocalCredentialEnv unsets every variable the local source falls back to, so a credential
-// in the developer's own shell can neither change these outcomes nor be sent anywhere.
+// TestRunFirstRegistrationCarriesAFullReport_Local proves the same wiring for the local plane,
+// reaching local.CheckHealth. An empty credentials directory means every kind is still reported
+// NOT_HELD, but by a different code path -- and, critically, with no outbound network call, since
+// nothing is configured to check. clearLocalCredentialEnv unsets every variable the local plane
+// falls back to, so a credential in the developer's own shell can neither change these outcomes
+// nor be sent anywhere.
 func clearLocalCredentialEnv(t *testing.T) {
 	t.Helper()
 	for _, n := range []string{
@@ -124,19 +126,19 @@ func TestRunFirstRegistrationCarriesAFullReport_Local(t *testing.T) {
 	defer srv.Close()
 
 	cfg := Config{
-		TemporalAddress:  "127.0.0.1:1",
-		APIServerURL:     srv.URL,
-		CallbackURL:      "http://cb",
-		CallbackPort:     19192,
-		Provider:         NewTokenFleetProvider(srv.URL, "ckf_secret", nil, CredentialSourceLocal, srv.Client()),
-		CredentialSource: CredentialSourceLocal,
-		CredentialsDir:   t.TempDir(),
-		Executor:         nopExecutor{},
+		TemporalAddress: "127.0.0.1:1",
+		APIServerURL:    srv.URL,
+		CallbackURL:     "http://cb",
+		CallbackPort:    19192,
+		Provider:        NewTokenFleetProvider(srv.URL, "ckf_secret", nil, srv.Client()),
+		CredentialPlane: LocalCredentialPlane(t.TempDir(), "", ""),
+		Executor:        nopExecutor{},
 	}
 
 	_ = Run(context.Background(), cfg)
 
 	require.NotNil(t, gotBody)
+	assert.Equal(t, "local", gotBody["credentialSource"])
 	health, ok := gotBody["credentialHealth"].([]any)
 	require.True(t, ok)
 	require.Len(t, health, 3)
@@ -157,13 +159,13 @@ func TestRunStaticPathSendsNoRegistration(t *testing.T) {
 	defer srv.Close()
 
 	cfg := Config{
-		TemporalAddress:  "127.0.0.1:1",
-		APIServerURL:     srv.URL,
-		CallbackURL:      "http://cb",
-		CallbackPort:     19193,
-		Provider:         NewStaticFleetProvider("ns", "q", "internal-token"),
-		CredentialSource: CredentialSourceControlPlane,
-		Executor:         nopExecutor{},
+		TemporalAddress: "127.0.0.1:1",
+		APIServerURL:    srv.URL,
+		CallbackURL:     "http://cb",
+		CallbackPort:    19193,
+		Provider:        NewStaticFleetProvider("ns", "q", "internal-token"),
+		CredentialPlane: stubCredentialPlane("stub"),
+		Executor:        nopExecutor{},
 	}
 
 	_ = Run(context.Background(), cfg)
@@ -178,23 +180,14 @@ func TestRunStaticPathSendsNoRegistration(t *testing.T) {
 func TestLateBoundAPIRefusesBeforeBind(t *testing.T) {
 	b := &lateBoundAPI{}
 
-	_, err := b.GitHubToken(context.Background(), uuid.New())
-	require.Error(t, err)
-
-	_, _, err = b.GitHubTokenScope(context.Background(), uuid.New())
+	_, _, err := b.GitHubTokenScope(context.Background(), uuid.New())
 	require.Error(t, err)
 }
 
 type fakeLateBoundTarget struct {
-	token  string
 	repos  []string
 	perms  map[string]string
 	gotRun uuid.UUID
-}
-
-func (f *fakeLateBoundTarget) GitHubToken(_ context.Context, runID uuid.UUID) (string, error) {
-	f.gotRun = runID
-	return f.token, nil
 }
 
 func (f *fakeLateBoundTarget) GitHubTokenScope(_ context.Context, runID uuid.UUID) ([]string, map[string]string, error) {
@@ -204,40 +197,24 @@ func (f *fakeLateBoundTarget) GitHubTokenScope(_ context.Context, runID uuid.UUI
 
 func TestLateBoundAPIDelegatesAfterBind(t *testing.T) {
 	b := &lateBoundAPI{}
-	target := &fakeLateBoundTarget{token: "ghs_x", repos: []string{"acme/widgets"}, perms: map[string]string{"contents": "read"}}
+	target := &fakeLateBoundTarget{repos: []string{"acme/widgets"}, perms: map[string]string{"contents": "read"}}
 	b.bind(target)
 	runID := uuid.New()
-
-	tok, err := b.GitHubToken(context.Background(), runID)
-	require.NoError(t, err)
-	assert.Equal(t, "ghs_x", tok)
-	assert.Equal(t, runID, target.gotRun)
 
 	repos, perms, err := b.GitHubTokenScope(context.Background(), runID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"acme/widgets"}, repos)
 	assert.Equal(t, map[string]string{"contents": "read"}, perms)
+	assert.Equal(t, runID, target.gotRun)
 }
 
 // -----------------------------------------------------------------------------------
-// newCredentialProvider's CheckHealth wiring
+// LocalCredentialPlane's CheckHealth wiring
 // -----------------------------------------------------------------------------------
 
-func TestNewCredentialProviderControlPlane_CheckHealthReportsAllNotHeld(t *testing.T) {
-	provider := newCredentialProvider(Config{CredentialSource: CredentialSourceControlPlane}.withDefaults(), &stubTokenClient{})
-
-	results := provider.CheckHealth(context.Background())
-
-	require.Len(t, results, 3)
-	for _, r := range results {
-		assert.Equal(t, credprov.StatusNotHeld, r.Status)
-	}
-}
-
-func TestNewCredentialProviderLocal_CheckHealthWorksWithNothingConfigured(t *testing.T) {
+func TestLocalCredentialPlane_CheckHealthWorksWithNothingConfigured(t *testing.T) {
 	clearLocalCredentialEnv(t)
-	cfg := Config{CredentialSource: CredentialSourceLocal, CredentialsDir: t.TempDir()}.withDefaults()
-	provider := newCredentialProvider(cfg, &stubTokenClient{})
+	provider := LocalCredentialPlane(t.TempDir(), "", "").New(PlaneDeps{API: &stubScopeClient{}, Credential: func() string { return "" }})
 
 	results := provider.CheckHealth(context.Background())
 
