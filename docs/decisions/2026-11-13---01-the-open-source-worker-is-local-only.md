@@ -1,4 +1,4 @@
-# The open-source Worker is local-only; the control-plane credential provider moves out
+# The open-source Worker is local-only; core carries no credential broker
 
 **Status:** current
 
@@ -36,12 +36,12 @@ node at a time.
 
 **The Worker library takes a required `CredentialPlane`.** `worker.Config.CredentialPlane` is a
 declared `Source` string plus a `New` constructor; `Validate` rejects a zero value. The seam lets
-a binary embedding the `worker` Go module supply its own credential source — a hosted control
-plane's own Worker build is the one exception this module still names in its own doc comments,
-even though its implementation lives elsewhere now. `worker.LocalCredentialPlane` is the plane
-every open-source binary passes; `credential.NewControlPlane` and its file move with the
-control-plane implementation to wherever that build lives, since the only caller left for it was
-`cmd/worker`.
+a binary embedding the `worker` Go module supply its own credential source, built from the
+exported `credential.Provider` interface and its types. `New` receives the Worker's API-server
+access late-bound and its credential as a live getter, because the provider is built and
+health-checked before registration produces that credential. `worker.LocalCredentialPlane` is the
+plane the open-source binary passes. `credential.NewControlPlane` and the client call it used
+are deleted: `cmd/worker` was their only caller.
 
 **The open-source binary refuses to start if `CREDENTIAL_SOURCE` is set to anything.** This
 binary always holds its own credentials now, so the variable has nothing left to select between;

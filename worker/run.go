@@ -505,18 +505,13 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	cfg = cfg.withDefaults()
 
-	// The cache, and the workload client reading it, exist before the credential plane's Provider
-	// is built: the plane's PlaneDeps.API is apiBinding, bound to this client immediately, so a
-	// plane whose Provider calls the API server (the local plane's run-scope lookup) can do so
-	// the moment it is asked, rather than only after registration happens to complete first.
-	credentials := newCredentialCache("")
-	wc := workload.NewClient(cfg.APIServerURL, credentials.get, nil)
-	apiBinding := &lateBoundAPI{}
-	apiBinding.bind(wc)
-
 	// The provider is built, and its startup health check run, before the first Fleets call: a
 	// TokenFleetProvider's registration now carries that check's report, so it must exist before
-	// registration happens.
+	// registration happens. It therefore gets the credential as a getter over this cache, never a
+	// value, and its scope client binds to the real workload client only once registration has
+	// produced that credential -- see lateBoundAPI.
+	credentials := newCredentialCache("")
+	apiBinding := &lateBoundAPI{}
 	provider := cfg.CredentialPlane.New(PlaneDeps{API: apiBinding, Credential: credentials.get})
 	monitor := newHealthMonitor(provider, healthCheckInterval)
 	monitor.checkNow(ctx)
@@ -539,6 +534,8 @@ func Run(ctx context.Context, cfg Config) error {
 		return errors.New("no API server credential resolved: registration minted none and WORKER_INTERNAL_TOKEN is unset")
 	}
 	credentials.set(reg.InternalToken)
+	wc := workload.NewClient(cfg.APIServerURL, credentials.get, nil)
+	apiBinding.bind(wc)
 
 	// Activities gets a HashCache so the callback server started below can verify an agent's
 	// completion POST without a network round trip to re-resolve it.

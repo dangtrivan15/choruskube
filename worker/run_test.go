@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -171,6 +172,60 @@ func TestRunStaticPathSendsNoRegistration(t *testing.T) {
 	_ = Run(context.Background(), cfg)
 
 	assert.False(t, hit, "the static path must never call the API server to register")
+}
+
+// TestRunHandsThePlaneALiveCredentialAndALateBoundAPI proves what an embedding binary's plane
+// relies on: New runs before registration, so the Credential getter reads "" and a scope lookup
+// through API is refused there, then the same getter reads the minted credential and the same
+// API presents it, with no rebuild of the Provider.
+func TestRunHandsThePlaneALiveCredentialAndALateBoundAPI(t *testing.T) {
+	const minted = "ckw_minted"
+	scopeAuth := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/worker/register" {
+			_, _ = w.Write([]byte(`{"workerId":"w-1","temporalNamespace":"ns","taskQueue":"q","token":"jwt","internalToken":"` + minted + `"}`))
+			return
+		}
+		scopeAuth <- r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"repositories":["acme/widgets"],"permissions":{"contents":"write"}}`))
+	}))
+	defer srv.Close()
+
+	var deps PlaneDeps
+	var credentialAtNew string
+	var scopeErrAtNew error
+	plane := CredentialPlane{
+		Source: "stub",
+		New: func(d PlaneDeps) credprov.Provider {
+			deps = d
+			credentialAtNew = d.Credential()
+			_, _, scopeErrAtNew = d.API.GitHubTokenScope(context.Background(), uuid.New())
+			return &fakeHealthProvider{results: credprov.NotHeldReport(time.Now())}
+		},
+	}
+	cfg := Config{
+		TemporalAddress: "127.0.0.1:1", // connection refused: fails Run fast, after registration
+		APIServerURL:    srv.URL,
+		CallbackURL:     "http://cb",
+		CallbackPort:    19194,
+		Provider:        NewTokenFleetProvider(srv.URL, "ckf_secret", nil, srv.Client()),
+		CredentialPlane: plane,
+		Executor:        nopExecutor{},
+	}
+
+	_ = Run(context.Background(), cfg)
+
+	require.NotNil(t, deps.Credential, "Run must have built the plane's Provider")
+	assert.Empty(t, credentialAtNew)
+	require.Error(t, scopeErrAtNew, "a scope lookup before registration must be refused, not sent unauthenticated")
+	assert.Empty(t, scopeAuth, "the refused lookup must not have reached the API server")
+
+	assert.Equal(t, minted, deps.Credential())
+	repos, _, err := deps.API.GitHubTokenScope(context.Background(), uuid.New())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"acme/widgets"}, repos)
+	assert.Equal(t, "Bearer "+minted, <-scopeAuth)
 }
 
 // -----------------------------------------------------------------------------------

@@ -705,7 +705,8 @@ public class DefaultTaskServiceTest extends BaseTest {
     // ── GitHub issue linkage: the close is a workflow started after commit ──────────────
     //
     // This class is @Transactional, so afterCommit never fires here; TaskIssueCloseIntegrationTest
-    // covers the start itself. These pin that completion never calls GitHub from the server.
+    // covers the start itself. These pin that completion succeeds whatever the linked issue's state
+    // and leaves an open linkage for that workflow to close.
 
     @Test
     void complete_withOpenLinkedIssue_completesWithNoGitHubClient() {
