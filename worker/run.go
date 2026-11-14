@@ -102,6 +102,14 @@ func clientOptions(f Fleet, cfg Config, tokens *tokenCache, key string) client.O
 	return opts
 }
 
+// fleetWorkerOptions is shared by serve and worker/temporal_methods_test.go, so the options the
+// test pins are the ones production actually runs. Activities only. This process never holds
+// workflow code -- DAG semantics are replay-deterministic and stay on the side that deploys
+// them -- so polling for workflow tasks would claim work it cannot execute.
+func fleetWorkerOptions() tworker.Options {
+	return tworker.Options{DisableWorkflowWorker: true}
+}
+
 // fleetKey identifies a Fleet across successive FleetProvider.Fleets calls, so a renewed
 // token can be matched back to the Worker it belongs to. Namespace+TaskQueue is what makes
 // a Fleet addressable in the first place, so the pair is already a stable identity.
@@ -387,14 +395,13 @@ func (s *fleetSupervisor) serve(f Fleet) error {
 	if resolveAddress(f, s.cfg) == "" {
 		return fmt.Errorf("no temporal address for fleet %s: registration returned no endpoint and TEMPORAL_ADDRESS is not set", f.TaskQueue)
 	}
+	// worker/temporal_methods_test.go repeats this dial-and-start sequence against a recording
+	// fake, so an SDK call added here that the test does not repeat reaches Temporal unpinned.
 	c, err := client.Dial(clientOptions(f, s.cfg, s.tokens, key))
 	if err != nil {
 		return fmt.Errorf("dial temporal for fleet %s: %w", f.TaskQueue, err)
 	}
-	// Activities only. This process never holds workflow code — DAG semantics are
-	// replay-deterministic and stay on the side that deploys them — so polling for
-	// workflow tasks would claim work it cannot execute.
-	w := tworker.New(c, f.TaskQueue, tworker.Options{DisableWorkflowWorker: true})
+	w := tworker.New(c, f.TaskQueue, fleetWorkerOptions())
 	activity.Register(w, s.acts)
 	if err := w.Start(); err != nil {
 		c.Close()
@@ -421,8 +428,9 @@ func (s *fleetSupervisor) serve(f Fleet) error {
 
 // clientFor returns the Temporal client serving namespace+taskQueue -- the same identity
 // fleetKey addresses everywhere else -- or nil if this process is not (or not yet) serving that
-// Fleet.
-func (s *fleetSupervisor) clientFor(namespace, taskQueue string) client.Client {
+// Fleet. Narrowed to temporalCompletions, the only Temporal surface the completer may use; see
+// clientResolver.
+func (s *fleetSupervisor) clientFor(namespace, taskQueue string) temporalCompletions {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.clients[fleetKey(Fleet{Namespace: namespace, TaskQueue: taskQueue})]
@@ -452,7 +460,7 @@ func (s *fleetSupervisor) stopAll() {
 // Worker never launched -- a previous Worker did, before a restart -- together with the Temporal
 // namespace it serves. See clientResolver.reattachClient for why the namespace alone suffices and
 // why serving more than one is refused rather than guessed.
-func (s *fleetSupervisor) reattachClient() (client.Client, string, error) {
+func (s *fleetSupervisor) reattachClient() (temporalCompletions, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.nsClients) != 1 {
