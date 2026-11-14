@@ -16,11 +16,6 @@ const API_BASE_URL = process.env.E2E_API_URL ?? "http://localhost:28080";
 
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-// An agent's own execution under another run's id. InternalAuthFilter now compares the path's run
-// against the authenticated execution's own run and refuses the mismatch itself, so this never
-// reaches the run-scope guard underneath.
-const OWN_EXECUTION_IN_OTHER_RUN_STATUS = 401;
-
 /** Plain `fetch`, never Playwright's `request` fixture, whose traces would record the secret. */
 async function probe(method: string, path: string, bearer: string, body?: unknown): Promise<number> {
   const headers: Record<string, string> = { Authorization: `Bearer ${bearer}` };
@@ -96,7 +91,7 @@ test.describe("Agent run-scope boundary", () => {
         );
         await check(
           `${label} [A's execution in B's path]`,
-          OWN_EXECUTION_IN_OTHER_RUN_STATUS,
+          401,
           op.method,
           expandPath(op.template, runB.id, execIdA),
         );

@@ -37,12 +37,12 @@ import org.springframework.transaction.annotation.Transactional;
  * for {@link InternalArtifactControllerTest} (presign) and {@link RunControllerAuthTest}
  * (public API auth) — each gets its own Spring context with auth actually turned on.
  *
- * <p>Two shapes of the same rejection are covered here, both now refused by {@link
+ * <p>Two shapes of the same rejection are covered here, both refused by {@link
  * InternalAuthFilter} itself: {@link
  * #getPullRequestsForNodeExecution_withJobSecretFromDifferentRunsExecution_isUnauthorized} (a
  * token that doesn't match the path's {@code nodeExecId} at all) and {@link
  * #getPullRequestsForNodeExecution_withOwnJobSecretButUnrelatedRunId_isUnauthorized} (a caller's
- * own valid {@code nodeExecId}, paired with someone else's {@code runId} — the filter now compares
+ * own valid {@code nodeExecId}, paired with someone else's {@code runId} — the filter compares
  * the authenticated execution's {@code workflow_run_id} against the path's {@code runId} too).
  * The service-layer cross-check {@code RunPullRequestService#getPullRequestsForNodeExecution} adds
  * on top of the filter remains as the backstop for the orchestrator tier, which the filter never
@@ -225,7 +225,7 @@ class InternalRunControllerPullRequestsAuthTest extends BaseTest {
     @Test
     void getPullRequestsForNodeExecution_withOwnJobSecretButUnrelatedRunId_isUnauthorized() throws Exception {
         // Present this execution's OWN valid JOB_SECRET but substitute a different, unrelated
-        // run's UUID for the runId segment. InternalAuthFilter now refuses this itself, comparing
+        // run's UUID for the runId segment. InternalAuthFilter refuses this itself, comparing
         // the authenticated execution's own run against the path's run, before the controller or
         // its service-layer cross-check ever run.
         WorkflowRun unrelatedRun = new WorkflowRun();

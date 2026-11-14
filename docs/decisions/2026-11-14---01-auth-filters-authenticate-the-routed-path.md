@@ -19,18 +19,18 @@ guard only to be refused there with the same 404 an unknown execution gets.
 
 ## Decision
 
-**Both filters decide, and the internal filter authenticates, from the decoded path-within-
-application segments the router itself dispatches on** — not the raw URI. Each filter parses
-`request.getRequestURI()` with `RequestPath.parse(...).pathWithinApplication()` and reads each
-segment's `valueToMatch()`: the decoded, path-parameter-free value `PathPattern` routing matches on.
-A percent-escaped spelling of either filter's prefix is now authenticated, or refused, exactly like
-the plain spelling — it is `RunScopeInterceptor`, reading the raw URI, that still refuses the escape
-itself afterward.
+**Both filters decide, and the internal filter authenticates, from the decoded
+path-within-application segments the router itself dispatches on** — not the raw URI. One helper,
+shared by both filters, parses `request.getRequestURI()` with
+`RequestPath.parse(...).pathWithinApplication()` and reads each segment's `valueToMatch()`: the
+decoded, path-parameter-free value `PathPattern` routing matches on. A percent-escaped spelling of
+either filter's prefix is now authenticated, or refused, exactly like the plain spelling — it is
+`RunScopeInterceptor`, reading the raw URI, that still refuses the escape itself afterward.
 
 **The internal filter's agent tier is anchored at a fixed window, and compares the run.** It matches
-only when the decoded segments at positions 0–4 are exactly `internal`, `runs`, a run id, `node-
-executions`, an execution id — optionally followed by more segments — not when that shape appears
-anywhere else in the path. Both ids must parse as UUIDs, the execution must exist, its stored
+only when the decoded segments at positions 0–4 are exactly `internal`, `runs`, a run id,
+`node-executions`, an execution id — optionally followed by more segments — not when that shape
+appears anywhere else in the path. Both ids must parse as UUIDs, the execution must exist, its stored
 `job_secret_hash` must equal the presented token's hash, **and its own run must equal the run id at
 this window.** Anything else falls through to the filter's existing 401. The orchestrator tier is
 unchanged: its shared secret still authenticates with full access, never compared against the run.

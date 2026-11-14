@@ -240,7 +240,7 @@ class InternalRunControllerRepoBasesAuthTest extends BaseTest {
 
     @Test
     void ownSecretButUnrelatedRunId_isUnauthorized() throws Exception {
-        // InternalAuthFilter now compares the authenticated execution's own run against the
+        // InternalAuthFilter compares the authenticated execution's own run against the
         // path's run, refusing this pair before the controller or the guard ever run.
         WorkflowRun unrelatedRun = new WorkflowRun();
         unrelatedRun.setGraphTemplateId(run.getGraphTemplateId());

@@ -258,9 +258,9 @@ execution in the path. Two layers sit in front of a handler, each with a distinc
 containment rule every write that records a reference applies before it stores anything.
 
 - **The auth filters** decide whether a credential authenticates the request, both reading the
-  decoded path-within-application segments the router itself dispatches on, not the raw, still-
-  escaped URI — so a percent-escaped spelling of either prefix is authenticated or refused exactly
-  like the plain one. `InternalAuthFilter` gives the orchestrator secret full access to
+  decoded path-within-application segments the router itself dispatches on, not the raw,
+  still-escaped URI — so a percent-escaped spelling of either prefix is authenticated or refused
+  exactly like the plain one. `InternalAuthFilter` gives the orchestrator secret full access to
   `/internal/**`. It accepts an agent's `JOB_SECRET` only at a fixed window: the decoded segments at
   positions 0–4 must be exactly `internal`, `runs`, a run id, `node-executions`, an execution id;
   both ids must parse as UUIDs; the execution must exist with a matching `job_secret_hash`; **and
@@ -269,12 +269,12 @@ containment rule every write that records a reference applies before it stores a
   deciding from the same decoded first segment; each handler's `WorkerAuthorizer` then checks the
   Fleet's pin on the path's run.
 - **The run-scope guard** (`RunScopeInterceptor`) runs after the filters and before any handler
-  binds its request, unchanged by the filters' own run comparison. It refuses a percent-escaped path
-  with 400, and refuses an execution that does not belong to the path's run with 404 — the same body
-  an unknown execution already gets. It is a second, independent layer under the filters' next edit:
-  since the internal filter now refuses an agent's cross-run pair itself, an agent never reaches the
-  guard with one: the guard's 404 for that pair is now reserved for the orchestrator tier, which the
-  filter still never checks against the run.
+  binds its request. It refuses a percent-escaped path with 400, and refuses an execution that does
+  not belong to the path's run with 404 — the same body an unknown execution already gets. It
+  enforces both rules without relying on the filters, so a regression in a filter alone reopens
+  neither. With internal auth enforced, an agent never reaches it with a cross-run pair, because the
+  internal filter refuses that pair first. The callers its 404 answers are the ones no filter checks against the run: the
+  orchestrator tier, and every caller on an execution-scoped `/worker/**` route.
 - **Write-side containment** (`RunStorageScope`, shared with presign) runs inside the handler, once
   the guard has already confirmed the execution belongs to the path's run. Every write that records
   an artifact or attachment reference — a node's status, its review history, a gate's decision —

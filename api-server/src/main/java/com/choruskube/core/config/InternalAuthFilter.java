@@ -193,11 +193,10 @@ public class InternalAuthFilter extends OncePerRequestFilter {
 
     /**
      * The decoded, path-parameter-free segments of {@code request}'s path within the application —
-     * the same segments {@code PathPattern} routing matches on. Reading these instead of the raw
-     * URI is what lets a percent-escaped spelling of a prefix or an id be authenticated (or refused)
-     * exactly like its plain form, rather than slipping past {@link #shouldNotFilter} unauthenticated.
+     * the ones {@code PathPattern} routing matches on. {@link WorkerAuthFilter} selects on these too:
+     * a filter reading the raw URI instead lets a percent-escaped prefix skip it unauthenticated.
      */
-    private static List<String> decodedSegments(HttpServletRequest request) {
+    static List<String> decodedSegments(HttpServletRequest request) {
         PathContainer pathWithinApplication = RequestPath.parse(request.getRequestURI(), request.getContextPath())
                 .pathWithinApplication();
         List<String> segments = new ArrayList<>();

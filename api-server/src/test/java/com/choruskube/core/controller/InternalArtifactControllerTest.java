@@ -227,9 +227,9 @@ class InternalArtifactControllerTest extends BaseTest {
         runB.setGraphTemplateId(run.getGraphTemplateId());
         runB = runRepo.save(runB);
 
-        // The agent's own execution belongs to `run`, not runB: InternalAuthFilter now compares
-        // the authenticated execution's run against the path's run itself, before the handler's
-        // own same-organisation check — or RunScopeInterceptor underneath it — ever run.
+        // The agent's own execution belongs to `run`, not runB: InternalAuthFilter compares the
+        // authenticated execution's run against the path's run itself, before the handler's own
+        // same-organisation check — or RunScopeInterceptor underneath it — ever run.
         String path = "org-b/runs/" + runB.getId() + "/some-node/out/file.txt";
 
         mockMvc.perform(get("/internal/runs/" + runB.getId() + "/node-executions/" + exec.getId() + "/presign")

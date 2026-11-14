@@ -146,7 +146,7 @@ class RunScopeInterceptorTest extends BaseTest {
 
     @Test
     void ownExecutionUnderForeignRun_isUnauthorized() throws Exception {
-        // The filter now compares the authenticated execution's run against the path's run, so an
+        // The filter compares the authenticated execution's run against the path's run, so an
         // agent's own secret under a foreign run never reaches the guard at all.
         mockMvc.perform(get("/internal/runs/" + runB.getId() + "/node-executions/" + execX.getId() + "/decision")
                         .header("Authorization", "Bearer " + JOB_SECRET_X))
@@ -219,8 +219,8 @@ class RunScopeInterceptorTest extends BaseTest {
 
     @Test
     void foreignPresign_isUnauthorized() throws Exception {
-        // The agent's own secret under a foreign run is refused by the filter now, before presign
-        // or the guard ever run.
+        // The agent's own secret under a foreign run is refused by the filter, before presign or
+        // the guard ever run.
         mockMvc.perform(get("/internal/runs/" + runB.getId() + "/node-executions/" + execX.getId() + "/presign")
                         .param("path", "system/runs/" + runB.getId() + "/file.txt")
                         .param("method", "GET")
@@ -239,8 +239,8 @@ class RunScopeInterceptorTest extends BaseTest {
 
     @Test
     void escapedInternalPath_noToken_isUnauthorized() throws Exception {
-        // The filter now decides from the decoded path, so an escaped spelling with no credential
-        // is refused by the filter itself, never reaching the guard.
+        // The filter decides from the decoded path, so an escaped spelling with no credential is
+        // refused by the filter itself, never reaching the guard.
         mockMvc.perform(get(URI.create("/%69nternal/runs/" + runA.getId() + "/graph-runtime")))
                 .andExpect(status().isUnauthorized())
                 .andExpect(content().string("{\"error\":\"Missing or invalid Authorization header\"}"));
@@ -319,7 +319,7 @@ class RunScopeInterceptorTest extends BaseTest {
 
     @Test
     void escapedExecutionScopedWorkerPath_noBearer_isUnauthorized() throws Exception {
-        // The Worker filter now decides from the decoded path too, so a missing bearer on an
+        // The Worker filter decides from the decoded path too, so a missing bearer on an
         // escaped spelling is refused by the filter itself, never reaching the guard.
         mockMvc.perform(put(URI.create(
                                 "/%77orker/runs/" + runA.getId() + "/node-executions/" + execX.getId() + "/status"))

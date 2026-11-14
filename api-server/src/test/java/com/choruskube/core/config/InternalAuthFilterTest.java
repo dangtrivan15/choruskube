@@ -248,7 +248,8 @@ public class InternalAuthFilterTest extends BaseTest {
         // underneath refuses this pair, with its own 404.
         mockMvc.perform(get("/internal/runs/" + foreignRun.getId() + "/node-executions/" + exec.getId() + "/decision")
                         .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isNotFound())
+                .andExpect(content().string("Node execution not found: " + exec.getId()));
     }
 
     @Test
@@ -299,8 +300,7 @@ public class InternalAuthFilterTest extends BaseTest {
     //
     // /internal/runs/{runId}/branch-cleanup-plan carries no node-executions/{execId} segment at the
     // fixed window, so the filter's agent tier never matches it and an agent's JOB_SECRET can never
-    // authorize it —
-    // only the orchestrator's shared secret can.
+    // authorize it — only the orchestrator's shared secret can.
 
     @Test
     void orchestratorToken_canAccessBranchCleanupPlanEndpoint() throws Exception {

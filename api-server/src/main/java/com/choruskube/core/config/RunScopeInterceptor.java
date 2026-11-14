@@ -14,13 +14,10 @@ import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.HandlerMapping;
 
 /**
- * A second, independent layer under {@link InternalAuthFilter} and {@link WorkerAuthFilter}. Those
- * filters authenticate on the decoded path the router dispatches on and, for the internal tier,
- * compare the authenticated execution's run against the path's run — but they are change-gated
- * files, so this guard keeps enforcing both rules itself rather than trusting their next edit:
- * it refuses a percent-escaped path on every route either filter is meant to authenticate, and it
- * refuses an execution that does not belong to the path's run on every execution-scoped route,
- * including the orchestrator tier, which the filters never check against the run at all.
+ * A second layer, independent of {@link InternalAuthFilter} and {@link WorkerAuthFilter}: it refuses a
+ * percent-escaped path on every route either filter authenticates, and an execution outside the path's
+ * run on every execution-scoped route. Both rules stay here as the net under the change-gated filters'
+ * next edit; for an orchestrator's or a Worker's pair, no filter checks the run at all.
  */
 @Component
 public class RunScopeInterceptor implements HandlerInterceptor {

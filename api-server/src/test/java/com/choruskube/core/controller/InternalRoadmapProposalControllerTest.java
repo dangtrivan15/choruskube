@@ -263,8 +263,8 @@ class InternalRoadmapProposalControllerTest extends BaseTest {
     @Test
     void validate_callerFromAnotherRun_returns401() throws Exception {
         // The execution's own valid JOB_SECRET, paired with a *different* run's id in the path:
-        // InternalAuthFilter now compares the authenticated execution's run against the path's
-        // run itself, so this never reaches the service-layer requireCallerInRun cross-check —
+        // InternalAuthFilter compares the authenticated execution's run against the path's run
+        // itself, so this never reaches the service-layer requireCallerInRun cross-check —
         // that check remains as the backstop for the orchestrator tier, which the filter never
         // checks against the run.
         GraphTemplate template = makeTemplate("roadmap-proposal-test-cross-run");
@@ -502,7 +502,7 @@ class InternalRoadmapProposalControllerTest extends BaseTest {
 
     @Test
     void listFeatureProposals_crossRunExecution_returns401() throws Exception {
-        // InternalAuthFilter refuses this pair itself now; the request never reaches
+        // InternalAuthFilter refuses this pair itself; the request never reaches
         // requireCallerInRun.
         GraphTemplate template = makeTemplate("roadmap-proposal-test-list-cross-run");
         NodeDefinition def = makeNodeDef("solo", ExecutorType.ai);

@@ -5,10 +5,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
-import org.springframework.http.server.PathContainer;
-import org.springframework.http.server.RequestPath;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -49,25 +46,8 @@ public class WorkerAuthFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        List<String> segments = decodedSegments(request);
+        List<String> segments = InternalAuthFilter.decodedSegments(request);
         return segments.isEmpty() || !segments.get(0).equals("worker");
-    }
-
-    /**
-     * The decoded, path-parameter-free segments of {@code request}'s path within the application —
-     * the same segments {@code PathPattern} routing matches on. See {@code InternalAuthFilter}'s
-     * identical helper for why reading these, not the raw URI, is what this filter decides from.
-     */
-    private static List<String> decodedSegments(HttpServletRequest request) {
-        PathContainer pathWithinApplication = RequestPath.parse(request.getRequestURI(), request.getContextPath())
-                .pathWithinApplication();
-        List<String> segments = new ArrayList<>();
-        for (PathContainer.Element element : pathWithinApplication.elements()) {
-            if (element instanceof PathContainer.PathSegment segment) {
-                segments.add(segment.valueToMatch());
-            }
-        }
-        return segments;
     }
 
     @Override

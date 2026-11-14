@@ -33,7 +33,7 @@ class RunScopeRouteAuditTest {
 
     /**
      * Simulates, for one probe request, what the real filter chain plus {@link RunScopeInterceptor}
-     * would answer, now that the filters themselves decide and authenticate on the decoded path:
+     * would answer, with the filters deciding and authenticating on the decoded path:
      * {@code InternalAuthFilter} refuses with 401 unless the bearer is the orchestrator secret or
      * the job secret of the execution named at the fixed window, in the run named there too;
      * {@code WorkerAuthFilter} refuses with 401 only when no bearer is presented at all. Either way,
@@ -157,8 +157,8 @@ class RunScopeRouteAuditTest {
     @Test
     void execInternalRouteAnsweringAgentsForeignPairWithGuard404InsteadOfFilter401_fails() {
         // Simulates a filter that authenticates the job secret without comparing the run, leaving
-        // the mismatch to surface only as the guard's 404 underneath — exactly the single-layer
-        // shape this audit must catch now that the filter is supposed to refuse it itself.
+        // the mismatch to surface only as the guard's 404 underneath — the single-layer shape this
+        // audit must catch, since the filter itself must refuse it.
         Probe filterNeverComparesRun = (method, uri, bearer) -> {
             String decodedPath = uri.getPath();
             String[] segs = decodedPath.split("/");
@@ -197,14 +197,18 @@ class RunScopeRouteAuditTest {
 
     @Test
     void escapedSpellingWithNoCredential_anythingButFilter401_fails() {
-        Probe brokenNoCredential = (method, uri, bearer) -> {
-            Response real = realisticProbe(method, uri, bearer);
-            return (bearer == null && real.status() == 401) ? new Response(200, "ok") : real;
-        };
+        // Filters selecting on the raw URI skip an escaped prefix, so the request reaches the guard
+        // unauthenticated and gets its 400 rather than a filter's 401 — on every family R2 covers.
+        Probe filtersReadRawPath = (method, uri, bearer) -> uri.getRawPath().startsWith("/%")
+                ? new Response(400, RunScopeInterceptor.ESCAPED_PATH_MESSAGE)
+                : realisticProbe(method, uri, bearer);
+        String noCredential = " did not refuse its escaped spelling with no credential";
 
-        assertThatThrownBy(() -> auditOver(baselineRoutes(), brokenNoCredential).check())
+        assertThatThrownBy(() -> auditOver(baselineRoutes(), filtersReadRawPath).check())
                 .isInstanceOf(AssertionError.class)
-                .hasMessageContaining("did not refuse its escaped spelling with no credential");
+                .hasMessageContaining("GET " + EXEC_INTERNAL + noCredential)
+                .hasMessageContaining("PUT " + RUN_LEVEL_INTERNAL + noCredential)
+                .hasMessageContaining("PUT " + EXEC_WORKER + noCredential);
     }
 
     @Test
