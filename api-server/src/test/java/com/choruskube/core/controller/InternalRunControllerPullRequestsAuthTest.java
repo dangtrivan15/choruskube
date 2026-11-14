@@ -37,15 +37,16 @@ import org.springframework.transaction.annotation.Transactional;
  * for {@link InternalArtifactControllerTest} (presign) and {@link RunControllerAuthTest}
  * (public API auth) — each gets its own Spring context with auth actually turned on.
  *
- * <p>Two distinct rejection paths are covered here, at two different layers: {@link
- * #getPullRequestsForNodeExecution_withJobSecretFromDifferentRunsExecution_isUnauthorized} covers
- * {@link InternalAuthFilter}'s own layer (a token that doesn't match the path's {@code
- * nodeExecId} at all → 401), and {@link
- * #getPullRequestsForNodeExecution_withOwnJobSecretButUnrelatedRunId_isNotFound} covers the
- * service-layer cross-check {@code RunPullRequestService#getPullRequestsForNodeExecution} adds
- * on top ({@code InternalAuthFilter} never compares the path's {@code runId} to the execution's
- * actual {@code workflow_run_id} — a caller's own valid {@code nodeExecId}, paired with someone
- * else's {@code runId}, would otherwise leak that other run's PR list → 404).
+ * <p>Two shapes of the same rejection are covered here, both refused by {@link
+ * InternalAuthFilter} itself: {@link
+ * #getPullRequestsForNodeExecution_withJobSecretFromDifferentRunsExecution_isUnauthorized} (a
+ * token that doesn't match the path's {@code nodeExecId} at all) and {@link
+ * #getPullRequestsForNodeExecution_withOwnJobSecretButUnrelatedRunId_isUnauthorized} (a caller's
+ * own valid {@code nodeExecId}, paired with someone else's {@code runId} — the filter compares
+ * the authenticated execution's {@code workflow_run_id} against the path's {@code runId} too).
+ * The service-layer cross-check {@code RunPullRequestService#getPullRequestsForNodeExecution} adds
+ * on top of the filter remains as the backstop for the orchestrator tier, which the filter never
+ * checks against the run.
  */
 @AutoConfigureMockMvc
 @Transactional
@@ -222,13 +223,11 @@ class InternalRunControllerPullRequestsAuthTest extends BaseTest {
     }
 
     @Test
-    void getPullRequestsForNodeExecution_withOwnJobSecretButUnrelatedRunId_isNotFound() throws Exception {
-        // The actual leak vector the test above's comment identifies but doesn't exercise:
-        // present this execution's OWN valid JOB_SECRET (so InternalAuthFilter's own check,
-        // which only looks at the nodeExecId segment, passes) but substitute a different,
-        // unrelated run's UUID for the runId segment. Without the service-layer cross-check
-        // (RunPullRequestService#getPullRequestsForNodeExecution), the controller would have
-        // trusted the path's runId directly and returned that unrelated run's PR list.
+    void getPullRequestsForNodeExecution_withOwnJobSecretButUnrelatedRunId_isUnauthorized() throws Exception {
+        // Present this execution's OWN valid JOB_SECRET but substitute a different, unrelated
+        // run's UUID for the runId segment. InternalAuthFilter refuses this itself, comparing
+        // the authenticated execution's own run against the path's run, before the controller or
+        // its service-layer cross-check ever run.
         WorkflowRun unrelatedRun = new WorkflowRun();
         unrelatedRun.setGraphTemplateId(run.getGraphTemplateId());
         unrelatedRun = runRepo.save(unrelatedRun);
@@ -236,7 +235,7 @@ class InternalRunControllerPullRequestsAuthTest extends BaseTest {
         mockMvc.perform(get("/internal/runs/" + unrelatedRun.getId() + "/node-executions/" + exec.getId()
                                 + "/pull-requests")
                         .header("Authorization", "Bearer " + JOB_SECRET))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

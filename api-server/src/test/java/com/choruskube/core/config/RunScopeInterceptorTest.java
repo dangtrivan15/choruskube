@@ -145,11 +145,13 @@ class RunScopeInterceptorTest extends BaseTest {
     }
 
     @Test
-    void ownExecutionUnderForeignRun_isNotFound() throws Exception {
+    void ownExecutionUnderForeignRun_isUnauthorized() throws Exception {
+        // The filter compares the authenticated execution's run against the path's run, so an
+        // agent's own secret under a foreign run never reaches the guard at all.
         mockMvc.perform(get("/internal/runs/" + runB.getId() + "/node-executions/" + execX.getId() + "/decision")
                         .header("Authorization", "Bearer " + JOB_SECRET_X))
-                .andExpect(status().isNotFound())
-                .andExpect(content().string("Node execution not found: " + execX.getId()));
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().string("{\"error\":\"Invalid or insufficient Bearer token\"}"));
     }
 
     @Test
@@ -179,8 +181,11 @@ class RunScopeInterceptorTest extends BaseTest {
 
     @Test
     void guardRunsBeforeValidation_foreignPairWithInvalidBody_is404NotBadRequest() throws Exception {
+        // The orchestrator tier, not the agent's own secret: the filter never compares the
+        // orchestrator's run, so this pair is the one that still demonstrates the guard running
+        // before body validation.
         mockMvc.perform(post("/internal/runs/" + runB.getId() + "/node-executions/" + execX.getId() + "/pull-requests")
-                        .header("Authorization", "Bearer " + JOB_SECRET_X)
+                        .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isNotFound());
@@ -213,12 +218,15 @@ class RunScopeInterceptorTest extends BaseTest {
     }
 
     @Test
-    void foreignPresign_isNotFound() throws Exception {
+    void foreignPresign_isUnauthorized() throws Exception {
+        // The agent's own secret under a foreign run is refused by the filter, before presign or
+        // the guard ever run.
         mockMvc.perform(get("/internal/runs/" + runB.getId() + "/node-executions/" + execX.getId() + "/presign")
                         .param("path", "system/runs/" + runB.getId() + "/file.txt")
                         .param("method", "GET")
                         .header("Authorization", "Bearer " + JOB_SECRET_X))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().string("{\"error\":\"Invalid or insufficient Bearer token\"}"));
     }
 
     @Test
@@ -230,10 +238,12 @@ class RunScopeInterceptorTest extends BaseTest {
     }
 
     @Test
-    void escapedInternalPath_noToken_isBadRequest() throws Exception {
+    void escapedInternalPath_noToken_isUnauthorized() throws Exception {
+        // The filter decides from the decoded path, so an escaped spelling with no credential is
+        // refused by the filter itself, never reaching the guard.
         mockMvc.perform(get(URI.create("/%69nternal/runs/" + runA.getId() + "/graph-runtime")))
-                .andExpect(status().isBadRequest())
-                .andExpect(content().string(RunScopeInterceptor.ESCAPED_PATH_MESSAGE));
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().string("{\"error\":\"Missing or invalid Authorization header\"}"));
     }
 
     @Test
@@ -256,6 +266,17 @@ class RunScopeInterceptorTest extends BaseTest {
         mockMvc.perform(get(URI.create(
                                 "/internal/r%75ns/" + runA.getId() + "/node-executions/" + execX.getId() + "/decision"))
                         .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(RunScopeInterceptor.ESCAPED_PATH_MESSAGE));
+    }
+
+    @Test
+    void escapedExecutionScopedInternalPath_withOwnSecret_isStillBadRequest() throws Exception {
+        // Proves the agent was authenticated on the decoded path — the filter accepted its own
+        // secret for its own pair before the guard, reading the raw URI, refused the escape.
+        mockMvc.perform(get(URI.create(
+                                "/%69nternal/runs/" + runA.getId() + "/node-executions/" + execX.getId() + "/decision"))
+                        .header("Authorization", "Bearer " + JOB_SECRET_X))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().string(RunScopeInterceptor.ESCAPED_PATH_MESSAGE));
     }
@@ -297,9 +318,24 @@ class RunScopeInterceptorTest extends BaseTest {
     }
 
     @Test
-    void escapedExecutionScopedWorkerPath_noBearer_isBadRequest() throws Exception {
+    void escapedExecutionScopedWorkerPath_noBearer_isUnauthorized() throws Exception {
+        // The Worker filter decides from the decoded path too, so a missing bearer on an
+        // escaped spelling is refused by the filter itself, never reaching the guard.
         mockMvc.perform(put(URI.create(
                                 "/%77orker/runs/" + runA.getId() + "/node-executions/" + execX.getId() + "/status"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"completed\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().string("{\"error\":\"Missing fleet token\"}"));
+    }
+
+    @Test
+    void escapedExecutionScopedWorkerPath_withBearer_isStillBadRequest() throws Exception {
+        // The Worker filter only proves a bearer was presented; the guard underneath still refuses
+        // the escaped spelling itself.
+        mockMvc.perform(put(URI.create(
+                                "/%77orker/runs/" + runA.getId() + "/node-executions/" + execX.getId() + "/status"))
+                        .header("Authorization", "Bearer anything")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"status\":\"completed\"}"))
                 .andExpect(status().isBadRequest())

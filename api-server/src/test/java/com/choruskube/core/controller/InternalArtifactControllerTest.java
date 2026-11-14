@@ -222,21 +222,22 @@ class InternalArtifactControllerTest extends BaseTest {
     }
 
     @Test
-    void presign_otherRunInPath_isNotFound() throws Exception {
+    void presign_otherRunInPath_isUnauthorized() throws Exception {
         WorkflowRun runB = new WorkflowRun();
         runB.setGraphTemplateId(run.getGraphTemplateId());
         runB = runRepo.save(runB);
 
-        // The agent's own execution belongs to `run`, not runB: RunScopeInterceptor refuses the
-        // mismatched pair before the handler's own same-organisation check ever runs.
+        // The agent's own execution belongs to `run`, not runB: InternalAuthFilter compares the
+        // authenticated execution's run against the path's run itself, before the handler's own
+        // same-organisation check — or RunScopeInterceptor underneath it — ever run.
         String path = "org-b/runs/" + runB.getId() + "/some-node/out/file.txt";
 
         mockMvc.perform(get("/internal/runs/" + runB.getId() + "/node-executions/" + exec.getId() + "/presign")
                         .param("path", path)
                         .param("method", "GET")
                         .header("Authorization", "Bearer " + JOB_SECRET))
-                .andExpect(status().isNotFound())
-                .andExpect(content().string("Node execution not found: " + exec.getId()));
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Invalid or insufficient Bearer token"));
     }
 
     @Test

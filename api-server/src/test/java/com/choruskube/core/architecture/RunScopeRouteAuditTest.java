@@ -24,6 +24,7 @@ class RunScopeRouteAuditTest {
     private static final UUID NODE_EXEC_ID = UUID.randomUUID();
     private static final UUID FOREIGN_RUN_ID = UUID.randomUUID();
     private static final String JOB_SECRET = "audit-test-job-secret";
+    private static final String ORCHESTRATOR_SECRET = "audit-test-orchestrator-secret";
 
     private static final String EXEC_INTERNAL = "/internal/runs/{runId}/node-executions/{nodeExecId}/decision";
     private static final String EXEC_WORKER = "/worker/runs/{runId}/node-executions/{nodeExecId}/status";
@@ -32,9 +33,16 @@ class RunScopeRouteAuditTest {
 
     /**
      * Simulates, for one probe request, what the real filter chain plus {@link RunScopeInterceptor}
-     * would answer. Any id slot that isn't a real UUID (a fixed literal like {@code "latest"} in a
-     * route the shape rule doesn't treat as execution-scoped) is left unparsed, the same as the real
-     * filter's own regex never parses that slot either.
+     * would answer, with the filters deciding and authenticating on the decoded path:
+     * {@code InternalAuthFilter} refuses with 401 unless the bearer is the orchestrator secret or
+     * the job secret of the execution named at the fixed window, in the run named there too;
+     * {@code WorkerAuthFilter} refuses with 401 only when no bearer is presented at all. Either way,
+     * an escaped spelling reaches the same filter decision as the plain one — it is the guard
+     * underneath, not the filter, that then refuses the escaped spelling itself.
+     *
+     * <p>Any id slot that isn't a real UUID (a fixed literal like {@code "latest"} in a route the
+     * shape rule doesn't treat as execution-scoped) is left unparsed, the same as the real guard
+     * never parses that slot either.
      */
     private static Response realisticProbe(String method, URI uri, String bearer) {
         String rawPath = uri.getRawPath();
@@ -45,6 +53,29 @@ class RunScopeRouteAuditTest {
         boolean workerFamily = segs.length > 1 && segs[1].equals("worker");
         boolean internalFamily = decodedPath.startsWith("/internal/");
         boolean execScopedShape = segs.length >= 6 && segs[2].equals("runs") && segs[4].equals("node-executions");
+
+        if (internalFamily) {
+            if (bearer == null) {
+                return new Response(401, "unauthorized");
+            }
+            boolean orchestrator = bearer.equals(ORCHESTRATOR_SECRET);
+            boolean agentOwnPair = !orchestrator
+                    && bearer.equals(JOB_SECRET)
+                    && execScopedShape
+                    && segs[3].equals(RUN_ID.toString())
+                    && segs[5].equals(NODE_EXEC_ID.toString());
+            if (!orchestrator && !agentOwnPair) {
+                return new Response(401, "unauthorized");
+            }
+            // Authenticated — fall through to the guard below.
+        } else if (workerFamily) {
+            if (bearer == null) {
+                return new Response(401, "Missing fleet token");
+            }
+            // The Worker filter only proves a bearer was presented — fall through to the guard.
+        } else {
+            return new Response(200, "ok");
+        }
 
         if (escaped && (internalFamily || (workerFamily && execScopedShape))) {
             return new Response(400, RunScopeInterceptor.ESCAPED_PATH_MESSAGE);
@@ -62,9 +93,6 @@ class RunScopeRouteAuditTest {
                 // Falls through: this id slot is a fixed literal, not a real id.
             }
         }
-        if (internalFamily) {
-            return new Response(401, "unauthorized");
-        }
         return new Response(200, "ok");
     }
 
@@ -80,7 +108,8 @@ class RunScopeRouteAuditTest {
     private static RunScopeRouteAudit auditOver(List<Route> routes, Probe probe) {
         return RunScopeRouteAudit.over(routes, probe)
                 .executionInRun(RUN_ID, NODE_EXEC_ID, JOB_SECRET)
-                .foreignRun(FOREIGN_RUN_ID);
+                .foreignRun(FOREIGN_RUN_ID)
+                .orchestratorSecret(ORCHESTRATOR_SECRET);
     }
 
     @Test
@@ -123,6 +152,87 @@ class RunScopeRouteAuditTest {
         assertThatThrownBy(() -> auditOver(baselineRoutes(), brokenR1).check())
                 .isInstanceOf(AssertionError.class)
                 .hasMessageContaining("did not refuse a foreign pair");
+    }
+
+    @Test
+    void execInternalRouteAnsweringAgentsForeignPairWithGuard404InsteadOfFilter401_fails() {
+        // Simulates a filter that authenticates the job secret without comparing the run, leaving
+        // the mismatch to surface only as the guard's 404 underneath — the single-layer shape this
+        // audit must catch, since the filter itself must refuse it.
+        Probe filterNeverComparesRun = (method, uri, bearer) -> {
+            String decodedPath = uri.getPath();
+            String[] segs = decodedPath.split("/");
+            boolean execInternalShape =
+                    decodedPath.startsWith("/internal/") && segs.length >= 6 && segs[4].equals("node-executions");
+            if (execInternalShape && JOB_SECRET.equals(bearer)) {
+                UUID nodeExecId = UUID.fromString(segs[5]);
+                if (NODE_EXEC_ID.equals(nodeExecId) && !RUN_ID.toString().equals(segs[3])) {
+                    return new Response(
+                            404, NodeExecutionUtil.notFound(nodeExecId).getMessage());
+                }
+            }
+            return realisticProbe(method, uri, bearer);
+        };
+
+        assertThatThrownBy(() ->
+                        auditOver(baselineRoutes(), filterNeverComparesRun).check())
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("GET " + EXEC_INTERNAL)
+                .hasMessageContaining("did not refuse its own execution under a foreign run with the filter's 401");
+    }
+
+    @Test
+    void orchestratorForeignPairWithWrongGuardBody_fails() {
+        Probe wrongBody = (method, uri, bearer) -> {
+            Response real = realisticProbe(method, uri, bearer);
+            return (ORCHESTRATOR_SECRET.equals(bearer) && real.status() == 404)
+                    ? new Response(404, "some other body")
+                    : real;
+        };
+
+        assertThatThrownBy(() -> auditOver(baselineRoutes(), wrongBody).check())
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("did not refuse the orchestrator's foreign pair with the guard's 404");
+    }
+
+    @Test
+    void escapedSpellingWithNoCredential_anythingButFilter401_fails() {
+        // Filters selecting on the raw URI skip an escaped prefix, so the request reaches the guard
+        // unauthenticated and gets its 400 rather than a filter's 401 — on every family R2 covers.
+        Probe filtersReadRawPath = (method, uri, bearer) -> uri.getRawPath().startsWith("/%")
+                ? new Response(400, RunScopeInterceptor.ESCAPED_PATH_MESSAGE)
+                : realisticProbe(method, uri, bearer);
+        String noCredential = " did not refuse its escaped spelling with no credential";
+
+        assertThatThrownBy(() -> auditOver(baselineRoutes(), filtersReadRawPath).check())
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("GET " + EXEC_INTERNAL + noCredential)
+                .hasMessageContaining("PUT " + RUN_LEVEL_INTERNAL + noCredential)
+                .hasMessageContaining("PUT " + EXEC_WORKER + noCredential);
+    }
+
+    @Test
+    void escapedSpellingWithValidCredential_anythingButExactGuard400_fails() {
+        Probe wrongEscapeBody = (method, uri, bearer) -> {
+            Response real = realisticProbe(method, uri, bearer);
+            return (real.status() == 400 && RunScopeInterceptor.ESCAPED_PATH_MESSAGE.equals(real.body()))
+                    ? new Response(400, "some other body")
+                    : real;
+        };
+
+        assertThatThrownBy(() -> auditOver(baselineRoutes(), wrongEscapeBody).check())
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("did not refuse its escaped spelling with a valid credential");
+    }
+
+    @Test
+    void neverCallingOrchestratorSecret_fails() {
+        assertThatThrownBy(() -> RunScopeRouteAudit.over(baselineRoutes(), RunScopeRouteAuditTest::realisticProbe)
+                        .executionInRun(RUN_ID, NODE_EXEC_ID, JOB_SECRET)
+                        .foreignRun(FOREIGN_RUN_ID)
+                        .check())
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("orchestratorSecret(...) was never called");
     }
 
     @Test

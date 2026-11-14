@@ -239,12 +239,14 @@ class InternalRunControllerRepoBasesAuthTest extends BaseTest {
     }
 
     @Test
-    void ownSecretButUnrelatedRunId_isNotFound() throws Exception {
+    void ownSecretButUnrelatedRunId_isUnauthorized() throws Exception {
+        // InternalAuthFilter compares the authenticated execution's own run against the
+        // path's run, refusing this pair before the controller or the guard ever run.
         WorkflowRun unrelatedRun = new WorkflowRun();
         unrelatedRun.setGraphTemplateId(run.getGraphTemplateId());
         unrelatedRun = runRepo.save(unrelatedRun);
 
-        post(unrelatedRun.getId(), exec.getId(), JOB_SECRET, body("clean", "x")).andExpect(status().isNotFound());
+        post(unrelatedRun.getId(), exec.getId(), JOB_SECRET, body("clean", "x")).andExpect(status().isUnauthorized());
     }
 
     private ResultActions post(UUID runId, UUID execId, String secret, String body) throws Exception {

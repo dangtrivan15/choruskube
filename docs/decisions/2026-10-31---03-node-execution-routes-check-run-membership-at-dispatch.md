@@ -1,6 +1,8 @@
 # Node-execution routes check run membership at dispatch, not per handler
 
-**Status:** current
+**Status:** current; its rejection of a check inside the auth filters, and the 404 it gives an
+agent's own credential under another run, are superseded by
+[2026-11-14---01-auth-filters-authenticate-the-routed-path](2026-11-14---01-auth-filters-authenticate-the-routed-path.md)
 
 ## Context
 
