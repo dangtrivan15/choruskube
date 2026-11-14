@@ -174,6 +174,47 @@ func TestRunStaticPathSendsNoRegistration(t *testing.T) {
 	assert.False(t, hit, "the static path must never call the API server to register")
 }
 
+// TestRunDialsTheRegisteredEndpointWhenNoTemporalAddressIsConfigured proves a registration
+// path with no TemporalAddress still gets past validation and attempts to dial the Fleet's
+// own Endpoint -- the 127.0.0.1:1 refusal is the proof it tried that address, not a stand-in
+// for success.
+func TestRunDialsTheRegisteredEndpointWhenNoTemporalAddressIsConfigured(t *testing.T) {
+	err := Run(context.Background(), Config{
+		APIServerURL: "http://a",
+		CallbackURL:  "http://cb",
+		CallbackPort: 19195,
+		Provider: fixedProvider{reg: Registration{
+			Fleets:        []Fleet{{Namespace: "ns", TaskQueue: "q", Endpoint: "127.0.0.1:1"}},
+			InternalToken: "internal-tok",
+		}},
+		CredentialPlane: stubCredentialPlane("stub"),
+		Executor:        nopExecutor{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "dial temporal for fleet", "want a dial failure against the Fleet's own endpoint, got %v", err)
+}
+
+// TestRunFailsBeforeDialingWhenNeitherSourceNamesAnAddress proves the case a registration
+// response with a genuinely blank Endpoint creates: no TemporalAddress fallback either means
+// Run must fail before ever calling Dial, naming both sources so the operator knows which to set.
+func TestRunFailsBeforeDialingWhenNeitherSourceNamesAnAddress(t *testing.T) {
+	err := Run(context.Background(), Config{
+		APIServerURL: "http://a",
+		CallbackURL:  "http://cb",
+		CallbackPort: 19196,
+		Provider: fixedProvider{reg: Registration{
+			Fleets:        []Fleet{{Namespace: "ns", TaskQueue: "q", Endpoint: ""}},
+			InternalToken: "internal-tok",
+		}},
+		CredentialPlane: stubCredentialPlane("stub"),
+		Executor:        nopExecutor{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "registration returned no endpoint")
+	assert.Contains(t, err.Error(), "TEMPORAL_ADDRESS")
+	assert.NotContains(t, err.Error(), "dial temporal for fleet", "must fail before ever attempting to dial")
+}
+
 // TestRunHandsThePlaneALiveCredentialAndALateBoundAPI proves what an embedding binary's plane
 // relies on: New runs before registration, so the Credential getter reads "" and a scope lookup
 // through API is refused there, then the same getter reads the minted credential and the same
