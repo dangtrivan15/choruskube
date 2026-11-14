@@ -21,9 +21,9 @@ type Fleet struct {
 	Token string
 	// WorkerID identifies this process to the issuing service. Informational.
 	WorkerID string
-	// Endpoint overrides Config.TemporalAddress for this Fleet when non-empty. A
-	// deployment that fronts Temporal with a proxy sets it here rather than teaching
-	// every Worker where Temporal itself lives.
+	// Endpoint overrides Config.TemporalAddress for this Fleet when non-empty; empty falls back
+	// to TemporalAddress, and a Worker with neither fails at dial time. A deployment that fronts
+	// Temporal with a proxy sets this rather than teaching every Worker where Temporal lives.
 	Endpoint string
 	// ExpiresInSeconds is the lifetime of Token in seconds. Renewal logic uses it to
 	// refresh before Token lapses.
@@ -53,6 +53,9 @@ type FleetProvider interface {
 
 // Config is everything Run needs.
 type Config struct {
+	// TemporalAddress is the Temporal frontend to dial, overridden by a non-empty Fleet.Endpoint
+	// from registration. Required on the static (*StaticFleetProvider) path, which has no other
+	// source; otherwise enforced at dial time when Endpoint comes back empty -- see resolveAddress.
 	TemporalAddress string
 	APIServerURL    string
 	// CallbackURL is passed through to activity.Activities.CallbackURL. Required because
@@ -84,11 +87,18 @@ type Config struct {
 
 const defaultGitHubAPIURL = "https://api.github.com"
 
+// isStaticFleetProvider reports whether p is a *StaticFleetProvider -- the only path with no
+// registration response to supply a Fleet.Endpoint, so TemporalAddress is its sole source.
+func isStaticFleetProvider(p FleetProvider) bool {
+	_, ok := p.(*StaticFleetProvider)
+	return ok
+}
+
 // Validate reports the first missing required field. Run calls it; callers building a
 // Config from flags or env may call it earlier to fail before any connection is made.
 func (c Config) Validate() error {
 	switch {
-	case c.TemporalAddress == "":
+	case c.TemporalAddress == "" && isStaticFleetProvider(c.Provider):
 		return errors.New("TemporalAddress is required")
 	case c.APIServerURL == "":
 		return errors.New("APIServerURL is required")

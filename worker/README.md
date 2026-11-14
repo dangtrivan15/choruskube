@@ -35,6 +35,15 @@ Set `FLEET_TOKEN`. The Worker POSTs to `/worker/register` at startup and is told
 namespace, queue, and Temporal credential; it re-registers periodically, which is also how a
 credential is renewed and how a Fleet added after the process started gets picked up.
 
+A registration response may also carry an endpoint for the Fleet it names — a control plane
+that fronts Temporal with its own proxy can supply one — and a non-empty endpoint overrides
+`TEMPORAL_ADDRESS`. A blank one falls back to `TEMPORAL_ADDRESS`; with neither set, the Worker
+fails when it first tries to dial that Fleet, naming both sources so you know which to set.
+Because the address is read when the Worker first dials a Fleet, a changed endpoint reaches a
+running Worker only after it restarts. TLS stays this Worker's own setting (see
+`TEMPORAL_TLS_DISABLED` under [Environment](#environment)), whichever source the address came
+from.
+
 Registration also settles the credential the Worker presents on the api-server's own
 `/worker/**` routes, so nothing separate has to be configured for it. A server that mints one
 returns it; this one does not, and the Worker keeps the `FLEET_TOKEN` it authenticated with.
@@ -88,7 +97,7 @@ would only return what you configured.
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `TEMPORAL_ADDRESS` | yes | Temporal frontend to dial. A registered Fleet may override it. |
+| `TEMPORAL_ADDRESS` | static path, or when registration supplies no endpoint | Temporal frontend to dial. A registered Fleet may override it. |
 | `API_SERVER_URL` | yes | api-server base URL, for registration and the workload executor. |
 | `CALLBACK_URL` | yes | Where a launched agent container reports its result. |
 | `FLEET_TOKEN` | one of | Selects registration. Must match the server's `WORKER_REGISTRATION_TOKEN`. |

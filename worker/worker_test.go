@@ -27,7 +27,22 @@ func TestConfigValidate(t *testing.T) {
 			},
 			"",
 		},
-		{"no temporal", Config{APIServerURL: "http://a", CallbackURL: "http://cb", Provider: stubProvider{}}, "TemporalAddress is required"},
+		{
+			"no temporal, static provider",
+			Config{APIServerURL: "http://a", CallbackURL: "http://cb", Provider: NewStaticFleetProvider("ns", "q", "tok")},
+			"TemporalAddress is required",
+		},
+		{
+			"no temporal, registration provider",
+			Config{
+				APIServerURL:    "http://a",
+				CallbackURL:     "http://cb",
+				Provider:        stubProvider{},
+				CredentialPlane: stubCredentialPlane("stub"),
+				Executor:        nopExecutor{},
+			},
+			"",
+		},
 		{"no api server", Config{TemporalAddress: "t:7233", CallbackURL: "http://cb", Provider: stubProvider{}}, "APIServerURL is required"},
 		{"no callback", Config{TemporalAddress: "t:7233", APIServerURL: "http://a", Provider: stubProvider{}}, "CallbackURL is required"},
 		{"no provider", Config{TemporalAddress: "t:7233", APIServerURL: "http://a", CallbackURL: "http://cb"}, "Provider is required"},
