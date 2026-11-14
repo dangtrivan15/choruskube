@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -241,15 +242,15 @@ func (f *temporalFake) RecordWorkerHeartbeat(context.Context, *workflowservice.R
 
 var _ workflowservice.WorkflowServiceServer = (*temporalFake)(nil)
 
-// newFakeServer starts a recording gRPC server on 127.0.0.1:0 and returns its address alongside
-// the fake and the recorder driving it. The caller must Stop() the returned *grpc.Server.
-func newFakeServer(t *testing.T, fake *temporalFake, rec *methodRecorder) (addr string, srv *grpc.Server) {
+// newFakeServer serves fake on 127.0.0.1:0, recording every call through rec, and returns its
+// address. The server stops when the test ends.
+func newFakeServer(t *testing.T, fake *temporalFake, rec *methodRecorder) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	srv = grpc.NewServer(
+	srv := grpc.NewServer(
 		grpc.UnaryInterceptor(rec.unaryInterceptor),
 		grpc.StreamInterceptor(rec.streamInterceptor),
 		grpc.UnknownServiceHandler(unknownServiceHandler),
@@ -257,7 +258,7 @@ func newFakeServer(t *testing.T, fake *temporalFake, rec *methodRecorder) (addr 
 	workflowservice.RegisterWorkflowServiceServer(srv, fake)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
-	return lis.Addr().String(), srv
+	return lis.Addr().String()
 }
 
 // Probe activities. Each drives exactly one outcome the completer or the activity worker must
@@ -293,15 +294,16 @@ func registerProbeActivities(w tworker.Worker) {
 
 // countingCompletions wraps a temporalCompletions and counts each call by method name, so the
 // test can prove by reflection that every method on the interface was actually exercised rather
-// than merely declared.
+// than merely declared. It holds the delegate as a field, not embedded: embedding would promote a
+// method added to temporalCompletions, uncounted, instead of breaking this type's compile.
 type countingCompletions struct {
-	temporalCompletions
-	mu     sync.Mutex
-	counts map[string]int
+	delegate temporalCompletions
+	mu       sync.Mutex
+	counts   map[string]int
 }
 
 func newCountingCompletions(delegate temporalCompletions) *countingCompletions {
-	return &countingCompletions{temporalCompletions: delegate, counts: map[string]int{}}
+	return &countingCompletions{delegate: delegate, counts: map[string]int{}}
 }
 
 func (c *countingCompletions) count(name string) {
@@ -318,12 +320,12 @@ func (c *countingCompletions) countOf(name string) int {
 
 func (c *countingCompletions) CompleteActivityByID(ctx context.Context, namespace, workflowID, runID, activityID string, result interface{}, err error) error {
 	c.count("CompleteActivityByID")
-	return c.temporalCompletions.CompleteActivityByID(ctx, namespace, workflowID, runID, activityID, result, err)
+	return c.delegate.CompleteActivityByID(ctx, namespace, workflowID, runID, activityID, result, err)
 }
 
 func (c *countingCompletions) RecordActivityHeartbeatByID(ctx context.Context, namespace, workflowID, runID, activityID string, details ...interface{}) error {
 	c.count("RecordActivityHeartbeatByID")
-	return c.temporalCompletions.RecordActivityHeartbeatByID(ctx, namespace, workflowID, runID, activityID, details...)
+	return c.delegate.RecordActivityHeartbeatByID(ctx, namespace, workflowID, runID, activityID, details...)
 }
 
 var _ temporalCompletions = (*countingCompletions)(nil)
@@ -381,13 +383,23 @@ const workflowServicePrefix = "/temporal.api.workflowservice.v1.WorkflowService/
 
 // TestWorkerTemporalMethods drives every Temporal surface the Worker uses -- dial, start, poll,
 // the three synchronous activity outcomes, the three by-id completions, a by-id heartbeat, one
-// Worker heartbeat, and stop -- against a recording fake, then compares what it recorded with
-// worker/README.md's table. A renamed, added or dropped gRPC call changes that comparison; so
-// does an SDK call the completer's narrowed interface does not also grow to cover.
+// Worker heartbeat, and stop -- against a recording fake, then compares what it recorded, on any
+// service, with worker/README.md's table. A renamed, added or dropped gRPC call changes that
+// comparison; so does an SDK call the completer's narrowed interface does not also grow to cover.
 func TestWorkerTemporalMethods(t *testing.T) {
+	// Parsed first, so a reformatted table fails as a format error before anything is driven.
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	tableNames, err := readWorkerMethodTable(readme)
+	if err != nil {
+		t.Fatalf("parse README.md's proxy section: %v", err)
+	}
+
 	rec := newMethodRecorder()
 	fake := &temporalFake{namespace: "probe-ns"}
-	addr, _ := newFakeServer(t, fake, rec)
+	addr := newFakeServer(t, fake, rec)
 
 	fake.enqueue(probeHeartbeatSucceedActivity, "task-succeed")
 	fake.enqueue(probeFailActivity, "task-fail")
@@ -408,29 +420,28 @@ func TestWorkerTemporalMethods(t *testing.T) {
 	w := tworker.New(c, f.TaskQueue, fleetWorkerOptions())
 	registerProbeActivities(w)
 	if err := w.Start(); err != nil {
+		c.Close()
 		t.Fatalf("start: %v", err)
 	}
 
 	deadline := time.Now().Add(10 * time.Second)
 
-	// Synchronous scenarios: wait for each task token's own respond call.
+	// Synchronous scenarios: each queued task's outcome has its own respond method, so waiting
+	// for each method waits for each task.
 	rec.waitForCount(t, workflowServicePrefix+"RespondActivityTaskCompleted", 1, deadline)
 	rec.waitForCount(t, workflowServicePrefix+"RespondActivityTaskFailed", 1, deadline)
 	rec.waitForCount(t, workflowServicePrefix+"RespondActivityTaskCanceled", 1, deadline)
 
-	// By-id scenarios, through the same counting wrapper the completer uses.
+	// By-id scenarios, through the same narrowed interface the completer is handed.
 	completions := newCountingCompletions(c)
-	byIDResult := completions.CompleteActivityByID(context.Background(), fake.namespace, "wf-result", "", "act-result", "by-id ok", nil)
-	if byIDResult != nil {
-		t.Errorf("CompleteActivityByID (result) = %v, want nil", byIDResult)
+	if err := completions.CompleteActivityByID(context.Background(), fake.namespace, "wf-result", "", "act-result", "by-id ok", nil); err != nil {
+		t.Errorf("CompleteActivityByID (result) = %v, want nil", err)
 	}
-	byIDFailed := completions.CompleteActivityByID(context.Background(), fake.namespace, "wf-error", "", "act-error", nil, errors.New("by-id error"))
-	if byIDFailed != nil {
-		t.Errorf("CompleteActivityByID (error) = %v, want nil", byIDFailed)
+	if err := completions.CompleteActivityByID(context.Background(), fake.namespace, "wf-error", "", "act-error", nil, errors.New("by-id error")); err != nil {
+		t.Errorf("CompleteActivityByID (error) = %v, want nil", err)
 	}
-	byIDCanceled := completions.CompleteActivityByID(context.Background(), fake.namespace, "wf-canceled", "", "act-canceled", nil, temporal.NewCanceledError())
-	if byIDCanceled != nil {
-		t.Errorf("CompleteActivityByID (canceled) = %v, want nil", byIDCanceled)
+	if err := completions.CompleteActivityByID(context.Background(), fake.namespace, "wf-canceled", "", "act-canceled", nil, temporal.NewCanceledError()); err != nil {
+		t.Errorf("CompleteActivityByID (canceled) = %v, want nil", err)
 	}
 	if err := completions.RecordActivityHeartbeatByID(context.Background(), fake.namespace, "wf-heartbeat", "", "act-heartbeat"); err != nil {
 		t.Errorf("RecordActivityHeartbeatByID = %v, want nil", err)
@@ -442,44 +453,33 @@ func TestWorkerTemporalMethods(t *testing.T) {
 	w.Stop()
 	c.Close()
 
-	// Set comparison: the recorded WorkflowService methods against the README's table.
-	readme, err := os.ReadFile("README.md")
-	if err != nil {
-		t.Fatalf("read README.md: %v", err)
-	}
-	tableNames, err := readWorkerMethodTable(readme)
-	if err != nil {
-		t.Fatalf("parse README.md's proxy section: %v", err)
-	}
+	// Set comparison over every recorded call, not only WorkflowService ones: a call on any other
+	// service is outside the table by construction, and must fail here rather than at a proxy.
 	want := map[string]bool{}
 	for _, name := range tableNames {
 		want[workflowServicePrefix+name] = true
 	}
-
 	got := map[string]bool{}
-	var missingBearer []string
+	wantBearer := "Bearer " + f.Token
+	missingBearer := map[string]bool{}
 	for _, call := range rec.snapshot() {
-		if !strings.HasPrefix(call.method, workflowServicePrefix) {
-			continue
-		}
 		got[call.method] = true
-		if !hasBearer(call.metadata) {
-			missingBearer = append(missingBearer, call.method)
+		if !carriesExactly(call.metadata, wantBearer) {
+			missingBearer[call.method] = true
 		}
 	}
-
-	for method := range want {
+	for _, method := range sortedKeys(want) {
 		if !got[method] {
-			t.Errorf("table lists %s but the Worker never called it", method)
+			t.Errorf("README table lists %s but the Worker never called it", method)
 		}
 	}
-	for method := range got {
+	for _, method := range sortedKeys(got) {
 		if !want[method] {
 			t.Errorf("Worker called %s but the README table does not list it", method)
 		}
 	}
-	if len(missingBearer) > 0 {
-		t.Errorf("calls with no %q bearer metadata: %v", "Bearer probe-token", missingBearer)
+	for _, method := range sortedKeys(missingBearer) {
+		t.Errorf("Worker called %s without exactly one authorization %q", method, wantBearer)
 	}
 
 	// Completion interface: every temporalCompletions method must have been called through
@@ -493,15 +493,20 @@ func TestWorkerTemporalMethods(t *testing.T) {
 	}
 }
 
-// hasBearer reports whether md carries exactly "Bearer <token>" on "authorization", for any
-// non-empty token -- the credential a proxy's JWT check depends on being present.
-func hasBearer(md metadata.MD) bool {
-	for _, v := range md.Get("authorization") {
-		if strings.HasPrefix(v, "Bearer ") && len(v) > len("Bearer ") {
-			return true
-		}
+// carriesExactly reports whether md's "authorization" is the single value want: a proxy checking
+// the Worker's bearer sees a missing, different or duplicated value as a refusal or an ambiguity.
+func carriesExactly(md metadata.MD, want string) bool {
+	vals := md.Get("authorization")
+	return len(vals) == 1 && vals[0] == want
+}
+
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
 	}
-	return false
+	sort.Strings(keys)
+	return keys
 }
 
 // TestTemporalMethodFakeRecordsUnservedCalls proves the fake sees a call it refuses, on its own
@@ -510,7 +515,7 @@ func hasBearer(md metadata.MD) bool {
 func TestTemporalMethodFakeRecordsUnservedCalls(t *testing.T) {
 	rec := newMethodRecorder()
 	fake := &temporalFake{namespace: "probe-ns"}
-	addr, _ := newFakeServer(t, fake, rec)
+	addr := newFakeServer(t, fake, rec)
 
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -518,7 +523,8 @@ func TestTemporalMethodFakeRecordsUnservedCalls(t *testing.T) {
 	}
 	defer conn.Close()
 
-	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", "Bearer probe-token")
+	const bearer = "Bearer probe-token"
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "authorization", bearer)
 
 	_, err = workflowservice.NewWorkflowServiceClient(conn).ListNamespaces(ctx, &workflowservice.ListNamespacesRequest{})
 	if status.Code(err) != codes.Unimplemented {
@@ -541,8 +547,8 @@ func TestTemporalMethodFakeRecordsUnservedCalls(t *testing.T) {
 				continue
 			}
 			found = true
-			if !hasBearer(call.metadata) {
-				t.Errorf("%s was recorded with no authorization metadata", method)
+			if !carriesExactly(call.metadata, bearer) {
+				t.Errorf("%s was recorded with authorization %q, want %q", method, call.metadata.Get("authorization"), bearer)
 			}
 		}
 		if !found {
@@ -557,6 +563,13 @@ func TestReadWorkerMethodTable(t *testing.T) {
 	t.Run("missing section", func(t *testing.T) {
 		if _, err := readWorkerMethodTable([]byte("# Worker\n\nno proxy section here.\n")); err == nil {
 			t.Fatal("want an error for a README with no proxy section")
+		}
+	})
+
+	t.Run("section with no table", func(t *testing.T) {
+		md := "## Reaching Temporal through a proxy\n\nprose only.\n\n## Environment\n\n| Variable | Required |\n|---|---|\n| `X` | no |\n"
+		if _, err := readWorkerMethodTable([]byte(md)); err == nil {
+			t.Fatal("want an error for a proxy section with no table, even when a later section has one")
 		}
 	})
 
