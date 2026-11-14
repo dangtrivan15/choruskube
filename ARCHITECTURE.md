@@ -275,6 +275,11 @@ containment rule every write that records a reference applies before it stores a
   Pull-request registration and a repo-base report apply the equivalent rule to a repository,
   refusing one that is not among `GraphSnapshotBuilder.reposForRun` with 404.
 
+`web-ui/e2e/specs/agent-run-scope.spec.ts` proves all three against a running stack with two runs'
+real `JOB_SECRET`s: one run's secret is refused on every agent route the server's `/v3/api-docs`
+lists whenever the path names the other run or its execution, and its own routes refuse an
+artifact path, repository or presign target outside its run.
+
 ```mermaid
 sequenceDiagram
   participant A as Agent container
