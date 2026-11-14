@@ -257,17 +257,24 @@ An agent authenticates every request with its execution's `JOB_SECRET` and names
 execution in the path. Two layers sit in front of a handler, each with a distinct job, plus a
 containment rule every write that records a reference applies before it stores anything.
 
-- **The auth filters** decide whether a credential authenticates the request, reading the raw,
-  still-escaped path. `InternalAuthFilter` gives the orchestrator secret full access to
-  `/internal/**`, and accepts an agent's `JOB_SECRET` when its hash matches the execution named
-  after `node-executions/` in the path; it does not compare the path's `runId` with that
-  execution's run. `WorkerAuthFilter` only proves a bearer was presented on `/worker/**`; each
-  handler's `WorkerAuthorizer` then checks the Fleet's pin on the path's run.
+- **The auth filters** decide whether a credential authenticates the request, both reading the
+  decoded path-within-application segments the router itself dispatches on, not the raw, still-
+  escaped URI — so a percent-escaped spelling of either prefix is authenticated or refused exactly
+  like the plain one. `InternalAuthFilter` gives the orchestrator secret full access to
+  `/internal/**`. It accepts an agent's `JOB_SECRET` only at a fixed window: the decoded segments at
+  positions 0–4 must be exactly `internal`, `runs`, a run id, `node-executions`, an execution id;
+  both ids must parse as UUIDs; the execution must exist with a matching `job_secret_hash`; **and
+  its own run must equal the run id at that window.** An execution id anywhere else in the path
+  authenticates nothing. `WorkerAuthFilter` only proves a bearer was presented on `/worker/**`,
+  deciding from the same decoded first segment; each handler's `WorkerAuthorizer` then checks the
+  Fleet's pin on the path's run.
 - **The run-scope guard** (`RunScopeInterceptor`) runs after the filters and before any handler
-  binds its request. It refuses a percent-escaped path with 400, and refuses an execution that does
-  not belong to the path's run with 404 — the same body an unknown execution already gets. Neither
-  filter compares runs, so the guard is the only layer that does, for every execution-scoped route
-  in both families.
+  binds its request, unchanged by the filters' own run comparison. It refuses a percent-escaped path
+  with 400, and refuses an execution that does not belong to the path's run with 404 — the same body
+  an unknown execution already gets. It is a second, independent layer under the filters' next edit:
+  since the internal filter now refuses an agent's cross-run pair itself, an agent never reaches the
+  guard with one: the guard's 404 for that pair is now reserved for the orchestrator tier, which the
+  filter still never checks against the run.
 - **Write-side containment** (`RunStorageScope`, shared with presign) runs inside the handler, once
   the guard has already confirmed the execution belongs to the path's run. Every write that records
   an artifact or attachment reference — a node's status, its review history, a gate's decision —
@@ -293,8 +300,8 @@ sequenceDiagram
   participant U as Web UI
 
   A->>F: request on its own run and execution, Bearer job secret
-  F->>D: load the execution the path names
-  F->>F: secret hash matches (run not compared)
+  F->>D: load the execution at the path's fixed position
+  F->>F: secret hash matches and execution's run is the path's run
   F->>G: authenticated
   G->>D: execution belongs to the path's run
   G->>H: dispatch, before the request is bound
@@ -321,10 +328,12 @@ sequenceDiagram
   participant H as Route handler
 
   A->>F: its own execution under another run's id
-  F->>G: authenticated (the filter never loaded or compared the run)
-  G-->>A: 404, same body as an unknown execution
+  F-->>A: 401, the credential does not authenticate this path
+  O->>F: a mismatched run and execution pair
+  F->>G: orchestrator tier
+  G-->>O: 404, same body as an unknown execution
   A->>F: escaped spelling of its own path
-  F->>G: passed on (the filter reads the raw, still-escaped path)
+  F->>G: authenticated on the decoded path
   G-->>A: 400, escaped paths are not accepted
   O->>F: status write naming a path outside the run's tree
   F->>G: authenticated

@@ -5,6 +5,10 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import org.springframework.http.server.PathContainer;
+import org.springframework.http.server.RequestPath;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -17,6 +21,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * that token names a Fleet is {@code WorkerRegistrar}'s job, so a bad token is a 403 from the
  * domain layer rather than a 401 here — which is also what lets a deployment vary how many Fleets
  * exist without touching the filter chain.
+ *
+ * <p>Like {@link InternalAuthFilter}, {@link #shouldNotFilter} decides from the decoded path
+ * segments the router dispatches on, not the raw URI — so a percent-escaped {@code /worker/**}
+ * path is filtered exactly like its plain spelling instead of skipping this filter unauthenticated.
  *
  * <p>A plain {@code @Component} filter is auto-registered by Spring Boot into the servlet
  * container's filter chain independently of {@code auth.enabled} — that is what keeps Worker
@@ -41,7 +49,25 @@ public class WorkerAuthFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith("/worker/");
+        List<String> segments = decodedSegments(request);
+        return segments.isEmpty() || !segments.get(0).equals("worker");
+    }
+
+    /**
+     * The decoded, path-parameter-free segments of {@code request}'s path within the application —
+     * the same segments {@code PathPattern} routing matches on. See {@code InternalAuthFilter}'s
+     * identical helper for why reading these, not the raw URI, is what this filter decides from.
+     */
+    private static List<String> decodedSegments(HttpServletRequest request) {
+        PathContainer pathWithinApplication = RequestPath.parse(request.getRequestURI(), request.getContextPath())
+                .pathWithinApplication();
+        List<String> segments = new ArrayList<>();
+        for (PathContainer.Element element : pathWithinApplication.elements()) {
+            if (element instanceof PathContainer.PathSegment segment) {
+                segments.add(segment.valueToMatch());
+            }
+        }
+        return segments;
     }
 
     @Override

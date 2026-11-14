@@ -14,8 +14,13 @@ import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.HandlerMapping;
 
 /**
- * {@link InternalAuthFilter} and {@link WorkerAuthFilter} select requests by the raw path while
- * routing uses the decoded one, so a percent-escaped path is one they may not have authenticated.
+ * A second, independent layer under {@link InternalAuthFilter} and {@link WorkerAuthFilter}. Those
+ * filters authenticate on the decoded path the router dispatches on and, for the internal tier,
+ * compare the authenticated execution's run against the path's run — but they are change-gated
+ * files, so this guard keeps enforcing both rules itself rather than trusting their next edit:
+ * it refuses a percent-escaped path on every route either filter is meant to authenticate, and it
+ * refuses an execution that does not belong to the path's run on every execution-scoped route,
+ * including the orchestrator tier, which the filters never check against the run at all.
  */
 @Component
 public class RunScopeInterceptor implements HandlerInterceptor {

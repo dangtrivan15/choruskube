@@ -42,6 +42,9 @@ class RunScopeRoutesTest extends BaseTest {
 
     private static final String JOB_SECRET = "run-scope-routes-test-job-secret";
 
+    /** The token whose SHA-256 hash is the value in the @TestPropertySource above. */
+    private static final String ORCHESTRATOR_SECRET = "test-orchestrator-secret";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -122,6 +125,7 @@ class RunScopeRoutesTest extends BaseTest {
         RunScopeRouteAudit.of(handlerMapping, mockMvc)
                 .executionInRun(runA.getId(), execX.getId(), JOB_SECRET)
                 .foreignRun(runB.getId())
+                .orchestratorSecret(ORCHESTRATOR_SECRET)
                 .check();
     }
 
@@ -130,6 +134,7 @@ class RunScopeRoutesTest extends BaseTest {
         var routes = RunScopeRouteAudit.of(handlerMapping, mockMvc)
                 .executionInRun(runA.getId(), execX.getId(), JOB_SECRET)
                 .foreignRun(runB.getId())
+                .orchestratorSecret(ORCHESTRATOR_SECRET)
                 .routes();
 
         assertThat(routes)

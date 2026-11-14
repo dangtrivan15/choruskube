@@ -22,10 +22,12 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 import org.springframework.web.util.ServletRequestPathUtils;
 
 /**
- * Proves {@link RunScopeInterceptor} checks run membership on every execution-scoped route, and
- * refuses a percent-escaped spelling of every route {@code InternalAuthFilter} or {@code
- * WorkerAuthFilter} is meant to authenticate. An application composing these routes with its own
- * runs this over its own {@link RequestMappingHandlerMapping}, so a route it adds is audited too.
+ * Proves both layers of run-membership enforcement on every execution-scoped route: the filters
+ * ({@code InternalAuthFilter}'s run comparison, {@code WorkerAuthFilter}'s bearer check) and
+ * {@link RunScopeInterceptor} underneath them. It also proves every route either filter is meant
+ * to authenticate refuses a percent-escaped spelling, with or without a credential. An application
+ * composing these routes with its own runs this over its own {@link RequestMappingHandlerMapping},
+ * so a route it adds is audited too.
  */
 public final class RunScopeRouteAudit {
 
@@ -38,6 +40,7 @@ public final class RunScopeRouteAudit {
     private UUID executionNodeExecId;
     private String executionJobSecret;
     private UUID foreignRunId;
+    private String orchestratorSecret;
 
     private List<Route> routes;
 
@@ -73,6 +76,12 @@ public final class RunScopeRouteAudit {
         return this;
     }
 
+    /** The orchestrator's full-access credential, needed to probe the guard's layer on a foreign pair. */
+    public RunScopeRouteAudit orchestratorSecret(String secret) {
+        this.orchestratorSecret = secret;
+        return this;
+    }
+
     /** Every audited route, as {@code "METHOD pattern"} — proof the walk actually found routes. */
     public SortedSet<String> routes() {
         SortedSet<String> result = new TreeSet<>();
@@ -92,6 +101,9 @@ public final class RunScopeRouteAudit {
         }
         if (foreignRunId == null) {
             problems.add("R4: foreignRun(...) was never called; the walk would pass vacuously.");
+        }
+        if (orchestratorSecret == null) {
+            problems.add("R4: orchestratorSecret(...) was never called; the walk would pass vacuously.");
         }
 
         boolean anyExecInternal = false;
@@ -144,13 +156,35 @@ public final class RunScopeRouteAudit {
         if (executionNodeExecId == null || foreignRunId == null) {
             return;
         }
-        String bearer = route.pattern().startsWith("/internal/") ? executionJobSecret : "audit-probe";
+        boolean isInternal = route.pattern().startsWith("/internal/");
         URI uri = URI.create(expand(route.pattern(), foreignRunId, executionNodeExecId));
-        Response response = probe().send(route.method(), uri, bearer);
         String expectedBody = NodeExecutionUtil.notFound(executionNodeExecId).getMessage();
-        if (response.status() != 404 || !expectedBody.equals(response.body())) {
-            problems.add("R1: " + label + " did not refuse a foreign pair: expected 404 \"" + expectedBody + "\", got "
-                    + response.status() + " \"" + response.body() + "\".");
+
+        if (!isInternal) {
+            // /worker: the Worker filter never compares runs, so the pair still reaches the guard.
+            Response response = probe().send(route.method(), uri, "audit-probe");
+            if (response.status() != 404 || !expectedBody.equals(response.body())) {
+                problems.add("R1: " + label + " did not refuse a foreign pair: expected 404 \"" + expectedBody
+                        + "\", got " + response.status() + " \"" + response.body() + "\".");
+            }
+            return;
+        }
+
+        // /internal: the agent's own secret must never reach the guard with a foreign pair — the
+        // filter itself must refuse it. Only the orchestrator, which the filter never checks
+        // against the run, still reaches the guard's 404.
+        Response filterResponse = probe().send(route.method(), uri, executionJobSecret);
+        if (filterResponse.status() != 401) {
+            problems.add("R1: " + label + " did not refuse its own execution under a foreign run with the"
+                    + " filter's 401; got " + filterResponse.status() + " \"" + filterResponse.body() + "\".");
+        }
+        if (orchestratorSecret != null) {
+            Response guardResponse = probe().send(route.method(), uri, orchestratorSecret);
+            if (guardResponse.status() != 404 || !expectedBody.equals(guardResponse.body())) {
+                problems.add("R1: " + label + " did not refuse the orchestrator's foreign pair with the guard's"
+                        + " 404: expected 404 \"" + expectedBody + "\", got " + guardResponse.status() + " \""
+                        + guardResponse.body() + "\".");
+            }
         }
     }
 
@@ -159,13 +193,32 @@ public final class RunScopeRouteAudit {
             return;
         }
         String label = route.method() + " " + route.pattern();
+        boolean execScoped = RunScopeInterceptor.isExecutionScoped(route.pattern());
+        boolean isInternal = route.pattern().startsWith("/internal/");
+        String validCredential;
+        if (isInternal) {
+            validCredential = execScoped ? executionJobSecret : orchestratorSecret;
+        } else {
+            validCredential = "audit-probe";
+        }
+
         String expanded = expand(route.pattern(), executionRunId, executionNodeExecId);
         URI uri = URI.create(escapeLeadingSegment(expanded));
-        Response response = probe().send(route.method(), uri, null);
-        if (response.status() != 400 || !RunScopeInterceptor.ESCAPED_PATH_MESSAGE.equals(response.body())) {
-            problems.add("R2: " + label + " did not refuse its escaped spelling: expected 400 \""
-                    + RunScopeInterceptor.ESCAPED_PATH_MESSAGE + "\", got " + response.status() + " \""
-                    + response.body() + "\".");
+
+        if (validCredential != null) {
+            Response withCredential = probe().send(route.method(), uri, validCredential);
+            if (withCredential.status() != 400
+                    || !RunScopeInterceptor.ESCAPED_PATH_MESSAGE.equals(withCredential.body())) {
+                problems.add("R2: " + label + " did not refuse its escaped spelling with a valid credential:"
+                        + " expected 400 \"" + RunScopeInterceptor.ESCAPED_PATH_MESSAGE + "\", got "
+                        + withCredential.status() + " \"" + withCredential.body() + "\".");
+            }
+        }
+
+        Response noCredential = probe().send(route.method(), uri, null);
+        if (noCredential.status() != 401) {
+            problems.add("R2: " + label + " did not refuse its escaped spelling with no credential: expected 401,"
+                    + " got " + noCredential.status() + " \"" + noCredential.body() + "\".");
         }
     }
 
@@ -202,8 +255,8 @@ public final class RunScopeRouteAudit {
         for (int i = 0; i + 4 < segments.length; i++) {
             if (matchesAgentWindow(segments, i)) {
                 problems.add("R3: " + label + " pattern has a window at segment " + i
-                        + " shaped like /internal/runs/{runId}/node-executions/{nodeExecId}, which"
-                        + " InternalAuthFilter's unanchored match could spell from an agent-controlled value.");
+                        + " shaped like /internal/runs/{runId}/node-executions/{nodeExecId}; a second window of"
+                        + " that shape could be misread as the filter's fixed-position agent window.");
             }
         }
     }

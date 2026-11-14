@@ -66,6 +66,7 @@ public class InternalAuthFilterTest extends BaseTest {
     private WorkflowClient workflowClient;
 
     private WorkflowRun run;
+    private WorkflowRun foreignRun;
     private NodeExecution exec;
     private NodeExecution otherExec;
 
@@ -99,6 +100,11 @@ public class InternalAuthFilterTest extends BaseTest {
         run = new WorkflowRun();
         run.setGraphTemplateId(template.getId());
         run = runRepo.save(run);
+
+        // A run `exec` does NOT belong to — proves the filter compares runs, not just the secret.
+        foreignRun = new WorkflowRun();
+        foreignRun.setGraphTemplateId(template.getId());
+        foreignRun = runRepo.save(foreignRun);
 
         // Create a node execution with a known job secret hash
         String jobSecret = "test-agent-job-secret";
@@ -170,6 +176,82 @@ public class InternalAuthFilterTest extends BaseTest {
     }
 
     @Test
+    void agentToken_ownExecutionUnderForeignRun_isUnauthorized() throws Exception {
+        // The run named at the fixed position must match the authenticated execution's own run.
+        mockMvc.perform(get("/internal/runs/" + foreignRun.getId() + "/node-executions/" + exec.getId() + "/decision")
+                        .header("Authorization", "Bearer test-agent-job-secret"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Invalid or insufficient Bearer token"));
+    }
+
+    @Test
+    void agentToken_executionWindowShiftedByExtraLeadingSegment_isUnauthorized() throws Exception {
+        // The fixed window is read at a fixed position, not found anywhere in the path.
+        mockMvc.perform(get("/internal/x/internal/runs/" + run.getId() + "/node-executions/" + exec.getId()
+                                + "/decision")
+                        .header("Authorization", "Bearer test-agent-job-secret"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void agentToken_executionWindowShiftedByInsertedSegment_isUnauthorized() throws Exception {
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/x/node-executions/" + exec.getId())
+                        .header("Authorization", "Bearer test-agent-job-secret"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void agentToken_nonUuidRunSegment_isUnauthorized() throws Exception {
+        mockMvc.perform(get("/internal/runs/not-a-uuid/node-executions/" + exec.getId() + "/decision")
+                        .header("Authorization", "Bearer test-agent-job-secret"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void agentToken_nonUuidExecutionSegment_isUnauthorized() throws Exception {
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/not-a-uuid/decision")
+                        .header("Authorization", "Bearer test-agent-job-secret"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void escapedInternalPath_noToken_isUnauthorizedByTheFilter() throws Exception {
+        // Deciding from the decoded path means an escaped prefix is filtered exactly like the
+        // plain one, rather than falling through unauthenticated to the guard underneath.
+        mockMvc.perform(get(java.net.URI.create("/%69nternal/runs/" + run.getId() + "/graph-runtime")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Missing or invalid Authorization header"));
+    }
+
+    @Test
+    void escapedInternalPath_withAgentOwnSecret_isRefusedByTheGuardNotTheFilter() throws Exception {
+        // Proves the agent was authenticated on the decoded path: the filter let its own pair
+        // through, and only the guard — reading the raw, still-escaped URI — refused it.
+        mockMvc.perform(get(java.net.URI.create(
+                                "/%69nternal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/decision"))
+                        .header("Authorization", "Bearer test-agent-job-secret"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(RunScopeInterceptor.ESCAPED_PATH_MESSAGE));
+    }
+
+    @Test
+    void escapedPublicApiPath_withAgentToken_isForbiddenLikeThePlainOne() throws Exception {
+        mockMvc.perform(get(java.net.URI.create("/%61pi/v1/runs"))
+                        .header("Authorization", "Bearer test-agent-job-secret"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("Agent pods must use /internal/ endpoints"));
+    }
+
+    @Test
+    void orchestratorToken_onForeignPair_isNotRefusedByTheFilter() throws Exception {
+        // The orchestrator tier is never checked against the run by the filter — only the guard
+        // underneath refuses this pair, with its own 404.
+        mockMvc.perform(get("/internal/runs/" + foreignRun.getId() + "/node-executions/" + exec.getId() + "/decision")
+                        .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void publicEndpoints_notAffected() throws Exception {
         // Public API should not require auth (filter only applies to /internal/**)
         mockMvc.perform(get("/api/v1/runs")).andExpect(status().isOk());
@@ -215,8 +297,9 @@ public class InternalAuthFilterTest extends BaseTest {
 
     // ── branch cleanup plan: orchestrator-only, by construction ───────────────────
     //
-    // /internal/runs/{runId}/branch-cleanup-plan carries no node-executions/{execId} segment, so
-    // NODE_EXEC_PATH_PATTERN never matches it and an agent's JOB_SECRET can never authorize it —
+    // /internal/runs/{runId}/branch-cleanup-plan carries no node-executions/{execId} segment at the
+    // fixed window, so the filter's agent tier never matches it and an agent's JOB_SECRET can never
+    // authorize it —
     // only the orchestrator's shared secret can.
 
     @Test
