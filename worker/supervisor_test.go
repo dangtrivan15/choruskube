@@ -26,7 +26,7 @@ func TestSupervisorClientForReturnsTheDialedClient(t *testing.T) {
 	want := &fakeTemporalClient{}
 	sup := &fleetSupervisor{clients: map[string]client.Client{fleetKey(f): want}}
 
-	if got := sup.clientFor("ns", "q"); got != client.Client(want) {
+	if got := sup.clientFor("ns", "q"); got != temporalCompletions(want) {
 		t.Fatalf("clientFor returned a different client than the one dialed for this fleet")
 	}
 }
@@ -65,7 +65,7 @@ func TestSupervisorReattachClientReturnsTheSoleNamespaceClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reattachClient = %v, want nil", err)
 	}
-	if cl != client.Client(want) || ns != "org-ns" {
+	if cl != temporalCompletions(want) || ns != "org-ns" {
 		t.Fatalf("reattachClient = (%v, %q), want the sole served client and its namespace", cl, ns)
 	}
 }

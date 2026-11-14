@@ -74,18 +74,18 @@ var _ client.Client = (*fakeTemporalClient)(nil)
 // Temporal namespaces and so cannot pick one for an execution it never launched.
 type singleClientResolver struct {
 	namespace, taskQueue string
-	client               client.Client
+	client               temporalCompletions
 	reattachErr          error
 }
 
-func (r singleClientResolver) clientFor(namespace, taskQueue string) client.Client {
+func (r singleClientResolver) clientFor(namespace, taskQueue string) temporalCompletions {
 	if namespace != r.namespace || taskQueue != r.taskQueue {
 		return nil
 	}
 	return r.client
 }
 
-func (r singleClientResolver) reattachClient() (client.Client, string, error) {
+func (r singleClientResolver) reattachClient() (temporalCompletions, string, error) {
 	if r.reattachErr != nil {
 		return nil, "", r.reattachErr
 	}

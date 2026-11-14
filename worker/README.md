@@ -93,6 +93,40 @@ are configured.
 Use this path when the answer is already known and constant, and a round-trip to ask for it
 would only return what you configured.
 
+## Reaching Temporal through a proxy
+
+Every method below is on `temporal.api.workflowservice.v1.WorkflowService`.
+
+| Method | When the Worker calls it | If refused |
+|---|---|---|
+| `GetSystemInfo` | when it dials | tolerated only as `UNIMPLEMENTED`; any other refusal and the Worker does not start |
+| `DescribeNamespace` | when it starts, to read the namespace's capabilities | tolerated only as `UNIMPLEMENTED`, which leaves Worker heartbeats off; any other refusal and the Worker does not start |
+| `PollActivityTaskQueue` | from two pollers, continuously, up to 70 s each | it never receives work |
+| `RespondActivityTaskCompleted`, `RespondActivityTaskFailed`, `RespondActivityTaskCanceled` | synchronous activity results | the activity times out and retries |
+| `RespondActivityTaskCompletedById`, `RespondActivityTaskFailedById`, `RespondActivityTaskCanceledById` | a launched node's result (AI or script), relayed from the workload's callback | the node times out |
+| `RecordActivityTaskHeartbeat` | gate, issue and branch-cleanup activities | the activity's heartbeat times out |
+| `RecordActivityTaskHeartbeatById` | a launched node's heartbeat relay, at most once a minute | the node's heartbeat times out |
+| `ShutdownWorker` | when the Worker stops | tolerated |
+| `RecordWorkerHeartbeat` | every 60 s, when the server advertises Worker heartbeats | `UNIMPLEMENTED` stops it quietly |
+
+Never needed: OperatorService, the health and reflection services, and every other
+WorkflowService method. That includes starting, signalling and terminating workflows, listing
+namespaces, and polling for workflow tasks, workflow updates or Nexus tasks. A prefix match such
+as `Poll*` would admit the last three, which is why one is not used here.
+
+A proxy in front of Temporal must pass a Worker:
+
+- TLS with a publicly trusted certificate, or a CA added to the Worker's system trust store
+  (`SSL_CERT_FILE`/`SSL_CERT_DIR`);
+- HTTP/2 end to end;
+- no deadline under the SDK's 70 s long-poll;
+- HTTP/2 keepalive pings allowed -- the SDK sends them every 30 s, even with no stream open;
+- the `authorization` metadata passed through unchanged -- a Worker that holds a Temporal
+  credential sends it as a bearer on every call.
+
+`worker/temporal_methods_test.go` fails when the set of methods the Worker calls stops matching
+this table, so a change to that set is an edit here.
+
 ## Environment
 
 | Variable | Required | Purpose |
