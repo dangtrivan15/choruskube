@@ -175,9 +175,9 @@ func TestRunStaticPathSendsNoRegistration(t *testing.T) {
 }
 
 // TestRunDialsTheRegisteredEndpointWhenNoTemporalAddressIsConfigured proves a registration
-// path with no TemporalAddress still gets past validation and attempts to dial the Fleet's
-// own Endpoint -- the 127.0.0.1:1 refusal is the proof it tried that address, not a stand-in
-// for success.
+// path with no TemporalAddress still gets past validation and dials the Fleet's own Endpoint.
+// The refusal must name 127.0.0.1:1: the SDK's empty-address default fails the same way, but
+// against localhost:7233.
 func TestRunDialsTheRegisteredEndpointWhenNoTemporalAddressIsConfigured(t *testing.T) {
 	err := Run(context.Background(), Config{
 		APIServerURL: "http://a",
@@ -191,7 +191,8 @@ func TestRunDialsTheRegisteredEndpointWhenNoTemporalAddressIsConfigured(t *testi
 		Executor:        nopExecutor{},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "dial temporal for fleet", "want a dial failure against the Fleet's own endpoint, got %v", err)
+	assert.Contains(t, err.Error(), "dial temporal for fleet", "want a dial failure, got %v", err)
+	assert.Contains(t, err.Error(), "127.0.0.1:1", "want the Fleet's own endpoint dialled, got %v", err)
 }
 
 // TestRunFailsBeforeDialingWhenNeitherSourceNamesAnAddress proves the case a registration

@@ -74,8 +74,7 @@ func (b runBinding) ExecutionInRun(ctx context.Context, runID, execID uuid.UUID)
 var _ callback.RunBinding = runBinding{}
 
 // resolveAddress picks where to reach Temporal for one Fleet. An empty result means neither
-// registration nor configuration named one; serve fails on that before dialing rather than
-// passing "" to the Temporal SDK.
+// registration nor configuration named one, which serve refuses before dialing.
 func resolveAddress(f Fleet, cfg Config) string {
 	if f.Endpoint != "" {
 		return f.Endpoint
@@ -383,9 +382,8 @@ func (s *fleetSupervisor) serve(f Fleet) error {
 	if _, ok := s.served[key]; ok {
 		return nil
 	}
-	// A registration response that genuinely has no endpoint for this Fleet (a control plane
-	// that hands out real endpoints only to the Fleets that need one) must fail loudly here,
-	// before Dial turns an empty HostPort into a confusing SDK error instead of this one.
+	// The SDK dials localhost:7233 for an empty HostPort, so without this a Fleet that neither
+	// registration nor TemporalAddress gave an address would serve whatever Temporal answers there.
 	if resolveAddress(f, s.cfg) == "" {
 		return fmt.Errorf("no temporal address for fleet %s: registration returned no endpoint and TEMPORAL_ADDRESS is not set", f.TaskQueue)
 	}
