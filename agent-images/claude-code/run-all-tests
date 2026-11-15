@@ -15,8 +15,14 @@ set -uo pipefail
 # Repo Group with no test_commands configured is treated as a pass, matching
 # the "no test configured = pass" convention.
 #
-# Exit code: 0 if every repo with a test_command passed, 1 otherwise. The
-# entrypoint translates the exit code into the node decision (passed/failed).
+# When a multi-repo config.json sets `test_affected_only`, a repo's suite runs
+# only if this run changed that repo or one it depends on (`depends_on`,
+# transitively); every other repo is SKIPPED (unaffected), and a Test scope
+# section at the top of the report says why each repo is in or out.
+#
+# Exit code: 0 if every suite that ran passed (including when none ran), 1
+# otherwise. The entrypoint translates the exit code into the node decision
+# (passed/failed).
 
 CONFIG=/workspace/config.json
 REPORT=/workspace/out/test_report.md
@@ -29,7 +35,12 @@ fi
 
 # tab-separated list of (name, dir, cmd) tuples
 PLAN_FILE=$(mktemp)
-trap 'rm -f "$PLAN_FILE"' EXIT
+# Test scope, filled only when the project opts in: one affected name per line; name<TAB>reason;
+# name<TAB>dependency.
+AFFECTED_FILE=$(mktemp)
+REASONS_FILE=$(mktemp)
+DEPS_FILE=$(mktemp)
+trap 'rm -f "$PLAN_FILE" "$AFFECTED_FILE" "$REASONS_FILE" "$DEPS_FILE"' EXIT
 
 REPOS_LEN=$(jq '(.repos // []) | length' "$CONFIG")
 
@@ -53,8 +64,107 @@ else
   printf '%s\t%s\t%s\n' "$NAME" "/workspace/repo" "$TC" > "$PLAN_FILE"
 fi
 
+# Must name the branch entrypoint.sh's rebase_onto_default rebased the run onto: against any
+# other base, the commits ahead of it are no longer this run's commits.
+default_branch_of() {
+    local branch
+    branch=$(git -C "$1" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+    branch="${branch#origin/}"
+    [ -n "$branch" ] || branch=main
+    printf '%s' "$branch"
+}
+
+# Exit 0 when DIR holds work its default branch lacks: commits, tracked edits, or untracked
+# non-ignored files. Whatever git cannot answer counts as changed: skipping a suite that
+# should have run is the one wrong answer here.
+repo_changed() {
+    local dir="$1" base ahead status
+    base="refs/remotes/origin/$(default_branch_of "$dir")"
+    git -C "$dir" rev-parse --verify --quiet "$base^{commit}" > /dev/null 2>&1 || return 0
+    ahead=$(git -C "$dir" rev-list --count "$base..HEAD" 2>/dev/null) || return 0
+    case "$ahead" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$ahead" -eq 0 ] || return 0
+    status=$(git -C "$dir" status --porcelain --untracked-files=normal 2>/dev/null) || return 0
+    [ -n "$status" ]
+}
+
+is_affected() {
+    grep -qxF -- "$1" "$AFFECTED_FILE"
+}
+
+# Runs before any suite, so a file one suite writes into a sibling repo cannot pull that
+# sibling in. Every pass that adds nothing ends the loop and every other one marks a new
+# repo, so REPOS_LEN passes bound it even when depends_on has a cycle.
+compute_affected() {
+    local name dir cmd dep added pass=0
+    while IFS=$'\t' read -r name dir cmd; do
+        if repo_changed "$dir" < /dev/null; then
+            printf '%s\n' "$name" >> "$AFFECTED_FILE"
+            printf '%s\tchanged\n' "$name" >> "$REASONS_FILE"
+        fi
+    done < "$PLAN_FILE"
+    jq -r '.repos[] | (.name // "repo") as $n
+           | (.depends_on // []) | if type == "array" then .[] else empty end
+           | select(type == "string" and length > 0) | [$n, .] | @tsv' "$CONFIG" > "$DEPS_FILE"
+    while [ "$pass" -lt "$REPOS_LEN" ]; do
+        added=0
+        while IFS=$'\t' read -r name dep; do
+            is_affected "$name" && continue
+            if is_affected "$dep"; then
+                printf '%s\n' "$name" >> "$AFFECTED_FILE"
+                printf '%s\tdepends on %s\n' "$name" "$dep" >> "$REASONS_FILE"
+                added=1
+            fi
+        done < "$DEPS_FILE"
+        [ "$added" -eq 1 ] || break
+        pass=$((pass + 1))
+    done
+}
+
+# A depends_on name that is no repo in this run can never be marked, so it is ignored — but
+# silently ignoring it would hide a dependent that should have run.
+unknown_dependency_warnings() {
+    local name dep
+    while IFS=$'\t' read -r name dep; do
+        awk -F'\t' -v d="$dep" '$1 == d {found = 1} END {exit !found}' "$PLAN_FILE" && continue
+        printf -- "- Warning: \`%s\` depends on \`%s\`, which is not a repo in this run; ignored.\n" "$name" "$dep"
+    done < "$DEPS_FILE"
+}
+
+write_test_scope() {
+    local name dir cmd reason changed warnings
+    changed=$(awk -F'\t' '$2 == "changed" {printf "%s`%s`", sep, $1; sep = ", "}' "$REASONS_FILE")
+    echo "## Test scope"
+    echo ""
+    echo "Test only affected repos is on: a repo's suite runs only if this run changed it or a repo it depends on."
+    echo ""
+    echo "**Changed:** ${changed:-none}"
+    echo ""
+    while IFS=$'\t' read -r name dir cmd; do
+        reason=$(awk -F'\t' -v n="$name" '$1 == n {print $2; exit}' "$REASONS_FILE")
+        if [ -n "$reason" ]; then
+            echo "- \`$name\`: affected ($reason)"
+        else
+            echo "- \`$name\`: unaffected"
+        fi
+    done < "$PLAN_FILE"
+    warnings=$(unknown_dependency_warnings)
+    if [ -n "$warnings" ]; then
+        echo ""
+        printf '%s\n' "$warnings"
+    fi
+    echo ""
+}
+
+SCOPED=0
+if [ "$REPOS_LEN" -gt 0 ] && [ "$(jq -r '.test_affected_only == true' "$CONFIG")" = "true" ]; then
+  SCOPED=1
+  compute_affected
+fi
+
 OVERALL_EXIT=0
 HAS_RUNNABLE=0
+UNAFFECTED_SKIPS=0
 
 # Where a repo's reports live. The seeders put `-Dtest.reports.dir=<abs path>` in the
 # test_command (a per-repo report ROOT — see the repo build files), so parse it back out
@@ -158,6 +268,9 @@ archive_components() {
   echo "# Test Report"
   echo ""
 } > "$REPORT"
+if [ "$SCOPED" -eq 1 ]; then
+  write_test_scope >> "$REPORT"
+fi
 
 while IFS=$'\t' read -r NAME DIR CMD; do
   if [ -z "$CMD" ] || [ "$CMD" = "null" ]; then
@@ -167,6 +280,18 @@ while IFS=$'\t' read -r NAME DIR CMD; do
       echo "**Status:** SKIPPED (no test_command configured)"
       echo ""
     } >> "$REPORT"
+    continue
+  fi
+
+  if [ "$SCOPED" -eq 1 ] && ! is_affected "$NAME"; then
+    echo "==> $NAME: skipped (unaffected)"
+    {
+      echo "## $NAME"
+      echo ""
+      echo "**Status:** SKIPPED (unaffected — no change in this repo or any repo it depends on)"
+      echo ""
+    } >> "$REPORT"
+    UNAFFECTED_SKIPS=$((UNAFFECTED_SKIPS + 1))
     continue
   fi
 
@@ -288,13 +413,19 @@ while IFS=$'\t' read -r NAME DIR CMD; do
   } >> "$REPORT"
 done < "$PLAN_FILE"
 
-if [ "$HAS_RUNNABLE" -eq 0 ]; then
+if [ "$HAS_RUNNABLE" -eq 0 ] && [ "$UNAFFECTED_SKIPS" -gt 0 ]; then
+  echo "No repo with a test_command is affected by this run — nothing to run."
+  echo ""
+  echo "_No repo with a test_command is affected by this run — nothing ran; treating as passed._" >> "$REPORT"
+elif [ "$HAS_RUNNABLE" -eq 0 ]; then
   echo "No test_command configured for any repo — nothing to run."
   echo ""
   echo "_No test_command configured for any repo — treating as passed._" >> "$REPORT"
 fi
 
-if [ "$OVERALL_EXIT" -eq 0 ]; then
+if [ "$OVERALL_EXIT" -eq 0 ] && [ "$UNAFFECTED_SKIPS" -gt 0 ]; then
+  echo "Every suite that ran passed; $UNAFFECTED_SKIPS unaffected repo(s) skipped."
+elif [ "$OVERALL_EXIT" -eq 0 ]; then
   echo "All tests passed."
 else
   echo "One or more repos failed tests; see $REPORT for details." >&2

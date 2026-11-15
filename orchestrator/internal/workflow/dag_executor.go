@@ -825,6 +825,9 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 						if r.TestCommand != "" {
 							repo["test_command"] = r.TestCommand
 						}
+						if len(r.DependsOn) > 0 {
+							repo["depends_on"] = r.DependsOn
+						}
 						if needsBranch == "true" {
 							repo["working_branch"] = "choruskube-run-" + params.RunID.String()
 						}
@@ -897,9 +900,10 @@ func DAGExecutorWorkflow(ctx workflow.Context, params DAGExecutorParams) error {
 							Variables:              vars,
 						},
 						Repos: activity.Repos{
-							RepoURL:       repoURL,
-							WorkingBranch: workingBranch,
-							List:          repos,
+							RepoURL:          repoURL,
+							WorkingBranch:    workingBranch,
+							List:             repos,
+							TestAffectedOnly: snap.TestAffectedOnly,
 						},
 						TaskContext: activity.TaskContext{
 							TaskID:       taskID,

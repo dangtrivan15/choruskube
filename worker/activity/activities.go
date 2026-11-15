@@ -144,9 +144,10 @@ type Inputs struct {
 }
 
 type Repos struct {
-	RepoURL       string
-	WorkingBranch string
-	List          []map[string]any
+	RepoURL          string
+	WorkingBranch    string
+	List             []map[string]any
+	TestAffectedOnly bool
 }
 
 // TaskContext carries the triggering Task's identity, broadcast into config.json's task_context
@@ -327,6 +328,9 @@ func (a *Activities) buildConfigJSON(params ExecuteAINodeFromSnapshotParams, res
 	}
 	if len(params.Repos.List) > 0 {
 		configJSON["repos"] = params.Repos.List
+		if params.Repos.TestAffectedOnly {
+			configJSON["test_affected_only"] = true
+		}
 	} else if tc, ok := vars["run.test_command"]; ok && tc != "" {
 		// Single-repo runs don't populate repos[]; expose test_command at the top level so
 		// run-all-tests finds it — the repo content lives directly at /workspace/repo, not a

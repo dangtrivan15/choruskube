@@ -147,7 +147,12 @@ The following helper scripts are available on the PATH:
   command to extract one, and pointers to the full logs. The detailed HTML reports are
   packed into those archives rather than uploaded as individual files, so the index is
   the entry point, not a summary you can skip. The Test node invokes this automatically;
-  you can also call it directly to verify your implementation.
+  you can also call it directly to verify your implementation. When the project turns on
+  *Test only affected repos*, it runs only the repos this run changed plus every repo that
+  depends on one (directly or through others), and reports the rest as SKIPPED
+  (unaffected); the report's Test scope section says which repos changed and why each one
+  ran. To run a skipped repo's suite anyway, run its `test_command` from
+  `/workspace/config.json` yourself inside that repo's directory.
 
 Run any command with `--help` for full usage details.
 Additional tools may be available in /usr/local/bin/ — run `ls /usr/local/bin/`

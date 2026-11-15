@@ -202,9 +202,10 @@ type Inputs struct {
 }
 
 type Repos struct {
-	RepoURL       string
-	WorkingBranch string
-	List          []map[string]any
+	RepoURL          string
+	WorkingBranch    string
+	List             []map[string]any
+	TestAffectedOnly bool
 }
 
 // TaskContext carries the triggering Task's identity, broadcast into config.json's

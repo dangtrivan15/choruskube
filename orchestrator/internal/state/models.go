@@ -40,6 +40,9 @@ type SnapshotRepo struct {
 	Name        string `json:"name"`
 	TestCommand string `json:"testCommand,omitempty"`
 	AgentImage  string `json:"agentImage,omitempty"`
+	// Tagged to match RuntimeRepo's Jackson name: a mismatch decodes as empty, and with
+	// TestAffectedOnly on, a changed repo's dependents would then skip their suites.
+	DependsOn []string `json:"dependsOn,omitempty"`
 }
 
 // SnapshotOpenBlocker holds one of the triggering Task's own direct,
@@ -74,11 +77,12 @@ type SnapshotTaskContext struct {
 // It contains only workflow-execution fields; infrastructure fields (image,
 // secrets, namespace, docker config) are resolved by the API server.
 type GraphRuntimeSnapshot struct {
-	Nodes       []SnapshotNode         `json:"nodes"`
-	Edges       []SnapshotEdge         `json:"edges"`
-	Inputs      map[string]interface{} `json:"inputs,omitempty"`
-	Repos       []SnapshotRepo         `json:"repos,omitempty"`
-	TaskContext *SnapshotTaskContext   `json:"taskContext,omitempty"`
+	Nodes            []SnapshotNode         `json:"nodes"`
+	Edges            []SnapshotEdge         `json:"edges"`
+	Inputs           map[string]interface{} `json:"inputs,omitempty"`
+	Repos            []SnapshotRepo         `json:"repos,omitempty"`
+	TaskContext      *SnapshotTaskContext   `json:"taskContext,omitempty"`
+	TestAffectedOnly bool                   `json:"testAffectedOnly,omitempty"`
 }
 
 type SnapshotNode struct {
