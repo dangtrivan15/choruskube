@@ -120,6 +120,14 @@ run must get further — designing a Story (`api.approveStorySpec`), which its T
 they can start, or driving a Task's run — takes `cloneableProject` instead: the same per-worker shape,
 a RepoGroup over the seeded `e2e-test/mock-repo` that the e2e agent image can clone.
 
+**Shared read-only runs.** A run that is slow to reach the state a test reads is minted once
+per worker in `fixtures/index.ts` and shared: `failedRun` (its node failed at the 60s node
+timeout, the run parked in `awaiting_retry`), `completedRun`, and `parkedGateRun` (open at
+`review_gate`, cancelled at worker teardown). A test that approves, rejects, retries or cancels
+a run starts its own, since every later reader of a shared one would see the change. Minted
+early, these runs sink off the run list's first page (20 rows, newest first) as other tests
+start runs, so a spec finds one there through the status filter.
+
 **Scoped list assertions.** `api.listEpicsForProject(id)` narrows the org-wide page to one
 software project. Any count or ID-set assertion goes through it. A materialized Epic
 inherits its run's project via `InternalRunService#createEpic(runId, …)`, so gate specs
@@ -154,6 +162,9 @@ happened to materialize its fixture first. Specs needing the seeded set specific
 - Name every created resource with `uniqueName()`.
 - Take `workerRepo` rather than reaching into `listGitRepos()` — or `cloneableProject` when a
   run on the project must get past its first node, including any Story you design.
+- Only reading a failed, completed or gate-parked run? Take `failedRun`, `completedRun` or
+  `parkedGateRun` instead of starting one, never act on it, and find it in the run list through
+  the status filter.
 - Never assert an absolute count — or an ID-set diff — over an unscoped list.
 - Need the seeded repos? `seededRepos(page.content)`, never `content[0]` or `.slice(0, 2)`.
 - Drag a board card through `dragBoardCard` (`helpers/board-drag.ts`), never a hand-rolled

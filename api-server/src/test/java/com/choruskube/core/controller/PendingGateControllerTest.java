@@ -3,24 +3,19 @@ package com.choruskube.core.controller;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.*;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
-@AutoConfigureMockMvc
 @Transactional
-public class PendingGateControllerTest extends BaseTest {
+public class PendingGateControllerTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -39,12 +34,6 @@ public class PendingGateControllerTest extends BaseTest {
 
     @Autowired
     private TemplateNodeRepository templateNodeRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @Test
     void getPendingGates_returnsEmptyWhenNoAwaiting() throws Exception {

@@ -18,8 +18,8 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.TaskDeliveryGraph;
@@ -50,10 +50,8 @@ import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
@@ -86,7 +84,7 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
  * every conflict no revision covers yet.
  */
 @Transactional
-class StorySpecLifecycleServiceConflictTest extends BaseTest {
+class StorySpecLifecycleServiceConflictTest extends SharedContextTest {
 
     @Autowired
     private StorySpecLifecycleService lifecycle;
@@ -150,12 +148,6 @@ class StorySpecLifecycleServiceConflictTest extends BaseTest {
 
     @MockitoSpyBean
     private StoragePrefixResolver storagePrefixResolver;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

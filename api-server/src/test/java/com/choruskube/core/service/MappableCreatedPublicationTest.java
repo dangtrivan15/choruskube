@@ -2,7 +2,7 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.CreateRunPullRequestRequest;
 import com.choruskube.core.dto.GitRepoRequest;
 import com.choruskube.core.dto.NodeDefinitionRequest;
@@ -25,8 +25,6 @@ import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -51,7 +49,7 @@ import org.springframework.transaction.annotation.Transactional;
  * runId)
  */
 @Transactional
-class MappableCreatedPublicationTest extends BaseTest {
+class MappableCreatedPublicationTest extends SharedContextTest {
 
     // -----------------------------------------------------------------------
     // Test-only event capturing configuration
@@ -91,12 +89,6 @@ class MappableCreatedPublicationTest extends BaseTest {
     // -----------------------------------------------------------------------
     // Infrastructure mocks
     // -----------------------------------------------------------------------
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private com.choruskube.core.observability.AuditSink auditSink;

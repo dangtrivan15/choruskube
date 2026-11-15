@@ -4,25 +4,20 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
-@AutoConfigureMockMvc
 @Transactional
-class InternalPlacementControllerTest extends BaseTest {
+class InternalPlacementControllerTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -32,12 +27,6 @@ class InternalPlacementControllerTest extends BaseTest {
 
     @Autowired
     private GraphTemplateRepository graphTemplateRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     /**
      * With no placement policy the roster is the configured namespace alone — which is what an

@@ -4,33 +4,23 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.OrgSecurity;
 import com.choruskube.core.service.OrgIdentitySync;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
-@AutoConfigureMockMvc
 @Transactional
-public class DocsControllerAuthTest extends BaseTest {
+public class DocsControllerAuthTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
 
     @MockitoBean
     private OrgSecurity orgSecurity;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private OrgIdentitySync orgIdentity;

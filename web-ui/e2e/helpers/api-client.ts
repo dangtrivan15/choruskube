@@ -682,7 +682,7 @@ export class TestApiClient {
 
   /**
    * Polls until the Story's spec is at `version` or later. An approved design run is recorded by
-   * the server's reconciler (every 10s in e2e), not by the approval itself.
+   * the server's reconciler (every second in e2e), not by the approval itself.
    */
   async waitForStorySpecVersion(
     storyId: string,

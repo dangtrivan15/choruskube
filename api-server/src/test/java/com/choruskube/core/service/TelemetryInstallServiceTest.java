@@ -2,7 +2,7 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.repository.TelemetryInstallRepository;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -12,7 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
  * Integration test for {@link TelemetryInstallService}: the install id is generated once,
  * persisted, and stable across calls (idempotent).
  */
-class TelemetryInstallServiceTest extends BaseTest {
+class TelemetryInstallServiceTest extends SharedContextTest {
 
     @Autowired
     private TelemetryInstallService service;

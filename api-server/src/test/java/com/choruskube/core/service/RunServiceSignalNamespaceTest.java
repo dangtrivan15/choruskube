@@ -5,7 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.WorkflowRun;
@@ -14,7 +14,6 @@ import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -29,7 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
  * which is what these drive through the real RunService rather than reimplementing its logic.
  */
 @Transactional
-class RunServiceSignalNamespaceTest extends BaseTest {
+class RunServiceSignalNamespaceTest extends SharedContextTest {
 
     private static final String TENANT_NAMESPACE = "tenant-ns";
 
@@ -43,13 +42,10 @@ class RunServiceSignalNamespaceTest extends BaseTest {
     private GraphTemplateRepository graphTemplateRepo;
 
     @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
-
-    @MockitoBean
     private WorkflowClientRegistry workflowClientRegistry;
+
+    @MockitoBean
+    private RunEventPublisher runEventPublisher;
 
     private WorkflowClient tenantClient;
     private WorkflowStub stub;

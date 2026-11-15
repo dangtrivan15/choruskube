@@ -5,10 +5,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.CacheConfig;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,13 +27,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * singleton shared across tests.
  */
 @TestPropertySource(properties = "cache.landing-metrics.ttl-seconds=3600")
-class PublicMetricsCacheTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class PublicMetricsCacheTest extends SharedContextTest {
 
     @MockitoBean
     private MetricsAggregator aggregator;

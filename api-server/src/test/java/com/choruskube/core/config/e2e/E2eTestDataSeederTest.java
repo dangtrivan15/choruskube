@@ -2,7 +2,7 @@ package com.choruskube.core.config.e2e;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.BaseStoryDesignSeeder;
 import com.choruskube.core.config.BaseTaskDeliverySeeder;
 import com.choruskube.core.config.GraphIds;
@@ -22,8 +22,6 @@ import com.choruskube.core.service.RepoGroupService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -34,21 +32,14 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Rolled back after each test: the shared test database must never keep the e2e fixtures. */
 @Transactional
-class E2eTestDataSeederTest extends BaseTest {
+class E2eTestDataSeederTest extends SharedContextTest {
 
     private static final String MOCK = "/usr/local/bin/mock-agent.sh";
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @Autowired
     private GraphTemplateRepository templateRepo;

@@ -1,34 +1,6 @@
 import { test, expect } from "../fixtures";
 
 test.describe("Real-Time Updates", () => {
-  test("run status updates in run list without manual refresh", async ({
-    runListPage,
-    api,
-  }) => {
-    const template = await api.getTemplateByName("e2e-linear-pipeline");
-
-    await runListPage.goto();
-    await runListPage.waitForTableLoad();
-
-    const beforeCount = await runListPage.getRunCount();
-
-    // Start a run via API
-    const run = await api.startRun({
-      graphTemplateId: template.id,
-      name: "e2e-realtime-list-test",
-    });
-
-    // Wait for the UI to update via WebSocket (the table should show the new run)
-    await runListPage.page.waitForTimeout(5000);
-
-    // Reload and check — the run should appear
-    await runListPage.goto();
-    await runListPage.waitForTableLoad();
-
-    const runRow = runListPage.page.locator(`[data-run-id="${run.id}"]`);
-    await expect(runRow).toBeVisible({ timeout: 15_000 });
-  });
-
   test("run monitor page reflects node status changes", async ({
     runMonitorPage,
     api,
@@ -60,22 +32,13 @@ test.describe("Real-Time Updates", () => {
 
   test("completed node surfaces execution status and result in detail panel", async ({
     runMonitorPage,
-    api,
+    completedRun,
   }) => {
     // NOTE: this test asserts the completed node's status and result — its
     // logs are covered separately (log-severity.spec.ts, failure-handling.spec.ts).
     // The mock pipeline completes in ~1s, so catching an *active* node deterministically
     // isn't reliable here; a completed node's status badge and result text are.
-    const template = await api.getTemplateByName("e2e-linear-pipeline");
-
-    const run = await api.startRun({
-      graphTemplateId: template.id,
-      name: "e2e-realtime-result-test",
-    });
-
-    await api.waitForRunStatus(run.id, ["completed"], 120_000);
-
-    await runMonitorPage.goto(run.id);
+    await runMonitorPage.goto(completedRun.id);
     await runMonitorPage.selectNode("step_1");
     await expect(runMonitorPage.detailStatus).toHaveText("completed");
     await expect(runMonitorPage.page.getByText("Result", { exact: true })).toBeVisible();

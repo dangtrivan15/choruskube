@@ -2,7 +2,7 @@ package com.choruskube.core.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.model.Autopilot;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
@@ -32,7 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
  * than for whichever one a test happened to pick.
  */
 @Transactional
-public class AutopilotRepositoryTest extends BaseTest {
+public class AutopilotRepositoryTest extends SharedContextTest {
 
     private static final String OWNER = "instance-a";
 

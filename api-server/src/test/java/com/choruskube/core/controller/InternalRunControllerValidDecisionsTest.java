@@ -4,7 +4,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
 import com.choruskube.core.model.NodeExecution;
@@ -17,14 +17,11 @@ import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.service.InternalRunService;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,9 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code RunScopeInterceptor} runs regardless of auth configuration, so {@code runId}/{@code
  * nodeExecId} must be a real, seeded pair rather than made-up ids.
  */
-@AutoConfigureMockMvc
 @Transactional
-public class InternalRunControllerValidDecisionsTest extends BaseTest {
+public class InternalRunControllerValidDecisionsTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -57,12 +53,6 @@ public class InternalRunControllerValidDecisionsTest extends BaseTest {
 
     @MockitoBean
     private InternalRunService service;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private UUID runId;
     private UUID nodeExecId;

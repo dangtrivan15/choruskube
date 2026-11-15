@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -20,22 +20,17 @@ import com.choruskube.core.service.MilestoneService;
 import com.choruskube.core.service.WorkItemDependencyService;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
-@AutoConfigureMockMvc
 @Transactional
-public class InternalRunControllerTest extends BaseTest {
+public class InternalRunControllerTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -69,12 +64,6 @@ public class InternalRunControllerTest extends BaseTest {
 
     @Autowired
     private MilestoneService milestoneService;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private GraphTemplate template;
     private TemplateNode templateNode;
@@ -1130,7 +1119,7 @@ public class InternalRunControllerTest extends BaseTest {
     //
     // Auth-scoping for this run-level, orchestrator-only endpoint (ORCHESTRATOR_SECRET vs. an
     // agent JOB_SECRET vs. no auth at all) is covered in InternalAuthFilterTest, which already
-    // configures internal.auth.mode=enforce with a real orchestrator-secret-hash — this class's
+    // configures a real orchestrator-secret-hash under the default enforce mode — this class's
     // fixtures run with no configured hash (auth filter passes everything through), so it is the
     // right place to prove the endpoint's own functional shape instead.
 

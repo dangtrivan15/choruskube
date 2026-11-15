@@ -3,7 +3,7 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.MilestoneAtRiskItemsResponse;
@@ -19,8 +19,6 @@ import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -39,7 +37,7 @@ import org.springframework.transaction.annotation.Transactional;
  * iff its own {@code targetDate} is overdue AND at least one of its Epics is incomplete.
  */
 @Transactional
-public class MilestoneAtRiskTest extends BaseTest {
+public class MilestoneAtRiskTest extends SharedContextTest {
 
     private static final Instant FIXED_NOW = Instant.parse("2026-08-19T00:00:00Z");
     private static final LocalDate TODAY = LocalDate.ofInstant(FIXED_NOW, ZoneOffset.UTC);
@@ -61,12 +59,6 @@ public class MilestoneAtRiskTest extends BaseTest {
 
     @Autowired
     private TaskRepository taskRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

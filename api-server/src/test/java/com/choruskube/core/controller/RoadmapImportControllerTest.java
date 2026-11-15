@@ -10,7 +10,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.OrgSecurity;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GitRepo;
@@ -26,15 +26,12 @@ import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.service.RunEventPublisher;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -46,9 +43,8 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code POST /api/v1/roadmap/import}: a person imports a roadmap document into a software
  * project — validated in full, then materialized all-or-nothing through the public write path.
  */
-@AutoConfigureMockMvc
 @Transactional
-class RoadmapImportControllerTest extends BaseTest {
+class RoadmapImportControllerTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -73,12 +69,6 @@ class RoadmapImportControllerTest extends BaseTest {
 
     @Autowired
     private WorkItemDependencyRepository dependencyRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

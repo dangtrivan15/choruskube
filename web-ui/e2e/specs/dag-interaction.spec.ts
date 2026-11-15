@@ -77,20 +77,9 @@ test.describe("DAG Interaction", () => {
 
   test("completed nodes show completed status in DAG", async ({
     runMonitorPage,
-    api,
+    completedRun,
   }) => {
-    const template = await api.getTemplateByName("e2e-linear-pipeline");
-
-    const run = await api.startRun({
-      graphTemplateId: template.id,
-      name: "e2e-dag-completed-test",
-    });
-
-    // The linear pipeline is all mock-success nodes — it must complete.
-    const finalRun = await api.waitForRunStatus(run.id, ["completed"], 120_000);
-    expect(finalRun.status).toBe("completed");
-
-    await runMonitorPage.goto(run.id);
+    await runMonitorPage.goto(completedRun.id);
     await expect(runMonitorPage.dagNodes.first()).toBeVisible({
       timeout: 15_000,
     });
@@ -157,20 +146,11 @@ test.describe("DAG Interaction", () => {
 
   test("finished run shows the empty node panel", async ({
     runMonitorPage,
-    api,
+    completedRun,
   }) => {
-    const template = await api.getTemplateByName("e2e-linear-pipeline");
-
-    const run = await api.startRun({
-      graphTemplateId: template.id,
-      name: "e2e-empty-panel-test",
-    });
-
     // A clean completed run has nothing needing attention, so nothing is
     // auto-focused — the panel shows the empty state, not a node.
-    await api.waitForRunStatus(run.id, ["completed"], 120_000);
-
-    await runMonitorPage.goto(run.id);
+    await runMonitorPage.goto(completedRun.id);
     await expect(runMonitorPage.dagNodes.first()).toBeVisible({
       timeout: 15_000,
     });

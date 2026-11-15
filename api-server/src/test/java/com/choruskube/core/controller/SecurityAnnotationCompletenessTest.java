@@ -2,31 +2,19 @@ package com.choruskube.core.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
+import com.choruskube.core.SharedContextTest;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
-@AutoConfigureMockMvc
-class SecurityAnnotationCompletenessTest extends BaseTest {
+class SecurityAnnotationCompletenessTest extends SharedContextTest {
 
     @Autowired
     @Qualifier("requestMappingHandlerMapping")
     private RequestMappingHandlerMapping handlerMapping;
-
-    // Share the same Spring context as other controller tests that mock Temporal
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @Test
     void allPublicApiEndpoints_havePreAuthorize() {

@@ -4,7 +4,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
@@ -19,14 +19,11 @@ import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.service.InternalRunService;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -38,9 +35,8 @@ import org.springframework.transaction.annotation.Transactional;
  * still runs regardless of auth, so {@code runId}/{@code nodeExecId} must be a real, seeded
  * pair rather than made-up ids.
  */
-@AutoConfigureMockMvc
 @Transactional
-public class DecisionControllerTest extends BaseTest {
+public class DecisionControllerTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -65,12 +61,6 @@ public class DecisionControllerTest extends BaseTest {
 
     @MockitoBean
     private InternalRunService service;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private UUID runId;
     private UUID nodeExecId;

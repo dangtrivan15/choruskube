@@ -9,7 +9,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.SingleTenant;
 import com.choruskube.core.dto.CreateDependencyRequest;
@@ -42,8 +42,6 @@ import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
@@ -63,7 +61,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
-public class DefaultEpicServiceTest extends BaseTest {
+public class DefaultEpicServiceTest extends SharedContextTest {
 
     @Autowired
     private EpicService service;
@@ -100,12 +98,6 @@ public class DefaultEpicServiceTest extends BaseTest {
 
     @Autowired
     private JdbcTemplate jdbc;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

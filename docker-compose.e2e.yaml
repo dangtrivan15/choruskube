@@ -199,6 +199,9 @@ services:
       # underneath specs that assert on it. `web-ui/e2e/specs/autopilot.spec.ts` drives every
       # assertion through `POST /api/v1/autopilot/tick` instead, so the scheduler must stay off.
       AUTOPILOT_ENABLED: "false"
+      # test-only: StorySpecReconciler's poll (default PT10S). Every spec that designs a Story waits on
+      # it to record the approved spec, and every Story conflict waits on it to move on.
+      STORY_SPEC_INTERVAL: PT1S
       # Activate the e2e Spring profile to trigger E2eTestDataSeeder at boot.
       SPRING_PROFILES_ACTIVE: e2e
       # No executor/Docker wiring here: the api-server no longer runs workloads (the Worker below

@@ -2,7 +2,7 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.MilestoneRequest;
@@ -13,8 +13,6 @@ import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.Test;
@@ -28,7 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
  * Epics rather than deleting them.
  */
 @Transactional
-public class MilestoneDeleteBehaviorTest extends BaseTest {
+public class MilestoneDeleteBehaviorTest extends SharedContextTest {
 
     @Autowired
     private MilestoneService milestoneService;
@@ -44,12 +42,6 @@ public class MilestoneDeleteBehaviorTest extends BaseTest {
 
     @PersistenceContext
     private EntityManager entityManager;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

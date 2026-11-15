@@ -6,7 +6,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.model.DriftRecheckConfig.StampMode;
 import com.choruskube.core.model.GateStamp;
@@ -27,7 +27,6 @@ import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,7 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** A cancel ends the run without the orchestrator's status update, so it must void the approvals itself. */
 @Transactional
-class RunServiceCancelApprovalsTest extends BaseTest {
+class RunServiceCancelApprovalsTest extends SharedContextTest {
 
     @Autowired
     private RunService runService;
@@ -64,13 +63,10 @@ class RunServiceCancelApprovalsTest extends BaseTest {
     private TemplateNodeRepository templateNodeRepo;
 
     @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
-
-    @MockitoBean
     private WorkflowClientRegistry workflowClientRegistry;
+
+    @MockitoBean
+    private RunEventPublisher runEventPublisher;
 
     private WorkflowRun run;
     private NodeExecution gateExec;

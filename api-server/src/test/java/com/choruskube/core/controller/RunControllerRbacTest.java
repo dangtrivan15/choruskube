@@ -4,7 +4,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.OrgSecurity;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
@@ -17,18 +17,16 @@ import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
+import com.choruskube.core.service.RunEventPublisher;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -46,9 +44,8 @@ import org.springframework.transaction.annotation.Transactional;
  * - Operators can create/operate but cannot delete managed resources
  * - Admins can perform all operations
  */
-@AutoConfigureMockMvc
 @Transactional
-class RunControllerRbacTest extends BaseTest {
+class RunControllerRbacTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -72,13 +69,10 @@ class RunControllerRbacTest extends BaseTest {
     private GitRepoRepository gitRepoRepo;
 
     @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
-
-    @MockitoBean
     private OrgSecurity orgSecurity;
+
+    @MockitoBean
+    private RunEventPublisher runEventPublisher;
 
     private GraphTemplate template;
     private WorkflowRun run;

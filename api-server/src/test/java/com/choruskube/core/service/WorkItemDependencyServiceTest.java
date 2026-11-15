@@ -8,7 +8,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.DependencyEdgeResponse;
 import com.choruskube.core.dto.EpicRequest;
@@ -25,16 +25,15 @@ import com.choruskube.core.model.enums.BlockableItemType;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
+import software.amazon.awssdk.services.s3.S3Client;
 
 @Transactional
-public class WorkItemDependencyServiceTest extends BaseTest {
+public class WorkItemDependencyServiceTest extends SharedContextTest {
 
     @Autowired
     private WorkItemDependencyService service;
@@ -55,16 +54,13 @@ public class WorkItemDependencyServiceTest extends BaseTest {
     private WorkItemDependencyRepository dependencyRepo;
 
     @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
-
-    @MockitoBean
     private RunEventPublisher runEventPublisher;
 
     @MockitoBean
     private AuthorizationService authService;
+
+    @MockitoBean
+    private S3Client s3Client;
 
     @Test
     void create_selfLoop_throwsBadRequest() {

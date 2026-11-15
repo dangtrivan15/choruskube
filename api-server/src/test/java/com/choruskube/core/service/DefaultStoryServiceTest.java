@@ -7,7 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.DependencyEdgeResponse;
@@ -34,8 +34,6 @@ import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.LocalDate;
@@ -52,7 +50,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
-public class DefaultStoryServiceTest extends BaseTest {
+public class DefaultStoryServiceTest extends SharedContextTest {
 
     @Autowired
     private StoryService service;
@@ -80,12 +78,6 @@ public class DefaultStoryServiceTest extends BaseTest {
 
     @Autowired
     private JdbcTemplate jdbc;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

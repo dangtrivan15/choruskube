@@ -8,7 +8,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
 import com.choruskube.core.model.NodeExecution;
@@ -23,14 +23,11 @@ import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.service.PresignService;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.net.URI;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -46,16 +43,14 @@ import org.springframework.web.servlet.HandlerMapping;
  * escaped path is refused before any handler code runs, and the refusal applies uniformly to the
  * agent, the orchestrator and a Worker credential alike.
  */
-@AutoConfigureMockMvc
 @Transactional
 @TestPropertySource(
         properties = {
             // SHA-256 hash of "test-orchestrator-secret"
             "internal.auth.orchestrator-secret-hash=d6c5f99f36089f6757e4a7946de9dd0ef1d69983ab5920d40ce5ee1d5066159d",
-            "internal.auth.mode=enforce",
-            "worker.registration.token=test-fleet-token"
+            "worker.registration.token=test-fleet"
         })
-class RunScopeInterceptorTest extends BaseTest {
+class RunScopeInterceptorTest extends SharedContextTest {
 
     private static final String ORCHESTRATOR_SECRET = "test-orchestrator-secret";
     private static final String JOB_SECRET_X = "run-scope-test-job-secret-x";
@@ -80,12 +75,6 @@ class RunScopeInterceptorTest extends BaseTest {
 
     @Autowired
     private ExecutionLogRepository executionLogRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private PresignService presignService;
@@ -345,7 +334,7 @@ class RunScopeInterceptorTest extends BaseTest {
     @Test
     void unescapedExecutionScopedWorkerPath_withCredential_controlCase_passesToController() throws Exception {
         mockMvc.perform(get("/worker/runs/" + runA.getId() + "/node-executions/" + execX.getId())
-                        .header("Authorization", "Bearer test-fleet-token"))
+                        .header("Authorization", "Bearer test-fleet"))
                 .andExpect(status().isOk());
     }
 

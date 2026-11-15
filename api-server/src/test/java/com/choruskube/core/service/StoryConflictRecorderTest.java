@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.TaskDeliveryGraph;
@@ -29,8 +29,6 @@ import com.choruskube.core.repository.StoryConflictRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.io.ByteArrayInputStream;
@@ -53,7 +51,7 @@ import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 
 @Transactional
-class StoryConflictRecorderTest extends BaseTest {
+class StoryConflictRecorderTest extends SharedContextTest {
 
     @Autowired
     private StoryConflictRecorder recorder;
@@ -93,12 +91,6 @@ class StoryConflictRecorderTest extends BaseTest {
 
     @PersistenceContext
     private EntityManager entityManager;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

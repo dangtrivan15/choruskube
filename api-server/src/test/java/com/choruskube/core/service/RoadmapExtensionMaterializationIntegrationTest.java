@@ -3,8 +3,8 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.dto.CandidateDependency;
 import com.choruskube.core.dto.CandidateEpicProposal;
@@ -39,9 +39,7 @@ import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -53,7 +51,6 @@ import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * Approve-time materialization on the real, seeded v43 Final Approval gate — the whole chain
@@ -62,13 +59,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * refuses to run inside a transaction, so this class commits its fixtures instead of rolling them
  * back, and cleans them up itself via {@link CommittedFixtureCleaner}.
  */
-class RoadmapExtensionMaterializationIntegrationTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class RoadmapExtensionMaterializationIntegrationTest extends SharedContextTest {
 
     @Autowired
     private RunService runService;

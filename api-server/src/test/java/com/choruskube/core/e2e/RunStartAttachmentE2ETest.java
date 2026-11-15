@@ -6,7 +6,7 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.InternalAuthFilter;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
@@ -21,17 +21,14 @@ import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.service.PresignService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.TestPropertySource;
@@ -56,13 +53,12 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
  * refs were rewritten into the run-scoped prefix → confirm the agent can presign that
  * rewritten path → confirm a stale staging path is still forbidden.
  */
-@AutoConfigureMockMvc
 @TestPropertySource(
         properties = {
             "internal.auth.orchestrator-secret-hash=d6c5f99f36089f6757e4a7946de9dd0ef1d69983ab5920d40ce5ee1d5066159d",
-            "internal.auth.mode=enforce"
+            "worker.registration.token=test-fleet"
         })
-class RunStartAttachmentE2ETest extends BaseTest {
+class RunStartAttachmentE2ETest extends SharedContextTest {
 
     private static final String JOB_SECRET = "test-agent-job-secret";
 
@@ -86,12 +82,6 @@ class RunStartAttachmentE2ETest extends BaseTest {
 
     @Autowired
     private NodeExecutionRepository execRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private S3Client s3Client;

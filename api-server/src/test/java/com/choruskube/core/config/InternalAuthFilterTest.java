@@ -3,37 +3,32 @@ package com.choruskube.core.config;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Tests for InternalAuthFilter in enforce mode.
  */
-@AutoConfigureMockMvc
 @Transactional
 @TestPropertySource(
         properties = {
             // SHA-256 hash of "test-orchestrator-secret"
             "internal.auth.orchestrator-secret-hash=d6c5f99f36089f6757e4a7946de9dd0ef1d69983ab5920d40ce5ee1d5066159d",
-            "internal.auth.mode=enforce"
+            "worker.registration.token=test-fleet"
         })
-public class InternalAuthFilterTest extends BaseTest {
+public class InternalAuthFilterTest extends SharedContextTest {
 
     /** The token whose SHA-256 hash is the value in the @TestPropertySource above. */
     private static final String ORCHESTRATOR_SECRET = "test-orchestrator-secret";
@@ -58,12 +53,6 @@ public class InternalAuthFilterTest extends BaseTest {
 
     @Autowired
     private TemplateNodeRepository templateNodeRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private WorkflowRun run;
     private WorkflowRun foreignRun;

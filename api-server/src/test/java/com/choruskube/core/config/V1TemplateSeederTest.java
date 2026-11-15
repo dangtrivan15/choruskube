@@ -2,7 +2,7 @@ package com.choruskube.core.config;
 
 import static org.assertj.core.api.Assertions.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.TemplateNode;
 import com.choruskube.core.model.enums.ExecutorType;
@@ -12,23 +12,14 @@ import com.choruskube.core.repository.TemplateEdgeRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-class V1TemplateSeederTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class V1TemplateSeederTest extends SharedContextTest {
 
     @Autowired
     private BaseFeatureDevSeeder seeder;

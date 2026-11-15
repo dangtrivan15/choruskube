@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.NodeExecution;
@@ -15,7 +15,6 @@ import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import java.util.*;
@@ -25,9 +24,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -36,8 +33,7 @@ import org.springframework.test.web.servlet.MvcResult;
  * - signalHumanDecision does NOT persist the decision (orchestrator does it later)
  * - submitDecision (internal endpoint) persists the decision independently
  */
-@AutoConfigureMockMvc
-public class HumanGateDecisionFlowTest extends BaseTest {
+public class HumanGateDecisionFlowTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -53,12 +49,6 @@ public class HumanGateDecisionFlowTest extends BaseTest {
 
     @Autowired
     private GitRepoRepository gitRepoRepo;
-
-    @MockitoBean
-    private io.temporal.serviceclient.WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private WorkflowStub mockStub;
 

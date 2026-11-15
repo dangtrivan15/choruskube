@@ -3,7 +3,7 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.TaskDeliveryGraph;
 import com.choruskube.core.dto.EpicRequest;
@@ -42,7 +42,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
-class StorySpecServiceTest extends BaseTest {
+class StorySpecServiceTest extends SharedContextTest {
 
     @Autowired
     private StorySpecService service;

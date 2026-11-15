@@ -3,7 +3,7 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.CacheConfig;
 import com.choruskube.core.dto.LandingMetricsResponse;
 import com.choruskube.core.model.GitRepo;
@@ -13,8 +13,6 @@ import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
@@ -23,7 +21,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.CacheManager;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -39,13 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
  * five completed runs is exactly 90 seconds: {30, 60, 90, 120, 180}.
  */
 @Transactional
-class PublicMetricsServiceTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class PublicMetricsServiceTest extends SharedContextTest {
 
     @Autowired
     private PublicMetricsService service;

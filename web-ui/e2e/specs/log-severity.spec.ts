@@ -2,7 +2,6 @@
 // three levels onto one node, and seeding a synthetic run would add a phantom run to
 // the shared e2e database. failure-handling.spec.ts covers a real, unstubbed error row.
 import { test, expect } from "../fixtures";
-import { uniqueName } from "../helpers/api-client";
 import { toggleTheme } from "../helpers/colors";
 
 const FIXED_LOGS = [
@@ -14,17 +13,10 @@ const FIXED_LOGS = [
 test.describe("Log severity styling", () => {
   test("info/warn/error rows are pairwise distinct by glyph and color, and stay distinct and recolor after a theme toggle", async ({
     runMonitorPage,
-    api,
+    completedRun,
   }) => {
-    const template = await api.getTemplateByName("e2e-linear-pipeline");
-    const run = await api.startRun({
-      graphTemplateId: template.id,
-      name: uniqueName("e2e-log-severity"),
-    });
-    await api.waitForRunStatus(run.id, ["completed"], 120_000);
-
     await runMonitorPage.page.route(
-      `**/api/v1/runs/${run.id}/nodes/*/logs`,
+      `**/api/v1/runs/${completedRun.id}/nodes/*/logs`,
       async (route) => {
         await route.fulfill({
           status: 200,
@@ -34,7 +26,7 @@ test.describe("Log severity styling", () => {
       },
     );
 
-    await runMonitorPage.goto(run.id);
+    await runMonitorPage.goto(completedRun.id);
     await runMonitorPage.selectNode("step_1");
 
     await expect(runMonitorPage.logRow("info")).toHaveCount(1);

@@ -6,7 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.GitRepoRequest;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.ConflictException;
@@ -17,8 +17,6 @@ import com.choruskube.core.observability.UsageSink;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.TombstonedGitRepoRef;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.List;
@@ -29,13 +27,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
-class GitRepoServiceTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class GitRepoServiceTest extends SharedContextTest {
 
     @Autowired
     private GitRepoService service;

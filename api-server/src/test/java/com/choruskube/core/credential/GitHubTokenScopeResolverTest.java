@@ -2,7 +2,7 @@ package com.choruskube.core.credential;
 
 import static org.assertj.core.api.Assertions.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.exception.NotFoundException;
@@ -21,7 +21,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
-class GitHubTokenScopeResolverTest extends BaseTest {
+class GitHubTokenScopeResolverTest extends SharedContextTest {
 
     @Autowired
     private GitHubTokenScopeResolver resolver;

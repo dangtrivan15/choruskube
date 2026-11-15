@@ -2,26 +2,17 @@ package com.choruskube.core.config;
 
 import static org.assertj.core.api.Assertions.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
 import com.choruskube.core.repository.TemplateEdgeRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.service.GraphValidationService;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-class BaseRoadmapProvisionerSeederTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class BaseRoadmapProvisionerSeederTest extends SharedContextTest {
 
     @Autowired
     private BaseRoadmapProvisionerSeeder roadmapSeeder;

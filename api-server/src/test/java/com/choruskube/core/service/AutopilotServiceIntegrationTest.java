@@ -3,8 +3,8 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
-import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.dto.AutopilotStatusResponse;
 import com.choruskube.core.dto.AutopilotTaskRef;
@@ -24,10 +24,8 @@ import com.choruskube.core.repository.AutopilotRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -72,7 +70,7 @@ import software.amazon.awssdk.services.s3.S3Client;
  * for the whole suite and {@code RoadmapTimelineServiceTest} asserts on an empty roadmap. Ids are
  * recorded at creation, so a test that fails halfway still cleans up what it made.
  */
-public class AutopilotServiceIntegrationTest extends BaseTest {
+public class AutopilotServiceIntegrationTest extends SharedContextTest {
 
     @Autowired
     private AutopilotService autopilotService;
@@ -105,12 +103,6 @@ public class AutopilotServiceIntegrationTest extends BaseTest {
     private JdbcTemplate jdbc;
 
     private CommittedFixtureCleaner cleaner;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

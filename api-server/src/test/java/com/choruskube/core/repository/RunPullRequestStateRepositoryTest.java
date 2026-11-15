@@ -2,7 +2,7 @@ package com.choruskube.core.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.RunPullRequest;
@@ -22,7 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
  * InternalRunControllerPullRequestsAuthTest#setUp}.
  */
 @Transactional
-public class RunPullRequestStateRepositoryTest extends BaseTest {
+public class RunPullRequestStateRepositoryTest extends SharedContextTest {
 
     @Autowired
     private RunPullRequestRepository repo;

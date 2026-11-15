@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.reconciler.GitRepoReconciler;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.TombstonedGitRepoRef;
@@ -15,7 +15,6 @@ import java.util.UUID;
 import java.util.concurrent.Executor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -38,8 +37,7 @@ import org.springframework.test.web.servlet.MvcResult;
  * Repo soft-delete and reconciler hard-delete are tested here without K8s
  * interaction.
  */
-@AutoConfigureMockMvc
-public class GitRepoSoftDeleteE2ETest extends BaseTest {
+public class GitRepoSoftDeleteE2ETest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -58,12 +56,6 @@ public class GitRepoSoftDeleteE2ETest extends BaseTest {
     // CompletableFuture.runAsync(task, mockExecutor) never runs the task.
     @MockitoBean(name = "provisioningExecutor")
     private Executor provisioningExecutor;
-
-    @MockitoBean
-    private io.temporal.serviceclient.WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private io.temporal.client.WorkflowClient workflowClient;
 
     @Test
     void delete_hidesRowFromApi_retainsTombstoneInDb() throws Exception {

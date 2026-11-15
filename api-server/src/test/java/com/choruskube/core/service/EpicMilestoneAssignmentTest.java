@@ -6,7 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
 import com.choruskube.core.dto.EpicUpdateRequest;
@@ -23,8 +23,6 @@ import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,7 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
  * edit once started" guard {@code update()} enforces, and the response/event contract.
  */
 @Transactional
-public class EpicMilestoneAssignmentTest extends BaseTest {
+public class EpicMilestoneAssignmentTest extends SharedContextTest {
 
     @Autowired
     private EpicService epicService;
@@ -56,12 +54,6 @@ public class EpicMilestoneAssignmentTest extends BaseTest {
 
     @Autowired
     private TaskRepository taskRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

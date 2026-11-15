@@ -7,18 +7,15 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.credential.GitHubTokenScope;
 import com.choruskube.core.credential.GitHubTokenScopeResolver;
 import com.choruskube.core.exception.NotFoundException;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.net.URI;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -28,20 +25,13 @@ import org.springframework.test.web.servlet.MockMvc;
  * WorkerAuthFilter} for the bearer token, then the default single-Fleet authorizer behind the
  * controller's {@code ObjectProvider}.
  */
-@AutoConfigureMockMvc
 @TestPropertySource(properties = "worker.registration.token=test-fleet")
-class WorkerCredentialControllerTest extends BaseTest {
+class WorkerCredentialControllerTest extends SharedContextTest {
 
     private final UUID runId = UUID.randomUUID();
 
     @Autowired
     private MockMvc mockMvc;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private GitHubTokenScopeResolver scopeResolver;

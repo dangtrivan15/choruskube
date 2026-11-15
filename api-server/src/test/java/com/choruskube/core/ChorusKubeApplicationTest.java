@@ -8,7 +8,7 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
-class ChorusKubeApplicationTest extends BaseTest {
+class ChorusKubeApplicationTest extends SharedContextTest {
 
     @Autowired
     private DataSource dataSource;

@@ -3,7 +3,7 @@ package com.choruskube.core.e2e;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
@@ -29,7 +29,7 @@ import org.springframework.beans.factory.annotation.Autowired;
  * <p>Test 2 is expected to fail until the v16 Feature Dev seeder block is dropped — that
  * failure is the gate. If test 2 fails for any other template, STOP and investigate.
  */
-public class Phase3GatingTest extends BaseTest {
+public class Phase3GatingTest extends SharedContextTest {
 
     /** Non-terminal statuses: the complement of {completed, failed, cancelled}. */
     private static final Set<WorkflowRunStatus> NON_TERMINAL_STATUSES = EnumSet.of(

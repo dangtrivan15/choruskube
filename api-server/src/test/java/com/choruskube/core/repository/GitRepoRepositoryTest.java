@@ -2,11 +2,9 @@ package com.choruskube.core.repository;
 
 import static org.assertj.core.api.Assertions.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
@@ -14,7 +12,6 @@ import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -26,13 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
  * by rows seeded into the system org by earlier migrations (see V21/V27).
  */
 @Transactional
-class GitRepoRepositoryTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class GitRepoRepositoryTest extends SharedContextTest {
 
     @Autowired
     private GitRepoRepository repo;

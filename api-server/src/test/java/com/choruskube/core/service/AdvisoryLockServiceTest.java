@@ -2,7 +2,7 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
@@ -25,7 +25,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  *   <li>Two concurrent callers with the same org ID serialize — one waits until the other commits.
  * </ol>
  */
-class AdvisoryLockServiceTest extends BaseTest {
+class AdvisoryLockServiceTest extends SharedContextTest {
 
     @Autowired
     private AdvisoryLockService advisoryLockService;

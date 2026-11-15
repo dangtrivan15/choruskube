@@ -7,8 +7,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.model.GitRepo;
@@ -25,10 +25,8 @@ import com.choruskube.core.service.RunEventPublisher;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -38,7 +36,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -58,8 +55,7 @@ import software.amazon.awssdk.services.s3.S3Client;
  * that only manifest when the Epic/Story/Task/workflow_run rows round-trip through the database
  * together, including a Task restart producing two run-history rows.
  */
-@AutoConfigureMockMvc
-public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
+public class Phase2WorkHierarchyIntegrationTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -83,12 +79,6 @@ public class Phase2WorkHierarchyIntegrationTest extends BaseTest {
     private JdbcTemplate jdbc;
 
     private CommittedFixtureCleaner cleaner;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

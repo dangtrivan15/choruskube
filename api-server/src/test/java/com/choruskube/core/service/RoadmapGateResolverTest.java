@@ -2,30 +2,21 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.RoadmapMaterializeMode;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * Discovery, against the real seeded system templates: whether a run's workflow declares a
  * roadmap gate, and if so which node/label/mode.
  */
-class RoadmapGateResolverTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class RoadmapGateResolverTest extends SharedContextTest {
 
     @Autowired
     private RoadmapGateResolver resolver;

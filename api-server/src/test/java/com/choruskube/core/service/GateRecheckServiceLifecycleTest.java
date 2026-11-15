@@ -3,7 +3,7 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.DriftRecheckConfig.StampMode;
 import com.choruskube.core.model.GateStamp;
@@ -21,17 +21,14 @@ import com.choruskube.core.repository.NodeDefinitionRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
-class GateRecheckServiceLifecycleTest extends BaseTest {
+class GateRecheckServiceLifecycleTest extends SharedContextTest {
 
     @Autowired
     private GateStampRepository stampRepo;
@@ -53,12 +50,6 @@ class GateRecheckServiceLifecycleTest extends BaseTest {
 
     @Autowired
     private TemplateNodeRepository templateNodeRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private WorkflowRun run;
     private TemplateNode templateNode;
