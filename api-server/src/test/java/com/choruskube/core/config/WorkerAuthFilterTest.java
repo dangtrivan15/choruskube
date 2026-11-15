@@ -60,6 +60,35 @@ class WorkerAuthFilterTest {
     }
 
     @Test
+    void nonBearerScheme_isUnauthorized() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/worker/register");
+        request.addHeader("Authorization", "Basic dXNlcjpwYXNz");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(response.getContentAsString()).isEqualTo("{\"error\":\"Missing fleet token\"}");
+        verifyNoInteractions(chain);
+    }
+
+    @Test
+    void bearerPrefixWithNoToken_isUnauthorized() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/worker/register");
+        request.addHeader("Authorization", "Bearer ");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        FilterChain chain = mock(FilterChain.class);
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(response.getContentAsString()).isEqualTo("{\"error\":\"Missing fleet token\"}");
+        assertThat(request.getAttribute(WorkerAuthFilter.FLEET_TOKEN_ATTRIBUTE)).isNull();
+        verifyNoInteractions(chain);
+    }
+
+    @Test
     void nonWorkerPath_passesThroughWithoutAToken() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/epics");
         MockHttpServletResponse response = new MockHttpServletResponse();
