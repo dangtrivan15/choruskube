@@ -3,6 +3,7 @@ package com.choruskube.core.controller;
 import com.choruskube.core.dto.RepoGroupMembersRequest;
 import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.dto.RepoGroupResponse;
+import com.choruskube.core.dto.RepoGroupTestScopeRequest;
 import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.RepoGroup;
@@ -12,7 +13,11 @@ import com.choruskube.core.scope.ScopeProvider;
 import com.choruskube.core.service.AuthorizationService;
 import com.choruskube.core.service.RepoGroupService;
 import jakarta.validation.Valid;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -59,7 +64,7 @@ public class RepoGroupController {
     @Transactional(readOnly = true)
     public List<RepoGroupResponse> list() {
         return groups.findAll(scopeProvider.scope(RepoGroup.class)).stream()
-                .map(RepoGroupController::toResponse)
+                .map(this::toResponse)
                 .toList();
     }
 
@@ -96,6 +101,19 @@ public class RepoGroupController {
         return toResponse(findInActiveOrg(id));
     }
 
+    @PreAuthorize("@orgSecurity.canOperate()")
+    @PutMapping("/{id}/test-scope")
+    public RepoGroupResponse replaceTestScope(
+            @PathVariable UUID id, @Valid @RequestBody RepoGroupTestScopeRequest body) {
+        findInActiveOrg(id);
+        Map<UUID, Set<UUID>> dependsOn = new LinkedHashMap<>();
+        for (RepoGroupTestScopeRequest.RepoDependency d : body.dependencies()) {
+            dependsOn.computeIfAbsent(d.repoId(), k -> new LinkedHashSet<>()).addAll(d.dependsOnRepoIds());
+        }
+        service.replaceTestScope(id, body.affectedOnly(), dependsOn);
+        return toResponse(findInActiveOrg(id));
+    }
+
     @PreAuthorize("@orgSecurity.canAdmin()")
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
@@ -118,10 +136,13 @@ public class RepoGroupController {
         return group;
     }
 
-    private static RepoGroupResponse toResponse(RepoGroup g) {
+    private RepoGroupResponse toResponse(RepoGroup g) {
         List<RepoGroupResponse.MemberView> members = g.getMembers().stream()
                 .map(m -> new RepoGroupResponse.MemberView(
                         m.getGitRepo().getId(), m.getGitRepo().getName(), m.getPosition()))
+                .toList();
+        List<RepoGroupResponse.DependencyView> dependencies = service.dependenciesOf(g.getId()).entrySet().stream()
+                .map(e -> new RepoGroupResponse.DependencyView(e.getKey(), e.getValue()))
                 .toList();
         return new RepoGroupResponse(
                 g.getId(),
@@ -135,6 +156,8 @@ public class RepoGroupController {
                 g.getRuntimeRequirements(),
                 members,
                 g.getCreatedAt(),
-                g.getUpdatedAt());
+                g.getUpdatedAt(),
+                g.isTestAffectedOnly(),
+                dependencies);
     }
 }

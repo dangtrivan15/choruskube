@@ -434,6 +434,105 @@ class RepoGroupControllerTest extends SharedContextTest {
                 .andExpect(status().isBadRequest());
     }
 
+    private RepoGroup groupOf(GitRepo... repos) {
+        RepoGroup group = repoGroupService.create(new RepoGroupRequest(
+                "g-scope-" + UUID.randomUUID().toString().substring(0, 8),
+                null,
+                null,
+                java.util.Arrays.stream(repos).map(GitRepo::getId).toList(),
+                null,
+                null,
+                null,
+                null));
+        entityManager.flush();
+        return group;
+    }
+
+    private String scopeBody(boolean affectedOnly, String... edges) {
+        return "{\"affectedOnly\":" + affectedOnly + ",\"dependencies\":[" + String.join(",", edges) + "]}";
+    }
+
+    private String edge(UUID repo, UUID... dependsOn) {
+        String ids = java.util.Arrays.stream(dependsOn)
+                .map(id -> "\"" + id + "\"")
+                .collect(java.util.stream.Collectors.joining(","));
+        return "{\"repoId\":\"" + repo + "\",\"dependsOnRepoIds\":[" + ids + "]}";
+    }
+
+    @Test
+    void putTestScope_returnsSwitchAndEdges() throws Exception {
+        GitRepo a = saveRepo("ts-a");
+        GitRepo b = saveRepo("ts-b");
+        RepoGroup group = groupOf(a, b);
+
+        mockMvc.perform(put("/api/v1/repo-groups/{id}/test-scope", group.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(scopeBody(true, edge(b.getId(), a.getId()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.testAffectedOnly").value(true))
+                .andExpect(jsonPath("$.dependencies.length()").value(1))
+                .andExpect(jsonPath("$.dependencies[0].repoId").value(b.getId().toString()))
+                .andExpect(jsonPath("$.dependencies[0].dependsOnRepoIds[0]")
+                        .value(a.getId().toString()));
+    }
+
+    @Test
+    void putTestScope_cycle_400() throws Exception {
+        GitRepo a = saveRepo("cy-a");
+        GitRepo b = saveRepo("cy-b");
+        RepoGroup group = groupOf(a, b);
+
+        mockMvc.perform(put("/api/v1/repo-groups/{id}/test-scope", group.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(scopeBody(true, edge(a.getId(), b.getId()), edge(b.getId(), a.getId()))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void putTestScope_nonMember_400() throws Exception {
+        GitRepo a = saveRepo("nm-a");
+        GitRepo outsider = saveRepo("nm-out");
+        RepoGroup group = groupOf(a);
+
+        mockMvc.perform(put("/api/v1/repo-groups/{id}/test-scope", group.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(scopeBody(true, edge(a.getId(), outsider.getId()))))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void putTestScope_duplicates_200_singleEdge() throws Exception {
+        GitRepo a = saveRepo("dp-a");
+        GitRepo b = saveRepo("dp-b");
+        RepoGroup group = groupOf(a, b);
+
+        mockMvc.perform(put("/api/v1/repo-groups/{id}/test-scope", group.getId())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(scopeBody(true, edge(b.getId(), a.getId(), a.getId()), edge(b.getId(), a.getId()))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dependencies.length()").value(1))
+                .andExpect(
+                        jsonPath("$.dependencies[0].dependsOnRepoIds.length()").value(1));
+    }
+
+    @Test
+    void getRepoGroup_defaultsOffAndEmpty() throws Exception {
+        RepoGroup group = groupOf(saveRepo("df-a"));
+
+        mockMvc.perform(get("/api/v1/repo-groups/{id}", group.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.testAffectedOnly").value(false))
+                .andExpect(jsonPath("$.dependencies.length()").value(0));
+    }
+
+    @Test
+    void putTestScope_unknownGroup_404() throws Exception {
+        mockMvc.perform(put("/api/v1/repo-groups/{id}/test-scope", UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(scopeBody(false)))
+                .andExpect(status().isNotFound());
+    }
+
     private GitRepo saveRepo(String shortName) {
         String unique = shortName + "-" + UUID.randomUUID().toString().substring(0, 8);
         GitRepo r = new GitRepo();
