@@ -33,6 +33,8 @@ waiting build finished sooner than when both ran at once, because they no longer
 at build start would make that inner build wait on its own parent forever. The inner build runs no
 tests, so it never asks for the lock.
 
+**The agent system prompt also asks for one memory-heavy job at a time.** Its Memory section asks the agent not to overlap builds, test suites or compilers, including ones it moved to the background or handed to subagents. It also explains the lock's waiting message, so the agent doesn't read a queued build as hung. The prompt covers jobs the lock can't see, like `go build` or vitest. The lock still holds when the agent ignores the prompt.
+
 **`api-server/gradle.properties` carries the root's `org.gradle.jvmargs`.** A build started in
 `api-server/` reuses the daemon a root build left. Keep the two lines identical; a mismatch only
 costs a second daemon.
@@ -45,8 +47,13 @@ costs a second daemon.
   from `e2e-up.sh`.
 - **A smaller test JVM heap so two fit.** Two daemons and two test JVMs still sit near the limit,
   and a smaller heap risks the suite itself running out of memory.
-- **Telling the agent not to overlap builds.** Agents background long commands on their own; a
-  prompt rule is not enforced.
+- **A prompt rule alone.** Claude Code moves any command past its 2-minute timeout to the
+  background, and subagents run in the background by default, so overlap happens without the
+  agent choosing it. A prompt rule is not enforced.
+- **Turning backgrounding off (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`).** A command that hits
+  its timeout is then killed, so the timeout would have to cover a full `-Pe2e` run. The
+  heartbeat only fires while Claude's output advances, so a long silent command would fail the
+  node. It also makes subagents run one after another.
 - **A user-level `gradle.properties` in the image to unify the daemon arguments.** It would
   silently override the repository's own settings. The per-directory file keeps them where the
   build is.
