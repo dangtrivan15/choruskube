@@ -94,4 +94,8 @@ RUN cd /warmup/web-ui && npm ci --no-audit --no-fund \
     && rm -rf /warmup \
     && chown -R 1000:1000 /home/agent/.npm
 
+# Lets one Gradle build at a time run tests in this container, so builds an agent runs in parallel
+# queue for the test JVM instead of each forking one inside the same memory limit.
+COPY --chown=1000:1000 one-test-run-at-a-time.gradle /home/agent/.gradle/init.d/
+
 USER 1000
