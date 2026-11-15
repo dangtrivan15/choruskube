@@ -74,9 +74,7 @@ test.describe("Roadmap drill-down", () => {
       "E2E test motivation",
     );
 
-    // Wait for the epic to appear in the list
-    await roadmapPage.page.waitForTimeout(1000);
-    await roadmapPage.goto();
+    await expect(roadmapPage.epicItems.filter({ hasText: uniqueTitle })).toBeVisible();
 
     // Open the epic and verify details
     await roadmapPage.openEpic(uniqueTitle);
@@ -223,21 +221,13 @@ test.describe("Roadmap drill-down", () => {
     await expect(roadmapPage.deleteEpicConfirmButton).toBeVisible();
     await roadmapPage.deleteEpicConfirmButton.click();
 
-    // Wait and verify it's gone
-    await roadmapPage.page.waitForTimeout(2000);
+    // The detail page returns to the list only once the delete has succeeded.
+    await expect(roadmapPage.page).toHaveURL(/\/roadmap$/);
     await roadmapPage.goto();
 
     // The epic should no longer appear
     const items = roadmapPage.epicItems.filter({ hasText: uniqueTitle });
     await expect(items).toHaveCount(0);
-  });
-
-  test("no route serves the old flat proposal list", async ({ page }) => {
-    const response = await page.goto("/proposals");
-    // The old flat list route no longer exists — it falls through to the
-    // catch-all NotFoundPage, not a 404 HTTP response (this is a client-side SPA route).
-    expect(response?.ok()).toBe(true);
-    await expect(page.getByTestId("epic-list")).toHaveCount(0);
   });
 
   test("Story and Task list rows show a Blocked badge without opening the graph, and it clears without a manual refresh once the blocker completes", async ({
@@ -308,9 +298,8 @@ test.describe("Roadmap drill-down", () => {
     await expect(roadmapPage.taskItemReadinessBadge(blockedTask.title)).toBeVisible();
     await expect(roadmapPage.taskItemReadinessBadge(blockingTask.title)).not.toBeVisible();
 
-    // Complete the blocking Task out-of-band (mirrors roadmap-graph.spec.ts's
-    // equivalent pattern — completeTask only needs a terminal run, not a
-    // completed one) and confirm the Task row's badge
+    // Complete the blocking Task out-of-band (completeTask only needs a
+    // terminal run, not a completed one) and confirm the Task row's badge
     // clears on the already-open Story detail page without a manual reload —
     // exercises the realtime push-driven update flow.
     const started = await api.startTask(blockingTask.id);

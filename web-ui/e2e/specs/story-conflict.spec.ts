@@ -6,7 +6,7 @@ import type { RunMonitorPage } from "../pages/run-monitor.page";
 /**
  * The conflict loop. A Task titled `[e2e-analyze:story_conflict]` makes mock-agent.sh's Analyze
  * find the Story spec wrong, which parks the Task run at Await Story Revision. The server's
- * reconciler (every 10s in e2e) opens a revision run on the Story; once its spec is approved as
+ * reconciler (every second in e2e) opens a revision run on the Story; once its spec is approved as
  * v2, the reconciler resumes the Task run and Analyze plans again — `planned`, since the mock
  * never raises a conflict past iteration 1. A `[e2e-analyze:needs_spec]` Task instead parks at
  * Approve Task Spec, a gate that re-checks the Story spec version on approval.
@@ -95,64 +95,6 @@ async function expectResumedOnV2(
 }
 
 test.describe("Story conflict", () => {
-  test("a conflict opens a Story revision, and approving it resumes the Task on spec v2", async ({
-    page,
-    api,
-    cloneableProject,
-    roadmapPage,
-    runMonitorPage,
-  }) => {
-    test.setTimeout(600_000);
-
-    const { storyId, storyPath, taskTitle, runId } = await startTaskOnDesignedStory(
-      api,
-      cloneableProject.id,
-      "story_conflict",
-    );
-
-    try {
-      await test.step("the conflict parks the Task run at Await Story Revision", async () => {
-        await waitForParkedOnConflict(api, runId);
-
-        await runMonitorPage.goto(runId);
-        await runMonitorPage.selectNode("await_story_revision");
-        await expect(page.getByTestId("await-story-revision-notice")).toBeVisible();
-      });
-
-      let revisionRunId = "";
-      await test.step("a revision run opens on the Story, answering the conflict", async () => {
-        revisionRunId = await waitForRevisionRun(api, storyId, runId);
-
-        await page.goto(storyPath);
-        await expect(roadmapPage.storySpecRevisionBanner).toBeVisible();
-        await expect(roadmapPage.storySpecRevisionBanner).toContainText(taskTitle);
-        await expect(
-          roadmapPage.storySpecRevisionBanner.getByRole("link", { name: "revision run" }),
-        ).toHaveAttribute("href", `/runs/${revisionRunId}`);
-      });
-
-      await test.step("approving the revision records spec v2", async () => {
-        await api.approveDesignRun(revisionRunId);
-        const spec = await api.waitForStorySpecVersion(storyId, 2, 90_000);
-        // The revision edited the current spec the server staged for it, not a fresh draft.
-        expect(spec.content).toContain("### v2 — ");
-        expect(spec.content).not.toContain("No revisions yet.");
-
-        await page.goto(storyPath);
-        await expect(roadmapPage.storySpecVersionSelect).toContainText("v2");
-        await expect(roadmapPage.storySpecRevisionBanner).toHaveCount(0);
-      });
-
-      await test.step("the Task run resumes and Analyze plans again", async () => {
-        await expectResumedOnV2(api, page, runMonitorPage, runId);
-      });
-    } finally {
-      // Left running, the resumed run would sit at Final Approval for the rest of the suite.
-      await api.cancelRun(runId).catch(() => {});
-      await cancelOpenDesignRun(api, storyId);
-    }
-  });
-
   test("a revision that is cancelled leaves its conflict on the Story page, and a manual Revise answers it", async ({
     page,
     api,
@@ -171,8 +113,13 @@ test.describe("Story conflict", () => {
 
     try {
       let cancelledRunId = "";
-      await test.step("the automatic revision run is cancelled", async () => {
+      await test.step("the conflict parks the Task run, and its automatic revision is cancelled", async () => {
         await waitForParkedOnConflict(api, runId);
+
+        await runMonitorPage.goto(runId);
+        await runMonitorPage.selectNode("await_story_revision");
+        await expect(page.getByTestId("await-story-revision-notice")).toBeVisible();
+
         cancelledRunId = await waitForRevisionRun(api, storyId, runId);
         await api.cancelRun(cancelledRunId);
         await api.waitForRunStatus(cancelledRunId, ["cancelled"], 30_000);
@@ -204,9 +151,17 @@ test.describe("Story conflict", () => {
         await expect(roadmapPage.storySpecStrandedConflicts).toHaveCount(0);
       });
 
-      await test.step("approving the revision resumes the Task run on spec v2", async () => {
+      await test.step("approving the revision records spec v2 and resumes the Task run on it", async () => {
         await api.approveDesignRun(revisionRunId);
-        await api.waitForStorySpecVersion(storyId, 2, 90_000);
+        const spec = await api.waitForStorySpecVersion(storyId, 2, 90_000);
+        // The revision edited the current spec the server staged for it, not a fresh draft.
+        expect(spec.content).toContain("### v2 — ");
+        expect(spec.content).not.toContain("No revisions yet.");
+
+        await page.goto(storyPath);
+        await expect(roadmapPage.storySpecVersionSelect).toContainText("v2");
+        await expect(roadmapPage.storySpecRevisionBanner).toHaveCount(0);
+
         await expectResumedOnV2(api, page, runMonitorPage, runId);
       });
     } finally {
@@ -230,6 +185,11 @@ test.describe("Story conflict", () => {
     try {
       await test.step("the Task run waits at Approve Task Spec, planned on spec v1", async () => {
         await api.waitForNodeStatus(runId, "approve_task_spec", ["awaiting_human"], 240_000);
+
+        const run = await api.getRun(runId);
+        const decisionOf = (label: string) => run.nodeExecutions.find((ne) => ne.label === label)?.decision;
+        expect(decisionOf("analyze")).toBe("needs_spec");
+        expect(decisionOf("task_spec_review")).toBe("approved");
       });
 
       await test.step("a manual Revise moves the Story spec to v2", async () => {

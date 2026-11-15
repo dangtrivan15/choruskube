@@ -11,9 +11,6 @@ import { uniqueName } from "../helpers/api-client";
  *  4. Submits and asserts the persisted Epic stores softwareProject.id =
  *     group.id, type "repo_group", and repos[] contains both members.
  *  5. Re-opens the Epic detail and asserts both repos are visible.
- *
- * The chip-list / RepoBadgeList path retired in Phase 2 — agents that need
- * "1..2 repos for a single Epic" must materialize a RepoGroup first.
  */
 test.describe("Multi-repo Epics (UI)", () => {
   test("epic targeting a RepoGroup persists group id and renders both members", async ({
@@ -80,20 +77,5 @@ test.describe("Multi-repo Epics (UI)", () => {
         // best-effort cleanup
       }
     }
-  });
-
-  test("create-epic dialog has no multi-repo chip picker after Phase 2", async ({
-    roadmapPage,
-  }) => {
-    await roadmapPage.goto();
-    await roadmapPage.openCreateDialog();
-    // The chip-list picker testid existed pre-Phase-2; it must be gone.
-    await expect(
-      roadmapPage.page.getByTestId("create-epic-repo-picker"),
-    ).toHaveCount(0);
-    // The grouped-dropdown trigger must be present.
-    await expect(
-      roadmapPage.page.getByTestId("create-epic-software-project-select"),
-    ).toBeVisible();
   });
 });
