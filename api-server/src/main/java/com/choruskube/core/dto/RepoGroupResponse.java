@@ -17,7 +17,11 @@ public record RepoGroupResponse(
         RuntimeRequirements runtimeRequirements,
         List<MemberView> members,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        boolean testAffectedOnly,
+        List<DependencyView> dependencies) {
 
     public record MemberView(UUID gitRepoId, String name, int position) {}
+
+    public record DependencyView(UUID repoId, List<UUID> dependsOnRepoIds) {}
 }

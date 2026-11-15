@@ -16,6 +16,7 @@ import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Optional;
@@ -175,6 +176,39 @@ class InternalRunServiceGraphRuntimeTest {
                 null,
                 mock(StoryConflictRecorder.class),
                 mock(RunStorageScope.class));
+    }
+
+    @Test
+    void runtimeSnapshot_roundTripsDependsOnAndSwitch() throws Exception {
+        UUID runId = UUID.randomUUID();
+        WorkflowRun run = new WorkflowRun();
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(snapshotBuilder.buildSnapshotForRun(run))
+                .thenReturn("{\"nodes\":[],\"edges\":[],\"test_affected_only\":true,\"repos\":["
+                        + "{\"id\":\"a\",\"url\":\"u1\",\"name\":\"x\",\"depends_on\":[\"y\",\"z\"]},"
+                        + "{\"id\":\"b\",\"url\":\"u2\",\"name\":\"y\"}]}");
+
+        GraphRuntimeSnapshotResponse response = service.getGraphRuntimeSnapshot(runId);
+
+        assertThat(response.testAffectedOnly()).isTrue();
+        assertThat(response.repos().get(0).dependsOn()).containsExactly("y", "z");
+        assertThat(response.repos().get(1).dependsOn()).isEmpty();
+        JsonNode json = objectMapper.valueToTree(response);
+        assertThat(json.get("testAffectedOnly").asBoolean()).isTrue();
+        assertThat(json.get("repos").get(0).get("dependsOn")).hasSize(2);
+    }
+
+    @Test
+    void runtimeSnapshot_legacySnapshotWithoutFields_defaults() throws Exception {
+        UUID runId = UUID.randomUUID();
+        WorkflowRun run = new WorkflowRun();
+        when(runRepo.findById(runId)).thenReturn(Optional.of(run));
+        when(snapshotBuilder.buildSnapshotForRun(run)).thenReturn(SNAPSHOT_WITH_REPOS_JSON);
+
+        GraphRuntimeSnapshotResponse response = service.getGraphRuntimeSnapshot(runId);
+
+        assertThat(response.testAffectedOnly()).isFalse();
+        assertThat(response.repos()).allSatisfy(r -> assertThat(r.dependsOn()).isEmpty());
     }
 
     @Test

@@ -809,6 +809,27 @@ export class TestApiClient {
     });
   }
 
+  /**
+   * Raw PUT of a group's test scope. Returns the status instead of throwing so a
+   * spec can assert the 400 the server answers for a cycle or a non-member edge.
+   */
+  async putRepoGroupTestScope(
+    id: string,
+    body: {
+      affectedOnly: boolean;
+      dependencies: { repoId: string; dependsOnRepoIds: string[] }[];
+    },
+  ): Promise<{ status: number; body: string }> {
+    const headers: Record<string, string> = await this.authHeaders();
+    headers["Content-Type"] = "application/json";
+    const res = await fetch(`${this.baseUrl}/api/v1/repo-groups/${id}/test-scope`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: await res.text() };
+  }
+
   async deleteRepoGroup(id: string): Promise<void> {
     return this.delete(`/api/v1/repo-groups/${id}`);
   }

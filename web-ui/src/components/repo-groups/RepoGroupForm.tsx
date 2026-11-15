@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,6 +17,10 @@ interface RepoGroupFormProps {
   submitting?: boolean;
   /** Inline error message (e.g. from a failed mutation). */
   error?: string | null;
+  /** Called with the current member selection (click order) whenever it changes. */
+  onSelectionChange?: (memberRepoIds: string[]) => void;
+  /** Extra sections rendered after the members list, inside the scrolling body. */
+  children?: ReactNode;
 }
 
 /**
@@ -38,6 +42,8 @@ export default function RepoGroupForm({
   submitLabel = "Save",
   submitting = false,
   error = null,
+  onSelectionChange,
+  children,
 }: RepoGroupFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [agentImage, setAgentImage] = useState(initial?.agentImage ?? "");
@@ -52,9 +58,9 @@ export default function RepoGroupForm({
   const canSave = trimmedName.length > 0 && selected.length > 0;
 
   function toggleMember(id: string) {
-    setSelected((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
+    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
+    setSelected(next);
+    onSelectionChange?.(next);
   }
 
   function handleSubmit() {
@@ -204,6 +210,8 @@ export default function RepoGroupForm({
             </div>
           )}
         </div>
+
+        {children}
       </div>
 
       <div className="flex items-center justify-end gap-2">

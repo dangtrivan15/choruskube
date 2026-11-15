@@ -49,6 +49,8 @@ const sampleGroup: RepoGroup = {
   description: null,
   runtimeRequirements: { agentImage: null, enableDocker: false },
   members: [{ gitRepoId: "r1", name: "repo-one", position: 0 }],
+  testAffectedOnly: false,
+  dependencies: [],
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };

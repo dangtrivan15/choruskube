@@ -927,6 +927,65 @@ func TestExecuteAINodeFromSnapshot_ScriptNode_ConfigJson(t *testing.T) {
 	}
 }
 
+// configJSONFor runs one node with repos and returns the config.json it would launch with.
+func configJSONFor(t *testing.T, repos Repos) map[string]interface{} {
+	t.Helper()
+	var receivedConfigJSON map[string]interface{}
+	acts := newTestActivities(t, &receivedConfigJSON)
+	_, err := acts.ExecuteAINodeFromSnapshot(context.Background(), ExecuteAINodeFromSnapshotParams{
+		Identity: Identity{
+			NodeExecutionID: uuid.New(),
+			RunID:           stubbedRun(t),
+			TemplateNodeID:  uuid.New(),
+		},
+		Node:  Node{ExecutorType: "script", Command: "run-all-tests"},
+		Repos: repos,
+	})
+	requirePending(t, err)
+	return receivedConfigJSON
+}
+
+func TestBuildConfigJSON_TestAffectedOnly(t *testing.T) {
+	config := configJSONFor(t, Repos{
+		List:             []map[string]any{{"name": "x", "local_path": "/workspace/repo/x"}},
+		TestAffectedOnly: true,
+	})
+	assert.Equal(t, true, config["test_affected_only"])
+}
+
+// TestBuildConfigJSON_NoFlagWhenFalse decodes the parameters from an orchestrator payload that
+// predates the field, which must leave run-all-tests running every repo.
+func TestBuildConfigJSON_NoFlagWhenFalse(t *testing.T) {
+	var repos Repos
+	if err := json.Unmarshal([]byte(`{"List": [{"name": "x", "local_path": "/workspace/repo/x"}]}`), &repos); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	config := configJSONFor(t, repos)
+	assert.Contains(t, config, "repos")
+	assert.NotContains(t, config, "test_affected_only")
+}
+
+// TestBuildConfigJSON_NoFlagWithoutRepos: a single-repo run has no repos[] to scope.
+func TestBuildConfigJSON_NoFlagWithoutRepos(t *testing.T) {
+	config := configJSONFor(t, Repos{RepoURL: "https://example.invalid/acme/x.git", TestAffectedOnly: true})
+	assert.NotContains(t, config, "test_affected_only")
+}
+
+func TestBuildConfigJSON_DependsOnPassesThrough(t *testing.T) {
+	config := configJSONFor(t, Repos{
+		List: []map[string]any{
+			{"name": "x", "local_path": "/workspace/repo/x", "depends_on": []string{"y"}},
+			{"name": "y", "local_path": "/workspace/repo/y"},
+		},
+	})
+	repos, ok := config["repos"].([]interface{})
+	if !ok || len(repos) != 2 {
+		t.Fatalf("repos = %#v, want two entries", config["repos"])
+	}
+	assert.Equal(t, []interface{}{"y"}, repos[0].(map[string]interface{})["depends_on"])
+	assert.NotContains(t, repos[1].(map[string]interface{}), "depends_on")
+}
+
 func TestExecuteAINodeFromSnapshot_NoSystemPromptInConfigJson(t *testing.T) {
 	runID := stubbedRun(t)
 
@@ -2101,9 +2160,10 @@ func TestExecuteAINodeFromSnapshotParams_JSONRoundTrip(t *testing.T) {
 			RequiredInputArtifacts: []string{"gate/file.png"},
 		},
 		Repos: Repos{
-			RepoURL:       "https://github.com/example/repo",
-			WorkingBranch: "choruskube-run-abc123",
-			List:          []map[string]any{{"name": "repo-a", "url": "https://github.com/example/repo-a"}},
+			RepoURL:          "https://github.com/example/repo",
+			WorkingBranch:    "choruskube-run-abc123",
+			List:             []map[string]any{{"name": "repo-a", "url": "https://github.com/example/repo-a"}},
+			TestAffectedOnly: true,
 		},
 		TaskContext: TaskContext{
 			TaskID:     "task-1",
@@ -2151,7 +2211,8 @@ func TestExecuteAINodeFromSnapshotParams_JSONRoundTrip(t *testing.T) {
 		"Repos": {
 			"RepoURL": "https://github.com/example/repo",
 			"WorkingBranch": "choruskube-run-abc123",
-			"List": [{"name": "repo-a", "url": "https://github.com/example/repo-a"}]
+			"List": [{"name": "repo-a", "url": "https://github.com/example/repo-a"}],
+			"TestAffectedOnly": true
 		},
 		"TaskContext": {
 			"TaskID": "task-1",

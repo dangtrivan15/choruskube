@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, apiErrorMessage } from "@/lib/api";
 import { showMutationToast } from "@/lib/toast-messages";
 import { useActivityFeed } from "./useActivityFeed";
-import type { RepoGroup, RepoGroupRequest } from "@/lib/types";
+import type { RepoGroup, RepoGroupRequest, RepoGroupTestScopeRequest } from "@/lib/types";
 
 /** Lists every RepoGroup in the active org. Backed by GET /api/v1/repo-groups. */
 export function useRepoGroups() {
@@ -74,6 +74,24 @@ export function useReplaceRepoGroupMembers() {
     },
     onError: () => {
       addEntry(showMutationToast("Failed to update repo group members", "error"));
+    },
+  });
+}
+
+/** Replaces a RepoGroup's affected-only switch and dependency edges. Mirrors PUT /repo-groups/{id}/test-scope. */
+export function useUpdateRepoGroupTestScope() {
+  const queryClient = useQueryClient();
+  const { addEntry } = useActivityFeed();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: RepoGroupTestScopeRequest }) =>
+      api.put<RepoGroup>(`/repo-groups/${id}/test-scope`, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["repo-groups"] });
+      queryClient.invalidateQueries({ queryKey: ["software-projects"] });
+      addEntry(showMutationToast("Repo group test scope updated", "success"));
+    },
+    onError: () => {
+      addEntry(showMutationToast("Failed to update repo group test scope", "error"));
     },
   });
 }

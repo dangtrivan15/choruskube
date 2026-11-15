@@ -524,6 +524,309 @@ grep -qF "### Failing tests" "$REPORT14" \
     && ok "malformed XML: the note surfaces under the index's Failing-tests section" \
     || fail "malformed XML: the note surfaces in the index"
 
+# --- Affected-only scope: config.json test_affected_only ---
+# Each scenario clones one bare origin per repo into <sandbox>/workspace/repo/<name>, the
+# layout entrypoint.sh's clone leaves, so run-all-tests' git checks see a real origin/HEAD.
+# Every test_command touches <sandbox>/ran/<name>: the files there are the repos that ran.
+SKIP_LINE='**Status:** SKIPPED (unaffected — no change in this repo or any repo it depends on)'
+
+# The developer's own git config must not reach the fixtures: a global signing key or hook
+# would fail or slow every commit.
+fixture_git() {
+    git -c user.name=fixture -c user.email=fixture@example.invalid \
+        -c commit.gpgsign=false -c core.hooksPath=/dev/null "$@"
+}
+
+# $1 sandbox, $2 repo name: a bare origin with `main` pushed and origin/HEAD set, cloned to
+# $1/workspace/repo/$2, with `ignored.txt` gitignored.
+make_repo() {
+    local sandbox="$1" name="$2"
+    local origin="$sandbox/origins/$name.git" dir="$sandbox/workspace/repo/$name"
+    mkdir -p "$sandbox/origins" "$sandbox/workspace/repo" "$sandbox/workspace/out"
+    fixture_git init -q --bare "$origin"
+    fixture_git clone -q "$origin" "$dir" 2> /dev/null
+    fixture_git -C "$dir" symbolic-ref HEAD refs/heads/main
+    printf 'ignored.txt\n' > "$dir/.gitignore"
+    echo base > "$dir/README"
+    fixture_git -C "$dir" add -A
+    fixture_git -C "$dir" commit -q -m base
+    fixture_git -C "$dir" push -q origin main 2> /dev/null
+    fixture_git -C "$dir" remote set-head origin main > /dev/null
+}
+
+# An unpushed commit on top of origin/main in repo $2.
+commit_in() {
+    local dir="$1/workspace/repo/$2"
+    echo change >> "$dir/README"
+    fixture_git -C "$dir" commit -q -am change
+}
+
+# $1 sandbox, $2 test_affected_only ("true", or "" to leave the key out), then one
+# "name:dep,dep" per repo in repos[] order; a "name!" gives that repo no test_command.
+write_config() {
+    local sandbox="$1" flag="$2" repos="[]" spec name deps cmd
+    shift 2
+    for spec in "$@"; do
+        name="${spec%%:*}"
+        deps="${spec#*:}"
+        cmd=""
+        case "$name" in
+            *!) name="${name%!}" ;;
+            *) cmd="mkdir -p '$sandbox/ran' && touch '$sandbox/ran/$name'" ;;
+        esac
+        repos=$(jq -c --arg n "$name" --arg p "$sandbox/workspace/repo/$name" --arg c "$cmd" --arg d "$deps" '
+            . + [ {name: $n, local_path: $p}
+                  + (if $c == "" then {} else {test_command: $c} end)
+                  + (if $d == "" then {} else {depends_on: ($d | split(","))} end) ]' <<< "$repos")
+    done
+    jq -n --argjson repos "$repos" --arg flag "$flag" \
+        '{repos: $repos} + (if $flag == "" then {} else {test_affected_only: ($flag == "true")} end)' \
+        > "$sandbox/workspace/config.json"
+}
+
+# Runs the sandbox's copy and sets RC. A watchdog kills it after 60s, so a scope computation
+# that never terminates fails its case instead of hanging the whole suite.
+run_scoped() {
+    local sandbox="$1" copy pid watchdog
+    copy=$(make_copy "$sandbox")
+    set +e
+    bash "$copy" > "$sandbox/stdout.txt" 2>&1 &
+    pid=$!
+    # Kills its own sleep when stopped, or every case would leave one behind for 60s.
+    ( trap 'kill "$s" 2> /dev/null; exit 0' TERM; sleep 60 & s=$!; wait "$s"; kill -9 "$pid" ) \
+        > /dev/null 2>&1 &
+    watchdog=$!
+    wait "$pid"
+    RC=$?
+    kill "$watchdog" 2> /dev/null
+    wait "$watchdog" 2> /dev/null
+    set -e
+}
+
+# The repos whose test_command ran, sorted and space-separated.
+ran_set() {
+    [ -d "$1/ran" ] || return 0
+    ls "$1/ran" | sort | tr '\n' ' ' | sed 's/ $//'
+}
+
+# The "## $2" section of report $1, heading included, up to the next "## " heading.
+section_of() {
+    awk -v h="## $2" '$0 == h {on = 1; print; next} on && /^## / {exit} on {print}' "$1"
+}
+
+# Exit 0 when the "## $2" section of report $1 has a line equal to $3. Matched on a captured
+# copy: piping into grep -q can SIGPIPE the writer and fail a match that succeeded.
+section_has_line() {
+    local sec
+    sec=$(section_of "$1" "$2")
+    grep -qxF -- "$3" <<< "$sec"
+}
+
+expect_eq() {
+    [ "$2" = "$3" ] && ok "$1" || fail "$1 (got [$2], want [$3])"
+}
+
+# affected_off_runs_all: with the switch absent every repo runs and the report has no scope or skip text.
+SA="$TESTDIR/affected_off_runs_all"
+make_repo "$SA" x; make_repo "$SA" y
+write_config "$SA" "" "x:y" "y:"
+run_scoped "$SA"
+expect_eq "affected_off_runs_all: exits 0" "$RC" 0
+expect_eq "affected_off_runs_all: every repo ran" "$(ran_set "$SA")" "x y"
+grep -qF "Test scope" "$SA/workspace/out/test_report.md" \
+    && fail "affected_off_runs_all: no Test scope section" || ok "affected_off_runs_all: no Test scope section"
+grep -qF "unaffected" "$SA/workspace/out/test_report.md" \
+    && fail "affected_off_runs_all: nothing reported unaffected" || ok "affected_off_runs_all: nothing reported unaffected"
+
+# leaf_change_runs_only_leaf: x depends on y; only x changed, and nothing depends on x.
+SB="$TESTDIR/leaf_change_runs_only_leaf"
+make_repo "$SB" x; make_repo "$SB" y
+commit_in "$SB" x
+write_config "$SB" true "x:y" "y:"
+run_scoped "$SB"
+expect_eq "leaf_change_runs_only_leaf: exits 0" "$RC" 0
+expect_eq "leaf_change_runs_only_leaf: only the changed leaf ran" "$(ran_set "$SB")" "x"
+section_has_line "$SB/workspace/out/test_report.md" y "$SKIP_LINE" \
+    && ok "leaf_change_runs_only_leaf: y carries the exact skip line" \
+    || fail "leaf_change_runs_only_leaf: y carries the exact skip line"
+
+# dependency_change_runs_dependents: x depends on y; y changed.
+SC="$TESTDIR/dependency_change_runs_dependents"
+make_repo "$SC" x; make_repo "$SC" y
+commit_in "$SC" y
+write_config "$SC" true "x:y" "y:"
+run_scoped "$SC"
+expect_eq "dependency_change_runs_dependents: exits 0" "$RC" 0
+expect_eq "dependency_change_runs_dependents: the dependency and its dependent ran" "$(ran_set "$SC")" "x y"
+
+# transitive_chain: a -> b -> c; c changed.
+SD="$TESTDIR/transitive_chain"
+make_repo "$SD" a; make_repo "$SD" b; make_repo "$SD" c
+commit_in "$SD" c
+write_config "$SD" true "a:b" "b:c" "c:"
+run_scoped "$SD"
+expect_eq "transitive_chain: exits 0" "$RC" 0
+expect_eq "transitive_chain: every transitive dependent ran" "$(ran_set "$SD")" "a b c"
+
+# middle_repo_without_suite_propagates: a -> b -> c, b has no test_command; c changed.
+SE="$TESTDIR/middle_repo_without_suite_propagates"
+make_repo "$SE" a; make_repo "$SE" b; make_repo "$SE" c
+commit_in "$SE" c
+write_config "$SE" true "a:b" "b!:c" "c:"
+run_scoped "$SE"
+expect_eq "middle_repo_without_suite_propagates: exits 0" "$RC" 0
+expect_eq "middle_repo_without_suite_propagates: a still ran through suite-less b" "$(ran_set "$SE")" "a c"
+section_has_line "$SE/workspace/out/test_report.md" b "**Status:** SKIPPED (no test_command configured)" \
+    && ok "middle_repo_without_suite_propagates: b keeps the no-test_command skip" \
+    || fail "middle_repo_without_suite_propagates: b keeps the no-test_command skip"
+
+# nothing_changed_runs_nothing_exit0: switch on, no repo changed.
+SF="$TESTDIR/nothing_changed_runs_nothing_exit0"
+make_repo "$SF" x; make_repo "$SF" y; make_repo "$SF" z
+write_config "$SF" true "x:y" "y:" "z!:"
+run_scoped "$SF"
+REPORTF="$SF/workspace/out/test_report.md"
+expect_eq "nothing_changed_runs_nothing_exit0: exits 0" "$RC" 0
+expect_eq "nothing_changed_runs_nothing_exit0: nothing ran" "$(ran_set "$SF")" ""
+for r in x y; do
+    section_has_line "$REPORTF" "$r" "$SKIP_LINE" \
+        && ok "nothing_changed_runs_nothing_exit0: $r carries the skip line" \
+        || fail "nothing_changed_runs_nothing_exit0: $r carries the skip line"
+done
+grep -qF "PASSED" "$REPORTF" \
+    && fail "nothing_changed_runs_nothing_exit0: nothing reported PASSED" \
+    || ok "nothing_changed_runs_nothing_exit0: nothing reported PASSED"
+grep -qF "No test_command configured for any repo" "$REPORTF" "$SF/stdout.txt" \
+    && fail "nothing_changed_runs_nothing_exit0: does not claim no repo has a test_command" \
+    || ok "nothing_changed_runs_nothing_exit0: does not claim no repo has a test_command"
+
+# uncommitted_and_untracked_count: x has a tracked edit, y an untracked file, z only an
+# ignored one.
+SG="$TESTDIR/uncommitted_and_untracked_count"
+make_repo "$SG" x; make_repo "$SG" y; make_repo "$SG" z
+echo edited >> "$SG/workspace/repo/x/README"
+echo new > "$SG/workspace/repo/y/new.txt"
+echo noise > "$SG/workspace/repo/z/ignored.txt"
+write_config "$SG" true "x:" "y:" "z:"
+run_scoped "$SG"
+expect_eq "uncommitted_and_untracked_count: exits 0" "$RC" 0
+expect_eq "uncommitted_and_untracked_count: tracked edit and untracked file count, ignored does not" \
+    "$(ran_set "$SG")" "x y"
+
+# unresolvable_base_counts_as_changed: x's remote-tracking refs are gone.
+SH="$TESTDIR/unresolvable_base_counts_as_changed"
+make_repo "$SH" x; make_repo "$SH" y
+fixture_git -C "$SH/workspace/repo/x" symbolic-ref --delete refs/remotes/origin/HEAD
+for ref in $(fixture_git -C "$SH/workspace/repo/x" for-each-ref --format='%(refname)' refs/remotes/origin/); do
+    fixture_git -C "$SH/workspace/repo/x" update-ref -d "$ref"
+done
+fixture_git -C "$SH/workspace/repo/x" rev-parse --verify --quiet refs/remotes/origin/main > /dev/null \
+    && fail "unresolvable_base_counts_as_changed: fixture removed origin/main" \
+    || ok "unresolvable_base_counts_as_changed: fixture removed origin/main"
+write_config "$SH" true "x:" "y:"
+run_scoped "$SH"
+expect_eq "unresolvable_base_counts_as_changed: exits 0" "$RC" 0
+expect_eq "unresolvable_base_counts_as_changed: x ran, unchanged y did not" "$(ran_set "$SH")" "x"
+
+# affected_failure_fails_run: x (affected) has a failing suite, y is unaffected.
+SM="$TESTDIR/affected_failure_fails_run"
+make_repo "$SM" x; make_repo "$SM" y
+commit_in "$SM" x
+write_config "$SM" true "x:" "y:"
+jq '.repos[0].test_command = "exit 1"' "$SM/workspace/config.json" > "$SM/config.tmp" \
+    && mv "$SM/config.tmp" "$SM/workspace/config.json"
+run_scoped "$SM"
+expect_eq "affected_failure_fails_run: exits 1" "$RC" 1
+section_of "$SM/workspace/out/test_report.md" x | grep -qF "**Status:** FAILED" \
+    && ok "affected_failure_fails_run: x reported FAILED" \
+    || fail "affected_failure_fails_run: x reported FAILED"
+section_has_line "$SM/workspace/out/test_report.md" y "$SKIP_LINE" \
+    && ok "affected_failure_fails_run: unaffected y still SKIPPED" \
+    || fail "affected_failure_fails_run: unaffected y still SKIPPED"
+
+# changed_set_computed_before_running: x's suite writes an untracked file into unchanged y.
+SI="$TESTDIR/changed_set_computed_before_running"
+make_repo "$SI" x; make_repo "$SI" y
+commit_in "$SI" x
+write_config "$SI" true "x:" "y:"
+jq --arg stray "$SI/workspace/repo/y/stray.txt" '.repos[0].test_command += (" && touch " + $stray)' \
+    "$SI/workspace/config.json" > "$SI/config.tmp" && mv "$SI/config.tmp" "$SI/workspace/config.json"
+run_scoped "$SI"
+expect_eq "changed_set_computed_before_running: exits 0" "$RC" 0
+[ -f "$SI/workspace/repo/y/stray.txt" ] \
+    && ok "changed_set_computed_before_running: x's suite did dirty y" \
+    || fail "changed_set_computed_before_running: x's suite did dirty y"
+expect_eq "changed_set_computed_before_running: y stays skipped" "$(ran_set "$SI")" "x"
+
+# cyclic_depends_on_terminates: x and y depend on each other; x changed.
+SJ="$TESTDIR/cyclic_depends_on_terminates"
+make_repo "$SJ" x; make_repo "$SJ" y
+commit_in "$SJ" x
+write_config "$SJ" true "x:y" "y:x"
+run_scoped "$SJ"
+expect_eq "cyclic_depends_on_terminates: exits 0 (not killed)" "$RC" 0
+expect_eq "cyclic_depends_on_terminates: both ran" "$(ran_set "$SJ")" "x y"
+
+# rerun_is_idempotent: a second run in the same pod classifies every repo the same way.
+SK="$TESTDIR/rerun_is_idempotent"
+make_repo "$SK" x; make_repo "$SK" y; make_repo "$SK" z
+commit_in "$SK" y
+write_config "$SK" true "x:y" "y:" "z:"
+run_scoped "$SK"
+RAN_K1=$(ran_set "$SK")
+SCOPE_K1=$(section_of "$SK/workspace/out/test_report.md" "Test scope")
+rm -rf "$SK/ran"
+run_scoped "$SK"
+expect_eq "rerun_is_idempotent: second run exits 0" "$RC" 0
+expect_eq "rerun_is_idempotent: first run ran the affected repos" "$RAN_K1" "x y"
+expect_eq "rerun_is_idempotent: same repos ran again" "$(ran_set "$SK")" "$RAN_K1"
+expect_eq "rerun_is_idempotent: same Test scope section" \
+    "$(section_of "$SK/workspace/out/test_report.md" "Test scope")" "$SCOPE_K1"
+
+# report_has_test_scope_section: x depends on y; y changed; z unaffected.
+SL="$TESTDIR/report_has_test_scope_section"
+make_repo "$SL" x; make_repo "$SL" y; make_repo "$SL" z
+commit_in "$SL" y
+write_config "$SL" true "x:y" "y:" "z:"
+run_scoped "$SL"
+REPORTL="$SL/workspace/out/test_report.md"
+SCOPE_L=$(section_of "$REPORTL" "Test scope")
+expect_eq "report_has_test_scope_section: exits 0" "$RC" 0
+expect_eq "report_has_test_scope_section: Test scope is the report's first section" \
+    "$(grep -m1 '^## ' "$REPORTL")" "## Test scope"
+grep -qxF -- '**Changed:** `y`' <<< "$SCOPE_L" \
+    && ok "report_has_test_scope_section: names the changed repo" \
+    || fail "report_has_test_scope_section: names the changed repo"
+grep -qxF -- '- `x`: affected (depends on y)' <<< "$SCOPE_L" \
+    && ok "report_has_test_scope_section: gives the dependent's reason" \
+    || fail "report_has_test_scope_section: gives the dependent's reason"
+grep -qxF -- '- `y`: affected (changed)' <<< "$SCOPE_L" \
+    && ok "report_has_test_scope_section: gives the changed repo's reason" \
+    || fail "report_has_test_scope_section: gives the changed repo's reason"
+grep -qxF -- '- `z`: unaffected' <<< "$SCOPE_L" \
+    && ok "report_has_test_scope_section: lists the unaffected repo" \
+    || fail "report_has_test_scope_section: lists the unaffected repo"
+section_has_line "$REPORTL" z "$SKIP_LINE" \
+    && ok "report_has_test_scope_section: z carries the skip line" \
+    || fail "report_has_test_scope_section: z carries the skip line"
+SECTION_Z=$(section_of "$REPORTL" z)
+grep -qF "PASSED" <<< "$SECTION_Z" \
+    && fail "report_has_test_scope_section: skipped z never says PASSED" \
+    || ok "report_has_test_scope_section: skipped z never says PASSED"
+
+# unknown_depends_on_warns: x names a repo this run does not have; it is ignored with a warning.
+SM="$TESTDIR/unknown_depends_on_warns"
+make_repo "$SM" x; make_repo "$SM" y
+commit_in "$SM" y
+write_config "$SM" true "x:ghost" "y:"
+run_scoped "$SM"
+expect_eq "unknown_depends_on_warns: exits 0" "$RC" 0
+expect_eq "unknown_depends_on_warns: the unknown name pulls nothing in" "$(ran_set "$SM")" "y"
+section_has_line "$SM/workspace/out/test_report.md" "Test scope" \
+    '- Warning: `x` depends on `ghost`, which is not a repo in this run; ignored.' \
+    && ok "unknown_depends_on_warns: Test scope warns about the unknown name" \
+    || fail "unknown_depends_on_warns: Test scope warns about the unknown name"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

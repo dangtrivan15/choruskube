@@ -1361,6 +1361,16 @@ export interface RepoGroupMember {
   position: number;
 }
 
+export interface RepoDependency {
+  repoId: string;
+  dependsOnRepoIds: string[];
+}
+
+export interface RepoGroupTestScopeRequest {
+  affectedOnly: boolean;
+  dependencies: RepoDependency[];
+}
+
 export interface RepoGroup {
   id: string;
   name: string;
@@ -1372,6 +1382,8 @@ export interface RepoGroup {
   description: string | null;
   runtimeRequirements: RuntimeRequirements;
   members: RepoGroupMember[];
+  testAffectedOnly: boolean;
+  dependencies: RepoDependency[];
   createdAt: string;
   updatedAt: string;
 }

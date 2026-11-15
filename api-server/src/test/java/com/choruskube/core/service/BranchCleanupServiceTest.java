@@ -57,9 +57,9 @@ class BranchCleanupServiceTest {
     private static GraphRuntimeSnapshotResponse snapshotOf(GitRepo... repos) {
         List<GraphRuntimeSnapshotResponse.RuntimeRepo> runtimeRepos = List.of(repos).stream()
                 .map(r -> new GraphRuntimeSnapshotResponse.RuntimeRepo(
-                        r.getId().toString(), r.getUrl(), r.getName(), null, null))
+                        r.getId().toString(), r.getUrl(), r.getName(), null, null, List.of()))
                 .toList();
-        return new GraphRuntimeSnapshotResponse(List.of(), List.of(), Map.of(), runtimeRepos, null);
+        return new GraphRuntimeSnapshotResponse(List.of(), List.of(), Map.of(), runtimeRepos, null, false);
     }
 
     @Test
@@ -90,16 +90,23 @@ class BranchCleanupServiceTest {
         GitRepo sluglessRepo = repo(sluglessRepoId, "", "main", "slugless");
         GitRepo healthyRepo = repo(healthyRepoId, "https://github.com/org/web-ui.git", "main", "org/web-ui");
         List<GraphRuntimeSnapshotResponse.RuntimeRepo> runtimeRepos = List.of(
-                new GraphRuntimeSnapshotResponse.RuntimeRepo("not-a-uuid", "https://x/y.git", "y", null, null),
                 new GraphRuntimeSnapshotResponse.RuntimeRepo(
-                        missingRepoId.toString(), missingRepo.getUrl(), missingRepo.getName(), null, null),
+                        "not-a-uuid", "https://x/y.git", "y", null, null, List.of()),
                 new GraphRuntimeSnapshotResponse.RuntimeRepo(
-                        sluglessRepoId.toString(), sluglessRepo.getUrl(), sluglessRepo.getName(), null, null),
+                        missingRepoId.toString(), missingRepo.getUrl(), missingRepo.getName(), null, null, List.of()),
                 new GraphRuntimeSnapshotResponse.RuntimeRepo(
-                        healthyRepoId.toString(), healthyRepo.getUrl(), healthyRepo.getName(), null, null));
+                        sluglessRepoId.toString(),
+                        sluglessRepo.getUrl(),
+                        sluglessRepo.getName(),
+                        null,
+                        null,
+                        List.of()),
+                new GraphRuntimeSnapshotResponse.RuntimeRepo(
+                        healthyRepoId.toString(), healthyRepo.getUrl(), healthyRepo.getName(), null, null, List.of()));
         when(internalRunService.getRunStatus(runId)).thenReturn(new RunStatusResponse("completed"));
         when(internalRunService.getGraphRuntimeSnapshot(runId))
-                .thenReturn(new GraphRuntimeSnapshotResponse(List.of(), List.of(), Map.of(), runtimeRepos, null));
+                .thenReturn(
+                        new GraphRuntimeSnapshotResponse(List.of(), List.of(), Map.of(), runtimeRepos, null, false));
         when(gitRepoRepo.findById(missingRepoId)).thenReturn(Optional.empty());
         when(gitRepoRepo.findById(sluglessRepoId)).thenReturn(Optional.of(sluglessRepo));
         when(gitRepoRepo.findById(healthyRepoId)).thenReturn(Optional.of(healthyRepo));
