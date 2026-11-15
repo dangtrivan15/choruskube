@@ -36,6 +36,12 @@ vi.mock("@/hooks/useRepoGroups", () => ({
     isError: false,
     reset: vi.fn(),
   }),
+  useUpdateRepoGroupTestScope: vi.fn().mockReturnValue({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    reset: vi.fn(),
+  }),
   useDeleteRepoGroup: vi.fn().mockReturnValue({
     mutate: vi.fn(),
     isPending: false,
@@ -73,6 +79,8 @@ function makeGroup(overrides: Partial<RepoGroup> = {}): RepoGroup {
       { gitRepoId: "r1", name: "repo-one", position: 0 },
       { gitRepoId: "r2", name: "repo-two", position: 1 },
     ],
+    testAffectedOnly: false,
+    dependencies: [],
     createdAt: "2026-01-15T10:00:00Z",
     updatedAt: "2026-01-15T10:00:00Z",
     ...overrides,

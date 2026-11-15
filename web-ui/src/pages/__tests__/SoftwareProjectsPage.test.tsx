@@ -56,6 +56,12 @@ vi.mock("@/hooks/useRepoGroups", () => ({
     isError: false,
     reset: vi.fn(),
   }),
+  useUpdateRepoGroupTestScope: vi.fn().mockReturnValue({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    reset: vi.fn(),
+  }),
   useDeleteRepoGroup: vi.fn().mockReturnValue({
     mutate: vi.fn(),
     isPending: false,

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,6 +17,8 @@ interface RepoGroupFormProps {
   submitting?: boolean;
   /** Inline error message (e.g. from a failed mutation). */
   error?: string | null;
+  /** Extra sections rendered after the members list, inside the scrolling body. */
+  children?: ReactNode;
 }
 
 /**
@@ -38,6 +40,7 @@ export default function RepoGroupForm({
   submitLabel = "Save",
   submitting = false,
   error = null,
+  children,
 }: RepoGroupFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [agentImage, setAgentImage] = useState(initial?.agentImage ?? "");
@@ -204,6 +207,8 @@ export default function RepoGroupForm({
             </div>
           )}
         </div>
+
+        {children}
       </div>
 
       <div className="flex items-center justify-end gap-2">

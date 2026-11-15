@@ -5,7 +5,9 @@ import { renderWithProviders } from "@/__tests__/test-utils";
 import EditRepoGroupDialog from "@/components/repo-groups/EditRepoGroupDialog";
 import type { RepoGroup } from "@/lib/types";
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async () => ({
+  apiErrorMessage: (err: unknown, fallback: string) =>
+    err instanceof Error && err.message ? err.message : fallback,
   api: {
     get: vi.fn(),
     getPage: vi.fn(),
@@ -48,6 +50,8 @@ function makeGroup(overrides: Partial<RepoGroup> = {}): RepoGroup {
       { gitRepoId: "r1", name: "r1", position: 0 },
       { gitRepoId: "r2", name: "r2", position: 1 },
     ],
+    testAffectedOnly: false,
+    dependencies: [],
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -149,5 +153,73 @@ describe("EditRepoGroupDialog", () => {
 
     // The form's name input should not render — the dialog body is gated on `group`.
     expect(screen.queryByLabelText(/name/i)).not.toBeInTheDocument();
+  });
+
+  describe("test scope", () => {
+    it("submitCallsTestScopeOnlyWhenChanged", async () => {
+      const user = userEvent.setup();
+      const onOpenChange = vi.fn();
+      mockApi.put.mockResolvedValue(makeGroup());
+
+      const { unmount } = renderWithProviders(
+        <EditRepoGroupDialog
+          group={makeGroup()}
+          open={true}
+          onOpenChange={onOpenChange}
+          availableRepos={availableRepos}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: /save/i }));
+      await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+      expect(mockApi.put).toHaveBeenCalledTimes(1);
+      expect(mockApi.put).not.toHaveBeenCalledWith(
+        "/repo-groups/g1/test-scope",
+        expect.anything(),
+      );
+      unmount();
+      vi.clearAllMocks();
+      mockApi.put.mockResolvedValue(makeGroup());
+
+      renderWithProviders(
+        <EditRepoGroupDialog
+          group={makeGroup()}
+          open={true}
+          onOpenChange={vi.fn()}
+          availableRepos={availableRepos}
+        />,
+      );
+      await user.click(screen.getByLabelText("Test only affected repos"));
+      await user.click(screen.getByLabelText("r1 depends on r2"));
+      await user.click(screen.getByRole("button", { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockApi.put).toHaveBeenCalledWith("/repo-groups/g1/test-scope", {
+          affectedOnly: true,
+          dependencies: [{ repoId: "r1", dependsOnRepoIds: ["r2"] }],
+        });
+      });
+    });
+
+    it("scopeErrorKeepsDialogOpenAndShowsMessage", async () => {
+      const user = userEvent.setup();
+      const onOpenChange = vi.fn();
+      mockApi.put.mockResolvedValueOnce(makeGroup());
+      mockApi.put.mockRejectedValueOnce(new Error("Dependency cycle: r1 -> r2 -> r1"));
+
+      renderWithProviders(
+        <EditRepoGroupDialog
+          group={makeGroup()}
+          open={true}
+          onOpenChange={onOpenChange}
+          availableRepos={availableRepos}
+        />,
+      );
+      await user.click(screen.getByLabelText("Test only affected repos"));
+      await user.click(screen.getByRole("button", { name: /save/i }));
+
+      expect(await screen.findByText("Dependency cycle: r1 -> r2 -> r1")).toBeInTheDocument();
+      expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    });
   });
 });
