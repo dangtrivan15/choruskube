@@ -3,22 +3,18 @@ package com.choruskube.core.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.InternalAuthFilter;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
@@ -29,14 +25,13 @@ import org.springframework.transaction.annotation.Transactional;
  * enforced: an agent records only its own execution's repo bases. Split from {@link
  * InternalRunControllerTest} for the same reason as {@link InternalRunControllerPullRequestsAuthTest}.
  */
-@AutoConfigureMockMvc
 @Transactional
 @TestPropertySource(
         properties = {
             "internal.auth.orchestrator-secret-hash=d6c5f99f36089f6757e4a7946de9dd0ef1d69983ab5920d40ce5ee1d5066159d",
-            "internal.auth.mode=enforce"
+            "worker.registration.token=test-fleet"
         })
-class InternalRunControllerRepoBasesAuthTest extends BaseTest {
+class InternalRunControllerRepoBasesAuthTest extends SharedContextTest {
 
     private static final String JOB_SECRET = "test-repo-base-job-secret";
     private static final String OTHER_RUN_JOB_SECRET = "test-repo-base-other-run-job-secret";
@@ -67,12 +62,6 @@ class InternalRunControllerRepoBasesAuthTest extends BaseTest {
 
     @Autowired
     private NodeExecutionRepoBaseRepository baseRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private WorkflowRun run;
     private NodeExecution exec;

@@ -6,7 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.MilestoneRequest;
 import com.choruskube.core.dto.MilestoneResponse;
@@ -24,8 +24,6 @@ import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,7 +41,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
-public class DefaultMilestoneServiceTest extends BaseTest {
+public class DefaultMilestoneServiceTest extends SharedContextTest {
 
     /** Test-only MappableCreated collector, mirroring MappableCreatedPublicationTest's pattern. */
     static class MappableEventCollector {
@@ -91,12 +89,6 @@ public class DefaultMilestoneServiceTest extends BaseTest {
 
     @Autowired
     private MappableEventCollector collector;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

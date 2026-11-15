@@ -2,7 +2,7 @@ package com.choruskube.core.architecture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.InternalAuthFilter;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
@@ -15,30 +15,24 @@ import com.choruskube.core.repository.NodeDefinitionRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 /** Runs {@link RunScopeRouteAudit} over core's own route table, with internal auth enforced. */
-@AutoConfigureMockMvc
 @Transactional
 @TestPropertySource(
         properties = {
             // SHA-256 hash of "test-orchestrator-secret"
             "internal.auth.orchestrator-secret-hash=d6c5f99f36089f6757e4a7946de9dd0ef1d69983ab5920d40ce5ee1d5066159d",
-            "internal.auth.mode=enforce",
-            "worker.registration.token=test-fleet-token"
+            "worker.registration.token=test-fleet"
         })
-class RunScopeRoutesTest extends BaseTest {
+class RunScopeRoutesTest extends SharedContextTest {
 
     private static final String JOB_SECRET = "run-scope-routes-test-job-secret";
 
@@ -66,12 +60,6 @@ class RunScopeRoutesTest extends BaseTest {
 
     @Autowired
     private TemplateNodeRepository templateNodeRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private WorkflowRun runA;
     private WorkflowRun runB;

@@ -4,26 +4,22 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.service.OrgIdentitySync;
 import com.choruskube.core.service.RepoGroupService;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
-@AutoConfigureMockMvc
 @Transactional
-class SoftwareProjectControllerTest extends BaseTest {
+class SoftwareProjectControllerTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -33,12 +29,6 @@ class SoftwareProjectControllerTest extends BaseTest {
 
     @Autowired
     private RepoGroupService repoGroupService;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private OrgIdentitySync orgIdentity;

@@ -11,8 +11,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.dto.CloseTaskIssueWorkflowInput;
 import com.choruskube.core.dto.EpicRequest;
@@ -36,7 +36,6 @@ import com.choruskube.core.repository.TaskGithubIssueRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import java.time.Instant;
@@ -61,7 +60,7 @@ import org.springframework.transaction.IllegalTransactionStateException;
  * observable when something actually commits, so every write here does, and {@link
  * CommittedFixtureCleaner} removes it afterwards.
  */
-public class TaskSettlementIntegrationTest extends BaseTest {
+public class TaskSettlementIntegrationTest extends SharedContextTest {
 
     @Autowired
     private InternalRunService internalRunService;
@@ -109,7 +108,6 @@ public class TaskSettlementIntegrationTest extends BaseTest {
     private WorkflowClientRegistry workflowClientRegistry;
 
     private CommittedFixtureCleaner cleaner;
-    private WorkflowClient workflowClient;
     private WorkflowStub issueCloseStub;
     private final List<UUID> graphTemplateIds = new ArrayList<>();
     private GitRepo repo;
@@ -118,7 +116,6 @@ public class TaskSettlementIntegrationTest extends BaseTest {
     @BeforeEach
     void setUp() {
         cleaner = new CommittedFixtureCleaner(jdbc);
-        workflowClient = mock(WorkflowClient.class);
         issueCloseStub = mock(WorkflowStub.class);
         when(workflowClient.newUntypedWorkflowStub(any())).thenReturn(mock(WorkflowStub.class));
         when(workflowClient.newUntypedWorkflowStub(eq("CloseTaskIssueWorkflow"), any(WorkflowOptions.class)))

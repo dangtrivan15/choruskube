@@ -7,21 +7,18 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.OrgSecurity;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.service.RunEventPublisher;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -32,9 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
  * not just the single-Epic {@code toResponse} path — and for the {@code milestoneId} list filter
  * added to {@code GET /api/v1/epics}.
  */
-@AutoConfigureMockMvc
 @Transactional
-public class EpicMilestoneFilterTest extends BaseTest {
+public class EpicMilestoneFilterTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -44,12 +40,6 @@ public class EpicMilestoneFilterTest extends BaseTest {
 
     @Autowired
     private GitRepoRepository gitRepoRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

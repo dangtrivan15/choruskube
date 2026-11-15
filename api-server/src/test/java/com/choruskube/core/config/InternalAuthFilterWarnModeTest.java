@@ -3,32 +3,27 @@ package com.choruskube.core.config;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.repository.*;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Tests for InternalAuthFilter in warn mode (logs violations but allows requests through).
  */
-@AutoConfigureMockMvc
 @Transactional
 @TestPropertySource(
         properties = {
             "internal.auth.orchestrator-secret-hash=d6c5f99f36089f6757e4a7946de9dd0ef1d69983ab5920d40ce5ee1d5066159d",
             "internal.auth.mode=warn"
         })
-public class InternalAuthFilterWarnModeTest extends BaseTest {
+public class InternalAuthFilterWarnModeTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -44,12 +39,6 @@ public class InternalAuthFilterWarnModeTest extends BaseTest {
 
     @Autowired
     private TemplateNodeRepository templateNodeRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private WorkflowRun run;
 

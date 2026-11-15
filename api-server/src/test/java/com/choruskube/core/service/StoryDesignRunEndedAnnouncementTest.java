@@ -8,7 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.dto.InternalUpdateRunStatusRequest;
 import com.choruskube.core.model.Epic;
@@ -25,7 +25,6 @@ import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,7 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
  * design run that ends without a version must announce the Story, or open pages keep Start disabled.
  */
 @Transactional
-class StoryDesignRunEndedAnnouncementTest extends BaseTest {
+class StoryDesignRunEndedAnnouncementTest extends SharedContextTest {
 
     @Autowired
     private InternalRunService internalRunService;
@@ -64,16 +63,10 @@ class StoryDesignRunEndedAnnouncementTest extends BaseTest {
     private StoryRepository storyRepo;
 
     @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
-
-    @MockitoBean
     private WorkflowClientRegistry workflowClientRegistry;
 
     @MockitoBean
-    private RunEventPublisher eventPublisher;
+    private RunEventPublisher runEventPublisher;
 
     private Story story;
     private GraphTemplate template;
@@ -115,7 +108,7 @@ class StoryDesignRunEndedAnnouncementTest extends BaseTest {
 
         internalRunService.updateRunStatus(run.getId(), new InternalUpdateRunStatusRequest(ended));
 
-        verify(eventPublisher).publishRoadmapItemChanged("story", story.getId(), WorkItemStatus.backlog.name());
+        verify(runEventPublisher).publishRoadmapItemChanged("story", story.getId(), WorkItemStatus.backlog.name());
     }
 
     @Test
@@ -124,7 +117,7 @@ class StoryDesignRunEndedAnnouncementTest extends BaseTest {
 
         runService.cancelRun(run.getId());
 
-        verify(eventPublisher).publishRoadmapItemChanged("story", story.getId(), WorkItemStatus.backlog.name());
+        verify(runEventPublisher).publishRoadmapItemChanged("story", story.getId(), WorkItemStatus.backlog.name());
     }
 
     @Test
@@ -133,7 +126,7 @@ class StoryDesignRunEndedAnnouncementTest extends BaseTest {
 
         internalRunService.updateRunStatus(run.getId(), new InternalUpdateRunStatusRequest("completed"));
 
-        verify(eventPublisher, never()).publishRoadmapItemChanged(eq("story"), any(), any());
+        verify(runEventPublisher, never()).publishRoadmapItemChanged(eq("story"), any(), any());
     }
 
     @Test
@@ -142,7 +135,7 @@ class StoryDesignRunEndedAnnouncementTest extends BaseTest {
 
         internalRunService.updateRunStatus(run.getId(), new InternalUpdateRunStatusRequest("failed"));
 
-        verify(eventPublisher, never()).publishRoadmapItemChanged(eq("story"), any(), any());
+        verify(runEventPublisher, never()).publishRoadmapItemChanged(eq("story"), any(), any());
     }
 
     private WorkflowRun run(UUID storyId) {

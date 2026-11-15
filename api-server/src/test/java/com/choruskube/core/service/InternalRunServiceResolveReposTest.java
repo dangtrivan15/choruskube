@@ -2,7 +2,7 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.repository.GitRepoRepository;
@@ -19,7 +19,7 @@ import org.springframework.beans.factory.annotation.Autowired;
  * after {@code resolveRepos}' own transaction has closed, and only a test with no ambient
  * transaction sees a RepoGroup member's lazy {@code GitRepo} the way that caller does.
  */
-class InternalRunServiceResolveReposTest extends BaseTest {
+class InternalRunServiceResolveReposTest extends SharedContextTest {
 
     @Autowired
     private InternalRunService internalRunService;

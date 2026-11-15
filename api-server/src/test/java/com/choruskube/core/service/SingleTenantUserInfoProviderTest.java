@@ -2,12 +2,11 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.SingleTenant;
 import com.choruskube.core.dto.UserInfoResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.TestPropertySource;
 
 /**
  * Behavior test for {@link SingleTenantUserInfoProvider}: the OSS {@code /me} is fully
@@ -16,8 +15,7 @@ import org.springframework.test.context.TestPropertySource;
  * {@code getMe} must not provision any identity row; core carries no identity tables.
  * The {@code authentication} argument is ignored (OSS issues no JWT).
  */
-@TestPropertySource(properties = "auth.enabled=false")
-public class SingleTenantUserInfoProviderTest extends BaseTest {
+public class SingleTenantUserInfoProviderTest extends SharedContextTest {
 
     @Autowired
     private UserInfoProvider userInfoProvider;

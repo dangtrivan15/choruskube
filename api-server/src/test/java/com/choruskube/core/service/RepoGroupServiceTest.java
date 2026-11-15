@@ -3,31 +3,22 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RepoGroupRepository;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
-class RepoGroupServiceTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class RepoGroupServiceTest extends SharedContextTest {
 
     @Autowired
     private RepoGroupService service;

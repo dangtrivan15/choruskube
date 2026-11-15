@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 
-import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.dto.EpicRequest;
@@ -31,10 +31,8 @@ import com.choruskube.core.repository.StoryConflictRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -64,7 +62,7 @@ import software.amazon.awssdk.services.s3.S3Client;
  * lock, which a single test transaction cannot show. {@link #removeEverythingThisTestCommitted()}
  * undoes the commits, since the suite shares one database.
  */
-class StoryDesignServiceConcurrencyTest extends BaseTest {
+class StoryDesignServiceConcurrencyTest extends SharedContextTest {
 
     @Autowired
     private StoryDesignService service;
@@ -101,12 +99,6 @@ class StoryDesignServiceConcurrencyTest extends BaseTest {
 
     @Autowired
     private JdbcTemplate jdbc;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

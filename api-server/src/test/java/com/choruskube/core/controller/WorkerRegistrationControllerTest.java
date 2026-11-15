@@ -6,16 +6,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.choruskube.core.BaseTest;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
+import com.choruskube.core.SharedContextTest;
 import java.net.URI;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
@@ -25,7 +21,6 @@ import org.springframework.test.web.servlet.MockMvc;
  * {@code WorkerRegistrar}, so a 200 with the configured queue is what proves the default is
  * reached, and 401/403 prove the two rejection paths keep their distinct meanings.
  */
-@AutoConfigureMockMvc
 @TestPropertySource(
         properties = {
             "temporal.namespace=oss-namespace",
@@ -34,7 +29,7 @@ import org.springframework.test.web.servlet.MockMvc;
             // WORKER_REGISTRATION_TOKEN
             "worker.registration.token=ckf_self_hosted_secret"
         })
-class WorkerRegistrationControllerTest extends BaseTest {
+class WorkerRegistrationControllerTest extends SharedContextTest {
 
     private static final String TOKEN = "ckf_self_hosted_secret";
 
@@ -49,12 +44,6 @@ class WorkerRegistrationControllerTest extends BaseTest {
 
     @Autowired
     private MockMvc mockMvc;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private static String bodyWithCredentialSource(String instanceId, String credentialSource) {
         return "{\"hostname\":\"oss-worker-1\",\"instanceId\":\"" + instanceId + "\",\"credentialSource\":\""

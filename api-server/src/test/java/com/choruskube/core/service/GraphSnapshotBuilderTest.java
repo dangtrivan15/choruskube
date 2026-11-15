@@ -2,7 +2,7 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.model.GitRepo;
@@ -24,7 +24,7 @@ import java.util.*;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
-public class GraphSnapshotBuilderTest extends BaseTest {
+public class GraphSnapshotBuilderTest extends SharedContextTest {
 
     @Autowired
     private GraphSnapshotBuilder snapshotBuilder;

@@ -5,7 +5,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.InternalAuthFilter;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
@@ -13,14 +13,11 @@ import com.choruskube.core.model.enums.NodeExecutionStatus;
 import com.choruskube.core.repository.*;
 import com.choruskube.core.service.RunStorageScope;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -33,16 +30,14 @@ import software.amazon.awssdk.services.s3.S3Client;
  * it — the agent's own {@code JOB_SECRET}, the orchestrator secret and a Worker credential on the
  * status route, plus the orchestrator secret on review history.
  */
-@AutoConfigureMockMvc
 @Transactional
 @TestPropertySource(
         properties = {
             "internal.auth.orchestrator-secret-hash=d6c5f99f36089f6757e4a7946de9dd0ef1d69983ab5920d40ce5ee1d5066159d",
-            "internal.auth.mode=enforce",
             "worker.registration.token=test-fleet",
             "artifact.enforcement.mode=enforce"
         })
-class ArtifactRefContainmentIntegrationTest extends BaseTest {
+class ArtifactRefContainmentIntegrationTest extends SharedContextTest {
 
     private static final String ORCHESTRATOR_SECRET = "test-orchestrator-secret";
     private static final String JOB_SECRET = "test-containment-job-secret";
@@ -67,12 +62,6 @@ class ArtifactRefContainmentIntegrationTest extends BaseTest {
 
     @Autowired
     private TemplateNodeRepository templateNodeRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private S3Client s3Client;

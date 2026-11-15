@@ -3,7 +3,7 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -18,8 +18,6 @@ import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import java.sql.Timestamp;
 import java.time.Clock;
@@ -34,7 +32,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @Transactional
-public class RoadmapTimelineServiceTest extends BaseTest {
+public class RoadmapTimelineServiceTest extends SharedContextTest {
 
     private static final Instant FIXED_NOW = Instant.parse("2026-08-11T00:00:00Z");
 
@@ -58,12 +56,6 @@ public class RoadmapTimelineServiceTest extends BaseTest {
 
     @Autowired
     private EntityManager entityManager;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

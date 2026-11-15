@@ -2,7 +2,7 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.dto.CreateDependencyRequest;
@@ -26,8 +26,6 @@ import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.util.HashMap;
@@ -41,6 +39,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
+import software.amazon.awssdk.services.s3.S3Client;
 
 /**
  * Direct coverage of {@link EpicReadinessAssembler} in isolation (extracted from {@code
@@ -50,7 +49,7 @@ import org.springframework.transaction.annotation.Transactional;
  * dependency edges, external blockers) so callers can't silently drift.
  */
 @Transactional
-public class EpicReadinessAssemblerTest extends BaseTest {
+public class EpicReadinessAssemblerTest extends SharedContextTest {
 
     @Autowired
     private EpicReadinessAssembler assembler;
@@ -100,13 +99,10 @@ public class EpicReadinessAssemblerTest extends BaseTest {
     private final AuthorizationService probeAuthService = Mockito.mock(AuthorizationService.class);
 
     @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
-
-    @MockitoBean
     private RunEventPublisher runEventPublisher;
+
+    @MockitoBean
+    private S3Client s3Client;
 
     @Test
     void assemble_noIncomingEdges_isReady() {

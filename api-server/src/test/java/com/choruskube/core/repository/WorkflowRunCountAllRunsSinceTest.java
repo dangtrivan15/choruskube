@@ -2,12 +2,10 @@ package com.choruskube.core.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import java.time.Instant;
@@ -16,7 +14,6 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -28,13 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
  * {@code Instant.now()}, so backdating is done with a native UPDATE after the row is saved.
  */
 @Transactional
-class WorkflowRunCountAllRunsSinceTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class WorkflowRunCountAllRunsSinceTest extends SharedContextTest {
 
     @Autowired
     private WorkflowRunRepository runRepo;

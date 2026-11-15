@@ -3,14 +3,12 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.TestPropertySource;
 
-@TestPropertySource(properties = "auth.enabled=false")
-public class LocalOrgIdentitySyncTest extends BaseTest {
+public class LocalOrgIdentitySyncTest extends SharedContextTest {
 
     @Autowired
     private OrgIdentitySync orgIdentity;

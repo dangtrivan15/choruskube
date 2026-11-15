@@ -7,7 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.PrepareWorkloadResponse;
 import com.choruskube.core.executor.WorkloadAgentCredentialResolver;
 import com.choruskube.core.model.GitRepo;
@@ -25,18 +25,14 @@ import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.context.ApplicationContext;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,7 +40,6 @@ import org.springframework.transaction.annotation.Transactional;
  * Core holds no credential, and no broker route exists at all, even when its environment still sets
  * the settings it used to read: nothing resolves them, and prepare attaches nothing.
  */
-@AutoConfigureMockMvc
 @Transactional
 @TestPropertySource(
         properties = {
@@ -55,7 +50,7 @@ import org.springframework.transaction.annotation.Transactional;
             "GITHUB_APP_PRIVATE_KEY_PATH=/nonexistent/retired-setting.pem",
             "worker.registration.token=test-fleet"
         })
-class RetiredCredentialSettingsIntegrationTest extends BaseTest {
+class RetiredCredentialSettingsIntegrationTest extends SharedContextTest {
 
     @Autowired
     private ApplicationContext context;
@@ -83,12 +78,6 @@ class RetiredCredentialSettingsIntegrationTest extends BaseTest {
 
     @Autowired
     private GitRepoRepository gitRepoRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private GitRepo repo;
     private TemplateNode claudeNode;

@@ -3,22 +3,18 @@ package com.choruskube.core.controller;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.InternalAuthFilter;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -48,14 +44,13 @@ import org.springframework.transaction.annotation.Transactional;
  * on top of the filter remains as the backstop for the orchestrator tier, which the filter never
  * checks against the run.
  */
-@AutoConfigureMockMvc
 @Transactional
 @TestPropertySource(
         properties = {
             "internal.auth.orchestrator-secret-hash=d6c5f99f36089f6757e4a7946de9dd0ef1d69983ab5920d40ce5ee1d5066159d",
-            "internal.auth.mode=enforce"
+            "worker.registration.token=test-fleet"
         })
-class InternalRunControllerPullRequestsAuthTest extends BaseTest {
+class InternalRunControllerPullRequestsAuthTest extends SharedContextTest {
 
     private static final String JOB_SECRET = "test-pr-read-job-secret";
     private static final String OTHER_RUN_JOB_SECRET = "test-pr-read-other-run-job-secret";
@@ -83,12 +78,6 @@ class InternalRunControllerPullRequestsAuthTest extends BaseTest {
 
     @Autowired
     private GitRepoRepository gitRepoRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private WorkflowRun run;
     private NodeExecution exec;

@@ -2,7 +2,7 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.CandidateDependency;
 import com.choruskube.core.dto.CandidateEpicProposal;
 import com.choruskube.core.dto.CandidateMilestone;
@@ -24,14 +24,11 @@ import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -39,13 +36,7 @@ import org.springframework.transaction.annotation.Transactional;
  * (P, Q), each with an Epic/Story/Task, and runs with and without a triggering Task.
  */
 @Transactional
-class RoadmapProposalValidatorTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class RoadmapProposalValidatorTest extends SharedContextTest {
 
     @Autowired
     private RoadmapProposalValidator validator;

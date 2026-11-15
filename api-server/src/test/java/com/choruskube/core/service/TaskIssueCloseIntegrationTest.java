@@ -13,8 +13,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.dto.CloseTaskIssueWorkflowInput;
 import com.choruskube.core.dto.EpicRequest;
@@ -41,7 +41,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.api.common.v1.Payload;
 import io.temporal.api.common.v1.WorkflowExecution;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
@@ -69,7 +68,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>Deliberately NOT {@code @Transactional}: {@code afterCommit} only fires when something
  * commits, so every write here does, and {@link CommittedFixtureCleaner} removes it afterwards.
  */
-public class TaskIssueCloseIntegrationTest extends BaseTest {
+public class TaskIssueCloseIntegrationTest extends SharedContextTest {
 
     @Autowired
     private TaskService taskService;
@@ -124,7 +123,6 @@ public class TaskIssueCloseIntegrationTest extends BaseTest {
 
     private CommittedFixtureCleaner cleaner;
     private final List<UUID> graphTemplateIds = new ArrayList<>();
-    private WorkflowClient workflowClient;
     private WorkflowStub issueCloseStub;
     private GitRepo repo;
     private UUID graphTemplateId;
@@ -132,7 +130,6 @@ public class TaskIssueCloseIntegrationTest extends BaseTest {
     @BeforeEach
     void setUp() {
         cleaner = new CommittedFixtureCleaner(jdbc);
-        workflowClient = mock(WorkflowClient.class);
         issueCloseStub = mock(WorkflowStub.class);
         when(workflowClient.newUntypedWorkflowStub(eq("CloseTaskIssueWorkflow"), any(WorkflowOptions.class)))
                 .thenReturn(issueCloseStub);

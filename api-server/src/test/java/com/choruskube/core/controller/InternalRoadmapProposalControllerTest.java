@@ -5,7 +5,7 @@ import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.InternalAuthFilter;
 import com.choruskube.core.config.StoryDesignGraph;
@@ -26,16 +26,12 @@ import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,14 +40,13 @@ import org.springframework.transaction.annotation.Transactional;
  * guard on the six agent-facing roadmap write routes, under an enforced job token — the same
  * split-context pattern as {@link InternalRunControllerPullRequestsAuthTest}.
  */
-@AutoConfigureMockMvc
 @Transactional
 @TestPropertySource(
         properties = {
             "internal.auth.orchestrator-secret-hash=d6c5f99f36089f6757e4a7946de9dd0ef1d69983ab5920d40ce5ee1d5066159d",
-            "internal.auth.mode=enforce"
+            "worker.registration.token=test-fleet"
         })
-class InternalRoadmapProposalControllerTest extends BaseTest {
+class InternalRoadmapProposalControllerTest extends SharedContextTest {
 
     private static final String JOB_SECRET = "test-roadmap-proposal-job-secret";
 
@@ -81,12 +76,6 @@ class InternalRoadmapProposalControllerTest extends BaseTest {
 
     @Autowired
     private StoryRepository storyRepo;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     private static final String VALID_DOC = """
             {"epics":[{"title":"E","description":"d","motivation":"m","priority":"High",

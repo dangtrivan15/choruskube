@@ -6,13 +6,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.choruskube.core.BaseTest;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
+import com.choruskube.core.SharedContextTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,15 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
  * (the dev-mode SecurityFilterChain doesn't wire {@code .cors(...)}, so a mockMvc
  * preflight cannot prove anything in the default test profile).
  */
-@AutoConfigureMockMvc
 @Transactional
-class PublicMetricsControllerTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class PublicMetricsControllerTest extends SharedContextTest {
 
     @Autowired
     private MockMvc mockMvc;

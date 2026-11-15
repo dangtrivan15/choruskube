@@ -3,8 +3,8 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.choruskube.core.BaseTest;
 import com.choruskube.core.CommittedFixtureCleaner;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
@@ -24,10 +24,8 @@ import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.TaskGithubIssueRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -63,7 +61,7 @@ import software.amazon.awssdk.services.s3.S3Client;
  * database for the whole suite, and {@code RoadmapTimelineServiceTest} asserts on an empty
  * roadmap.
  */
-public class DefaultTaskServiceAutopilotTest extends BaseTest {
+public class DefaultTaskServiceAutopilotTest extends SharedContextTest {
 
     @Autowired
     private TaskService service;
@@ -96,12 +94,6 @@ public class DefaultTaskServiceAutopilotTest extends BaseTest {
     private TaskGithubIssueRepository taskGithubIssueRepository;
 
     private CommittedFixtureCleaner cleaner;
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
 
     @MockitoBean
     private RunEventPublisher runEventPublisher;

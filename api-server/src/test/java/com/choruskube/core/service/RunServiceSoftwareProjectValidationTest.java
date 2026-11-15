@@ -3,7 +3,7 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.choruskube.core.BaseTest;
+import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.GitRepo;
@@ -13,14 +13,11 @@ import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.RepoGroupRepository;
 import com.choruskube.core.util.RepoNameUtil;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 /**
  * Integration test for RunService.validateInputs() with software_project_id type.
@@ -32,13 +29,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * {@code repo_group} test below will fail with LazyInitializationException — that's the
  * regression guard.
  */
-class RunServiceSoftwareProjectValidationTest extends BaseTest {
-
-    @MockitoBean
-    WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    WorkflowClient workflowClient;
+class RunServiceSoftwareProjectValidationTest extends SharedContextTest {
 
     @Autowired
     RunService runs;

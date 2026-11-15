@@ -2,14 +2,11 @@ package com.choruskube.core.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.choruskube.core.BaseTest;
-import io.temporal.client.WorkflowClient;
-import io.temporal.serviceclient.WorkflowServiceStubs;
+import com.choruskube.core.SharedContextTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.web.cors.CorsConfigurationSource;
 
 /**
@@ -25,13 +22,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
  * inside {@code corsConfigurationSource()}.
  */
 @TestPropertySource(properties = "cors.allowed-origins=https://choruskube.com,http://localhost:13000")
-class CorsConfigurationSourceTest extends BaseTest {
-
-    @MockitoBean
-    private WorkflowServiceStubs workflowServiceStubs;
-
-    @MockitoBean
-    private WorkflowClient workflowClient;
+class CorsConfigurationSourceTest extends SharedContextTest {
 
     @Autowired
     private CorsConfigurationSource corsConfigurationSource;
