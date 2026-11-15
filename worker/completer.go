@@ -11,10 +11,9 @@ import (
 	"github.com/dangtrivan15/choruskube/worker/callback"
 )
 
-// temporalCompletions is the subset of client.Client this package needs to complete and
-// heartbeat an activity Temporal already assigned an id to. Declared at the point of use so a
-// test can inject a fake without dialling a real Temporal server; client.Client satisfies it
-// unchanged.
+// temporalCompletions is the whole Temporal surface the completer may use: client.Client
+// satisfies it unchanged. A method added here fails worker/temporal_methods_test.go until a
+// scenario calls it, so widening this interface is a visible edit, not a silent one.
 type temporalCompletions interface {
 	CompleteActivityByID(ctx context.Context, namespace, workflowID, runID, activityID string, result interface{}, err error) error
 	RecordActivityHeartbeatByID(ctx context.Context, namespace, workflowID, runID, activityID string, details ...interface{}) error
@@ -35,13 +34,13 @@ var _ pendingLookup = (*activity.PendingCache)(nil)
 // fleetSupervisor satisfies it; narrowed here so the completer's addressing logic is testable
 // without dialling Temporal.
 type clientResolver interface {
-	clientFor(namespace, taskQueue string) client.Client
+	clientFor(namespace, taskQueue string) temporalCompletions
 	// reattachClient returns a client able to complete/heartbeat by id for an execution this
 	// Worker never launched (a previous Worker did, before a restart), together with the Temporal
 	// namespace that client serves. By-id addressing needs only the namespace, so any client on it
 	// works; it is unambiguous only while the Worker serves a single Temporal namespace, and errors
 	// rather than guess when it serves several.
-	reattachClient() (cl client.Client, namespace string, err error)
+	reattachClient() (cl temporalCompletions, namespace string, err error)
 }
 
 var _ clientResolver = (*fleetSupervisor)(nil)
