@@ -2,7 +2,7 @@
  * The DinD run `specs/workload-lifetime.spec.ts` watches being reclaimed. `workload-lifetime.setup.ts`
  * starts it in the setup project, ahead of every other spec, and hands its id over in a file.
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { seededRepos } from "../fixtures";
@@ -27,6 +27,10 @@ export async function startWorkloadLifetimeRun(api: TestApiClient): Promise<Work
 export function saveWorkloadLifetimeRunId(runId: string): void {
   mkdirSync(dirname(RUN_FILE), { recursive: true });
   writeFileSync(RUN_FILE, JSON.stringify({ runId }));
+}
+
+export function clearWorkloadLifetimeRunId(): void {
+  rmSync(RUN_FILE, { force: true });
 }
 
 /** The run the setup project started, or null under a config whose setup project does not start it. */
