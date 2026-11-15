@@ -1,4 +1,4 @@
-import { test, expect, seededRepos } from "../fixtures";
+import { test, expect, seededRepos, WORKER_REPO_URL_PREFIX } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
 import { clickOption } from "../helpers/select";
 
@@ -41,10 +41,13 @@ const E2E_GROUP_PREFIX = "e2e-group-";
 // Tests in one worker run sequentially, so a module-scoped array is safe here —
 // each worker is its own process and gets its own copy.
 let createdGroupIds: string[] = [];
+// Repos the test-scope test creates for itself, dropped after their groups.
+let createdRepoIds: string[] = [];
 
 test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
   test.beforeEach(() => {
     createdGroupIds = [];
+    createdRepoIds = [];
   });
 
   test.afterEach(async ({ api }) => {
@@ -55,6 +58,10 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
       await api.deleteRepoGroup(id).catch(() => {});
     }
     createdGroupIds = [];
+    for (const id of createdRepoIds) {
+      await api.deleteGitRepo(id).catch(() => {});
+    }
+    createdRepoIds = [];
   });
 
   test("creates a Repo Group via UI and launches a run from it", async ({
@@ -282,5 +289,71 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
         },
       )
       .toEqual({ name: renamed, memberCount: 1 });
+  });
+
+  test("test-scope settings persist across reload", async ({ page, api }) => {
+    // Own repos and group, worker-unique and under the worker-repo URL prefix so
+    // seededRepos() in sibling specs never counts them.
+    const repoA = await api.createGitRepo({
+      url: `${WORKER_REPO_URL_PREFIX}${uniqueName("scope-a")}.git`,
+    });
+    const repoB = await api.createGitRepo({
+      url: `${WORKER_REPO_URL_PREFIX}${uniqueName("scope-b")}.git`,
+    });
+    createdRepoIds.push(repoA.id, repoB.id);
+    const groupName = uniqueName(`${E2E_GROUP_PREFIX}scope`);
+    const group = await api.createRepoGroup({
+      name: groupName,
+      memberRepoIds: [repoA.id, repoB.id],
+    });
+    createdGroupIds.push(group.id);
+    // Member names are the server-derived display names the dialog labels use.
+    const nameA = group.members.find((m) => m.gitRepoId === repoA.id)!.name;
+    const nameB = group.members.find((m) => m.gitRepoId === repoB.id)!.name;
+    const dependsLabel = `${nameA} depends on ${nameB}`;
+
+    async function openEditDialog() {
+      await page.goto("/git-repos");
+      await page.getByRole("button", { name: /^repo groups$/i }).click();
+      const row = page.getByRole("row").filter({ hasText: groupName });
+      await row.getByTestId("repo-group-edit-button").click();
+      await expect(
+        page.getByRole("heading", { name: /edit repo group/i }),
+      ).toBeVisible();
+    }
+
+    // 1. Switch on, make A depend on B, save.
+    await openEditDialog();
+    const affectedSwitch = page.getByRole("switch", {
+      name: "Test only affected repos",
+    });
+    await expect(affectedSwitch).not.toBeChecked();
+    await affectedSwitch.check();
+    await page.getByLabel(dependsLabel, { exact: true }).check();
+    await page.getByRole("button", { name: /^save$/i }).click();
+    await expect(
+      page.getByRole("heading", { name: /edit repo group/i }),
+    ).not.toBeVisible();
+
+    // 2. Reload and reopen: both settings came back from the server.
+    await page.reload();
+    await openEditDialog();
+    await expect(
+      page.getByRole("switch", { name: "Test only affected repos" }),
+    ).toBeChecked();
+    await expect(page.getByLabel(dependsLabel, { exact: true })).toBeChecked();
+    await expect(
+      page.getByLabel(`${nameB} depends on ${nameA}`, { exact: true }),
+    ).not.toBeChecked();
+
+    // 3. The server refuses a cycle: B -> A on top of A -> B.
+    const cycle = await api.putRepoGroupTestScope(group.id, {
+      affectedOnly: true,
+      dependencies: [
+        { repoId: repoA.id, dependsOnRepoIds: [repoB.id] },
+        { repoId: repoB.id, dependsOnRepoIds: [repoA.id] },
+      ],
+    });
+    expect(cycle.status, cycle.body).toBe(400);
   });
 });
