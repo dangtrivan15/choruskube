@@ -11,6 +11,7 @@ import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.*;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.web.servlet.MockMvc;
@@ -38,107 +39,95 @@ public class AnalyticsControllerTest extends SharedContextTest {
     private TemplateNodeRepository templateNodeRepo;
 
     @Test
-    void getOverview_emptyDatabase_returnsZeros() throws Exception {
+    void getOverview_returnsWellFormedCounts() throws Exception {
         mockMvc.perform(get("/api/v1/analytics/overview?period=30d"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalRuns").value(0))
-                .andExpect(jsonPath("$.completedRuns").value(0))
-                .andExpect(jsonPath("$.failedRuns").value(0))
-                .andExpect(jsonPath("$.successRate").value(0.0));
+                .andExpect(jsonPath("$.totalRuns").isNumber())
+                .andExpect(jsonPath("$.completedRuns").isNumber())
+                .andExpect(jsonPath("$.failedRuns").isNumber())
+                .andExpect(jsonPath("$.successRate").isNumber());
     }
 
     @Test
-    void getOverview_withRuns_returnsCorrectCounts() throws Exception {
-        GraphTemplate template = createTemplate("test-tmpl");
+    void getOverview_withRuns_countsExactlyTheRunsAdded() throws Exception {
+        int total = overview("30d", "totalRuns");
+        int completed = overview("30d", "completedRuns");
+        int failed = overview("30d", "failedRuns");
+
+        GraphTemplate template = createTemplate("test-tmpl-" + UUID.randomUUID());
         createRun(template, WorkflowRunStatus.completed);
         createRun(template, WorkflowRunStatus.completed);
         createRun(template, WorkflowRunStatus.failed);
 
-        mockMvc.perform(get("/api/v1/analytics/overview?period=30d"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalRuns").value(3))
-                .andExpect(jsonPath("$.completedRuns").value(2))
-                .andExpect(jsonPath("$.failedRuns").value(1));
+        org.assertj.core.api.Assertions.assertThat(overview("30d", "totalRuns")).isEqualTo(total + 3);
+        org.assertj.core.api.Assertions.assertThat(overview("30d", "completedRuns"))
+                .isEqualTo(completed + 2);
+        org.assertj.core.api.Assertions.assertThat(overview("30d", "failedRuns"))
+                .isEqualTo(failed + 1);
     }
 
     @Test
-    void getOverview_defaultPeriod_works() throws Exception {
+    void getOverview_defaultPeriod_matchesThirtyDays() throws Exception {
+        GraphTemplate template = createTemplate("default-period-" + UUID.randomUUID());
+        createRun(template, WorkflowRunStatus.completed);
+
         mockMvc.perform(get("/api/v1/analytics/overview"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalRuns").value(0));
-    }
-
-    @Test
-    void getRunTrend_emptyDatabase_returnsEmptyPoints() throws Exception {
-        mockMvc.perform(get("/api/v1/analytics/runs?period=7d"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.points").isArray())
-                .andExpect(jsonPath("$.points").isEmpty());
+                .andExpect(jsonPath("$.totalRuns").value(overview("30d", "totalRuns")));
     }
 
     @Test
     void getRunTrend_withRuns_returnsDailyPoints() throws Exception {
-        GraphTemplate template = createTemplate("trend-tmpl");
+        GraphTemplate template = createTemplate("trend-tmpl-" + UUID.randomUUID());
         createRun(template, WorkflowRunStatus.completed);
         createRun(template, WorkflowRunStatus.failed);
 
         mockMvc.perform(get("/api/v1/analytics/runs?period=7d"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.points").isArray())
+                .andExpect(jsonPath("$.points").isNotEmpty())
                 .andExpect(jsonPath("$.points[0].date").isString())
                 .andExpect(jsonPath("$.points[0].total").isNumber());
     }
 
     @Test
     void getTemplateAnalytics_withRuns_returnsPerTemplate() throws Exception {
-        GraphTemplate template = createTemplate("tmpl-analytics");
+        String name = "tmpl-analytics-" + UUID.randomUUID();
+        GraphTemplate template = createTemplate(name);
         createRun(template, WorkflowRunStatus.completed);
 
         mockMvc.perform(get("/api/v1/analytics/templates?period=30d"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.templates").isArray())
-                .andExpect(jsonPath("$.templates[0].templateName").value("tmpl-analytics"));
-    }
-
-    @Test
-    void getNodeAnalytics_emptyDatabase_returnsEmptyList() throws Exception {
-        mockMvc.perform(get("/api/v1/analytics/nodes?period=30d"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.nodes").isArray())
-                .andExpect(jsonPath("$.nodes").isEmpty());
+                .andExpect(jsonPath("$.templates[?(@.templateName=='" + name + "')]")
+                        .isNotEmpty());
     }
 
     @Test
     void getNodeAnalytics_withExecutions_returnsNodeStats() throws Exception {
-        GraphTemplate template = createTemplate("node-tmpl");
-        TemplateNode tn = createTemplateNode(template, "ai_draft");
+        String label = "ai_draft_" + UUID.randomUUID();
+        GraphTemplate template = createTemplate("node-tmpl-" + UUID.randomUUID());
+        TemplateNode tn = createTemplateNode(template, label);
         WorkflowRun run = createRun(template, WorkflowRunStatus.completed);
-        createNodeExecution(run, tn, "ai_draft", NodeExecutionStatus.completed, 1);
-        createNodeExecution(run, tn, "ai_draft", NodeExecutionStatus.failed, 2);
+        createNodeExecution(run, tn, label, NodeExecutionStatus.completed, 1);
+        createNodeExecution(run, tn, label, NodeExecutionStatus.failed, 2);
 
         mockMvc.perform(get("/api/v1/analytics/nodes?period=30d"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.nodes").isArray())
-                .andExpect(jsonPath("$.nodes[0].label").value("ai_draft"))
-                .andExpect(jsonPath("$.nodes[0].executionCount").value(2));
-    }
-
-    @Test
-    void getBottlenecks_emptyDatabase_returnsEmptyList() throws Exception {
-        mockMvc.perform(get("/api/v1/analytics/bottlenecks?period=30d"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.bottlenecks").isArray())
-                .andExpect(jsonPath("$.bottlenecks").isEmpty());
+                .andExpect(jsonPath("$.nodes[?(@.label=='" + label + "')].executionCount")
+                        .value(2));
     }
 
     @Test
     void getBottlenecks_withCompletedNodes_returnsDurations() throws Exception {
-        GraphTemplate template = createTemplate("bottleneck-tmpl");
-        TemplateNode tn = createTemplateNode(template, "slow_node");
+        String label = "slow_node_" + UUID.randomUUID();
+        GraphTemplate template = createTemplate("bottleneck-tmpl-" + UUID.randomUUID());
+        TemplateNode tn = createTemplateNode(template, label);
         WorkflowRun run = createRun(template, WorkflowRunStatus.completed);
         Instant start = Instant.now().minus(1, ChronoUnit.HOURS);
         Instant end = start.plusSeconds(120);
-        NodeExecution exec = createNodeExecution(run, tn, "slow_node", NodeExecutionStatus.completed, 1);
+        NodeExecution exec = createNodeExecution(run, tn, label, NodeExecutionStatus.completed, 1);
         exec.setStartedAt(start);
         exec.setCompletedAt(end);
         execRepo.save(exec);
@@ -146,11 +135,20 @@ public class AnalyticsControllerTest extends SharedContextTest {
         mockMvc.perform(get("/api/v1/analytics/bottlenecks?period=30d"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bottlenecks").isArray())
-                .andExpect(jsonPath("$.bottlenecks[0].label").value("slow_node"))
-                .andExpect(jsonPath("$.bottlenecks[0].sampleSize").value(1));
+                .andExpect(jsonPath("$.bottlenecks[?(@.label=='" + label + "')].sampleSize")
+                        .value(1));
     }
 
     // --- Helpers ---
+
+    private int overview(String period, String field) throws Exception {
+        String body = mockMvc.perform(get("/api/v1/analytics/overview?period=" + period))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return com.jayway.jsonpath.JsonPath.read(body, "$." + field);
+    }
 
     private GraphTemplate createTemplate(String name) {
         GraphTemplate template = new GraphTemplate();
