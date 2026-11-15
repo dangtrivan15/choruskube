@@ -32,6 +32,9 @@ public class RepoGroup extends SoftwareProject {
     @Column(name = "dind_memory_request")
     private String dindMemoryRequest;
 
+    @Column(name = "test_affected_only", nullable = false)
+    private boolean testAffectedOnly;
+
     @Override
     public RuntimeRequirements getRuntimeRequirements() {
         return new RuntimeRequirements(getAgentImage(), enableDocker, dindImage, agentMemoryRequest, dindMemoryRequest);
@@ -83,5 +86,13 @@ public class RepoGroup extends SoftwareProject {
 
     public void setDindMemoryRequest(String dindMemoryRequest) {
         this.dindMemoryRequest = dindMemoryRequest;
+    }
+
+    public boolean isTestAffectedOnly() {
+        return testAffectedOnly;
+    }
+
+    public void setTestAffectedOnly(boolean testAffectedOnly) {
+        this.testAffectedOnly = testAffectedOnly;
     }
 }
