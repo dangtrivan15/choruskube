@@ -6,7 +6,13 @@
  *   - Page Objects for each major UI area
  */
 import { test as base } from "@playwright/test";
-import { TestApiClient, type GitRepo, type RepoGroupSummary } from "../helpers/api-client";
+import {
+  TestApiClient,
+  uniqueName,
+  type GitRepo,
+  type RepoGroupSummary,
+  type WorkflowRun,
+} from "../helpers/api-client";
 import { installToastClickThrough } from "../helpers/toast";
 import { NavigationPage } from "../pages/navigation.page";
 import { RunListPage } from "../pages/run-list.page";
@@ -70,6 +76,28 @@ export function seededRepos<T extends { url: string }>(repos: T[]): T[] {
 export interface WorkerFixtures {
   workerRepo: WorkerRepoFixture;
   cloneableProject: RepoGroupSummary;
+  failedRun: WorkflowRun;
+  completedRun: WorkflowRun;
+  parkedGateRun: WorkflowRun;
+}
+
+/**
+ * The newest run named exactly `name` that is already at `status`, or else a new `templateName` run
+ * by that name, waited on until it gets there. Backs the read-only run fixtures below; the name must
+ * be stable per worker slot, for the reasons `workerRepo` gives.
+ */
+async function adoptOrStartRun(
+  api: TestApiClient,
+  templateName: string,
+  name: string,
+  status: string,
+  timeoutMs: number,
+): Promise<WorkflowRun> {
+  const existing = (await api.listRuns(status, name)).content.find((r) => r.name === name);
+  if (existing) return api.getRun(existing.id);
+  const template = await api.getTemplateByName(templateName);
+  const started = await api.startRun({ graphTemplateId: template.id, name });
+  return api.waitForRunStatus(started.id, [status], timeoutMs);
 }
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
@@ -140,6 +168,65 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       await use(group);
     },
     { scope: "worker" },
+  ],
+
+  // An e2e-failure-pipeline run: its one node hangs until the 60s node timeout fails it, and the run
+  // parks in awaiting_retry. Each such run costs that minute, so specs share it and must only read
+  // it — a retry or cancel changes what every later reader sees.
+  failedRun: [
+    async ({}, use, workerInfo) => {
+      const api = new TestApiClient();
+      const run = await adoptOrStartRun(
+        api,
+        "e2e-failure-pipeline",
+        `e2e-failed-run-w${workerInfo.parallelIndex}`,
+        "awaiting_retry",
+        150_000,
+      );
+      if (!run.nodeExecutions.some((ne) => ne.label === "failing_step" && ne.status === "failed")) {
+        throw new Error(`run ${run.id} is awaiting_retry, but its failing_step did not fail`);
+      }
+      await use(run);
+    },
+    { scope: "worker", timeout: 180_000 },
+  ],
+
+  // A completed e2e-linear-pipeline run, shared like failedRun and read-only for the same reason.
+  completedRun: [
+    async ({}, use, workerInfo) => {
+      const api = new TestApiClient();
+      await use(
+        await adoptOrStartRun(
+          api,
+          "e2e-linear-pipeline",
+          `e2e-completed-run-w${workerInfo.parallelIndex}`,
+          "completed",
+          120_000,
+        ),
+      );
+    },
+    { scope: "worker", timeout: 150_000 },
+  ],
+
+  // An e2e-human-gate run parked at review_gate, read-only for the same reason as failedRun. A
+  // fresh one per worker, cancelled at teardown: an open gate stays on every approvals page.
+  parkedGateRun: [
+    async ({}, use, workerInfo) => {
+      const api = new TestApiClient();
+      const template = await api.getTemplateByName("e2e-human-gate");
+      // Short: run names past 30 characters are truncated server-side.
+      const started = await api.startRun({
+        graphTemplateId: template.id,
+        name: uniqueName("parked-gate", workerInfo.parallelIndex),
+      });
+      try {
+        await api.waitForNodeStatus(started.id, "review_gate", ["awaiting_human"], 60_000);
+        await use(await api.getRun(started.id));
+      } finally {
+        await api.cancelRun(started.id).catch(() => {});
+      }
+    },
+    { scope: "worker", timeout: 90_000 },
   ],
 
   navigationPage: async ({ page }, use) => {

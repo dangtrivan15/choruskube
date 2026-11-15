@@ -60,64 +60,51 @@ test.describe("status-contrast: run surfaces", () => {
   test("run header and run-list badges, the DAG status word, and a failed node's error block clear 4.5:1", async ({
     runListPage,
     runMonitorPage,
-    api,
+    failedRun,
   }) => {
-    test.slow(); // the failure is driven by a node timeout
-    const template = await api.getTemplateByName("e2e-failure-pipeline");
-    const run = await api.startRun({
-      graphTemplateId: template.id,
-      name: uniqueName("e2e-status-contrast-run"),
+    // The failed node carries an error message, and the run's awaiting_retry is the warning tone.
+    await runMonitorPage.goto(failedRun.id);
+    await runMonitorPage.selectNode("failing_step");
+    await expect(runMonitorPage.detailNodeError).toBeVisible();
+    const dagStatusWord = runMonitorPage.page.locator(
+      '[data-testid="dag-node"][data-label="failing_step"] span.capitalize',
+    );
+
+    await forBothThemes(runMonitorPage.page, async () => {
+      await expectReadable(runMonitorPage.runStatus);
+      await expectOpaque(runMonitorPage.runStatus);
+      await expectToneDot(runMonitorPage.runStatus, "warning");
+      await expectReadable(dagStatusWord);
+      await expectReadable(runMonitorPage.detailNodeError.locator("h4"));
+      await expectReadable(runMonitorPage.detailNodeError.locator("pre"));
     });
 
-    try {
-      // The failing node times out, so the node is "failed" (with an error
-      // message) and the run parks in "awaiting_retry" — the warning tone.
-      await api.waitForNodeStatus(run.id, "failing_step", ["failed"], 120_000);
-      await api.waitForRunStatus(run.id, ["awaiting_retry"], 30_000);
+    await runListPage.goto();
+    await runListPage.waitForTableLoad();
+    // failedRun is shared from early in the suite, so newer runs push it off the unfiltered page 1.
+    await runListPage.filterByStatus("Awaiting Retry");
+    const listBadge = runListPage.page
+      .locator(`[data-run-id="${failedRun.id}"]`)
+      .getByText("awaiting retry", { exact: true });
+    await expect(listBadge).toBeVisible();
 
-      await runMonitorPage.goto(run.id);
-      await runMonitorPage.selectNode("failing_step");
-      await expect(runMonitorPage.detailNodeError).toBeVisible();
-      const dagStatusWord = runMonitorPage.page.locator(
-        '[data-testid="dag-node"][data-label="failing_step"] span.capitalize',
+    await forBothThemes(runListPage.page, async (theme) => {
+      await expectReadable(listBadge);
+      await expectToneDot(listBadge, "warning");
+
+      // Gate-vs-browser: the rendered tint equals the one the unit gate computes.
+      const [er, eg, eb] = await toRgba(
+        runListPage.page,
+        resolveTint(theme === "dark" ? ".dark" : ":root", "status-warning", "tint"),
       );
-
-      await forBothThemes(runMonitorPage.page, async () => {
-        await expectReadable(runMonitorPage.runStatus);
-        await expectOpaque(runMonitorPage.runStatus);
-        await expectToneDot(runMonitorPage.runStatus, "warning");
-        await expectReadable(dagStatusWord);
-        await expectReadable(runMonitorPage.detailNodeError.locator("h4"));
-        await expectReadable(runMonitorPage.detailNodeError.locator("pre"));
-      });
-
-      await runListPage.goto();
-      await runListPage.waitForTableLoad();
-      const listBadge = runListPage.page
-        .locator(`[data-run-id="${run.id}"]`)
-        .getByText("awaiting retry", { exact: true });
-      await expect(listBadge).toBeVisible();
-
-      await forBothThemes(runListPage.page, async (theme) => {
-        await expectReadable(listBadge);
-        await expectToneDot(listBadge, "warning");
-
-        // Gate-vs-browser: the rendered tint equals the one the unit gate computes.
-        const [er, eg, eb] = await toRgba(
-          runListPage.page,
-          resolveTint(theme === "dark" ? ".dark" : ":root", "status-warning", "tint"),
-        );
-        await expect
-          .poll(async () => {
-            const bg = await listBadge.evaluate((el) => getComputedStyle(el).backgroundColor);
-            const [r, g, b, a] = await toRgba(runListPage.page, bg);
-            return a === 1 ? Math.max(Math.abs(r - er), Math.abs(g - eg), Math.abs(b - eb)) : Infinity;
-          })
-          .toBeLessThanOrEqual(1);
-      });
-    } finally {
-      await api.cancelRun(run.id).catch(() => {});
-    }
+      await expect
+        .poll(async () => {
+          const bg = await listBadge.evaluate((el) => getComputedStyle(el).backgroundColor);
+          const [r, g, b, a] = await toRgba(runListPage.page, bg);
+          return a === 1 ? Math.max(Math.abs(r - er), Math.abs(g - eg), Math.abs(b - eb)) : Infinity;
+        })
+        .toBeLessThanOrEqual(1);
+    });
   });
 });
 

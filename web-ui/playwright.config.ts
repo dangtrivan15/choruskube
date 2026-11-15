@@ -15,7 +15,8 @@ const AUTH_FILE = join(__dirname, "e2e/.auth/user.json");
  *   - Temporal, PostgreSQL, object storage
  *
  * Core runs single-tenant with no OIDC provider — the setup project
- * snapshots auth-free storage state for reuse by all tests.
+ * snapshots auth-free storage state for reuse by all tests, and starts
+ * the long-running work a spec only asserts on later (*.setup.ts).
  *
  * (Override base URL via E2E_BASE_URL if needed.)
  *
@@ -76,7 +77,7 @@ export default defineConfig({
   },
 
   projects: [
-    { name: "setup", testMatch: /auth\.setup\.ts/ },
+    { name: "setup", testMatch: /\.setup\.ts$/ },
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"], storageState: AUTH_FILE },

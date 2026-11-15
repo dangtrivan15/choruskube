@@ -21,18 +21,22 @@ test.describe("Run Lifecycle", () => {
       }
     });
 
-    test("status filter changes displayed runs", async ({ runListPage }) => {
+    // completedRun only guarantees the filtered page is not empty.
+    test("status filter shows only runs in the chosen status", async ({ runListPage, completedRun: _ }) => {
       await runListPage.goto();
       await runListPage.waitForTableLoad();
 
-      // Filter to completed runs
       await runListPage.filterByStatus("Completed");
 
-      // Wait for table to reload
-      await runListPage.page.waitForTimeout(1000);
-
-      // Verify the filter is applied (check URL or content)
-      // Run rows should now only contain completed status badges
+      // The table keeps the unfiltered rows on screen until the filtered page arrives, so both
+      // counts are read together and retried until they describe the filtered page.
+      const otherStatusRows = runListPage.runRows.filter({
+        hasNot: runListPage.page.getByText("completed", { exact: true }),
+      });
+      await expect(async () => {
+        expect(await runListPage.runRows.count()).toBeGreaterThan(0);
+        expect(await otherStatusRows.count()).toBe(0);
+      }).toPass();
     });
   });
 
@@ -144,56 +148,6 @@ test.describe("Run Lifecycle", () => {
       await expect(runMonitorPage.runStatus).toBeVisible();
     });
 
-    test("shows Epic -> Story -> Task breadcrumb for a run started from a Task", async ({
-      runMonitorPage,
-      api,
-      cloneableProject,
-    }) => {
-      test.setTimeout(300_000);
-      // Build a real Epic -> Story -> Task chain (same fixture-building pieces
-      // already proven by roadmap.spec.ts / roadmap-graph.spec.ts), then start
-      // the run from the Task rather than a manual/template run — this proves
-      // task_context actually reaches the run detail page end
-      // to end, not just the RunSummary unit tests.
-      const uniqueTitle = uniqueName("E2E Breadcrumb");
-      const epic = await api.createEpic({
-        title: uniqueTitle,
-        description: "Testing run breadcrumb",
-        softwareProjectId: cloneableProject.id,
-      });
-      const storyTitle = uniqueName("Breadcrumb story");
-      const story = await api.createStory(epic.id, {
-        title: storyTitle,
-        description: "desc",
-      });
-      const task = await api.createTask(story.id, {
-        title: "Breadcrumb task",
-        description: "desc",
-      });
-
-      await api.approveStorySpec(story.id);
-      const started = await api.startTask(task.id);
-      expect(started.latestRunId).not.toBeNull();
-
-      // startTask's response already carries the new run's id — go straight to
-      // the run detail page, no UI click-through or status polling needed.
-      await runMonitorPage.goto(started.latestRunId!);
-
-      const breadcrumb = runMonitorPage.roadmapBreadcrumb;
-      await expect(breadcrumb).toBeVisible();
-      await expect(breadcrumb).toContainText(uniqueTitle);
-      await expect(breadcrumb).toContainText(storyTitle);
-      await expect(breadcrumb).toContainText("Breadcrumb task");
-
-      // No cleanup here (unlike roadmap.spec.ts / roadmap-graph.spec.ts fixtures):
-      // starting the Task above has already moved it out of "backlog", and
-      // DefaultEpicService#delete deliberately refuses to delete an Epic with any
-      // started descendant Task ("Can only delete an Epic while all of its Tasks
-      // are still in backlog") — that's intentional, to preserve run history. The
-      // `uniqueTitle` / `storyTitle` uniqueName() suffixes keep this fixture from
-      // colliding with other runs of this spec, so leaving it behind is safe.
-    });
-
     test("long Epic/Story titles keep the breadcrumb on one line, with the full title on hover", async ({
       runMonitorPage,
       api,
@@ -230,6 +184,8 @@ test.describe("Run Lifecycle", () => {
 
       const breadcrumb = runMonitorPage.roadmapBreadcrumb;
       await expect(breadcrumb).toBeVisible();
+      await expect(breadcrumb).toContainText(longStoryTitle);
+      await expect(breadcrumb).toContainText("Breadcrumb truncation task");
       const box = await breadcrumb.boundingBox();
       expect(box).not.toBeNull();
       expect(box!.height).toBeLessThanOrEqual(32);
@@ -243,9 +199,9 @@ test.describe("Run Lifecycle", () => {
         await expect(runMonitorPage.page.getByRole("tooltip")).toContainText(longEpicTitle);
       }).toPass({ timeout: 15_000 });
 
-      // Same reasoning as the breadcrumb test above: the Task has left "backlog", so
-      // deleting the Epic is intentionally refused. uniqueName() keeps this from
-      // colliding with other runs of this spec.
+      // No cleanup: the started Task has left "backlog", and DefaultEpicService#delete refuses an
+      // Epic with any started descendant Task, to preserve run history. The uniqueName() titles
+      // keep this fixture from colliding with other runs of this spec.
     });
 
     test("DAG visualization renders nodes", async ({ runMonitorPage, api }) => {

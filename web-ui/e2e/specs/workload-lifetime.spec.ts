@@ -1,13 +1,10 @@
-import { test, expect, seededRepos } from "../fixtures";
-import { uniqueName } from "../helpers/api-client";
+import { test, expect } from "../fixtures";
 import { workloadObjectsForRun, stagingDirsFor } from "../helpers/docker";
+import { loadWorkloadLifetimeRunId, startWorkloadLifetimeRun } from "../helpers/workload-lifetime";
 
-// Both describe blocks below share one Worker process and one Docker daemon.
-// `fullyParallel: true` would otherwise let the "Docker workload lifetime" test's DinD
-// sidecars run concurrently with "Failure logs", starving FetchPodLogs's bounded retry
-// budget (three 30s attempts, see worker/executor.LogGrace) of real Docker-daemon
-// responsiveness and losing the captured output the latter asserts on. Serial keeps this
-// file's tests on one worker (see PARALLELISM.md for the same mitigation elsewhere).
+// Serial, reclaim test first: the DinD run's sidecars must be gone before "Failure logs" starts a
+// failed run on the same Docker daemon, or they starve FetchPodLogs's bounded retry budget (three
+// 30s attempts, see worker/executor.LogGrace) and lose the captured output that test asserts on.
 test.describe.configure({ mode: "serial" });
 
 /**
@@ -17,8 +14,10 @@ test.describe.configure({ mode: "serial" });
  *
  * The e2e stack's Worker sets a short `WORKLOAD_RETENTION` (30s), but `e2e-dind-isolation`'s two
  * nodes carry a 120s activity timeout, so each node's heartbeat-timeout floor
- * (`executor.Bounds.Retention`) stamps a ~4-minute retention regardless. The poll below budgets
- * for that floor plus the janitor's own 1-minute sweep interval.
+ * (`executor.Bounds.Retention`) stamps a ~4-minute retention regardless, which the janitor's own
+ * 1-minute sweep interval extends. `workload-lifetime.setup.ts` starts the run before the rest of
+ * the suite so that wait has usually passed by the time this test runs. Under a config without that
+ * setup file, the test starts the run itself; the poll below budgets for the whole wait either way.
  */
 test.describe("Docker workload lifetime", () => {
   test("a completed run's agent containers, DinD sidecars, volumes and staging directories are all reclaimed", async ({
@@ -27,20 +26,9 @@ test.describe("Docker workload lifetime", () => {
     test.slow();
     test.setTimeout(9 * 60_000);
 
-    const repos = await api.listGitRepos();
-    const dindRepo = seededRepos(repos.content).find((r) => r.url.endsWith("/dind-repo"));
-    if (!dindRepo) {
-      throw new Error("E2eTestDataSeeder must seed the DinD-enabled e2e-test/dind-repo for this spec");
-    }
+    const runId = loadWorkloadLifetimeRunId() ?? (await startWorkloadLifetimeRun(api)).id;
 
-    const template = await api.getTemplateByName("e2e-dind-isolation");
-    const run = await api.startRun({
-      graphTemplateId: template.id,
-      name: uniqueName("dind-lifetime"),
-      inputs: { git_repo_id: dindRepo.id },
-    });
-
-    const finished = await api.waitForRunStatus(run.id, ["completed"], 120_000);
+    const finished = await api.waitForRunStatus(runId, ["completed"], 120_000);
     expect(finished.status).toBe("completed");
 
     const execIds = finished.nodeExecutions.map((ne) => ne.id);
@@ -48,7 +36,7 @@ test.describe("Docker workload lifetime", () => {
     await expect
       .poll(
         async () => {
-          const objects = await workloadObjectsForRun(run.id);
+          const objects = await workloadObjectsForRun(runId);
           const stagingDirs = await stagingDirsFor(execIds);
           return objects.containers.length === 0 && objects.volumes.length === 0 && stagingDirs.length === 0;
         },
@@ -62,29 +50,12 @@ test.describe("Docker workload lifetime", () => {
 });
 
 test.describe("Failure logs", () => {
-  test("a failed node's log still carries the mock agent's last line", async ({ api }) => {
-    test.slow();
+  test("a failed node's log still carries the mock agent's last line", async ({ api, failedRun }) => {
+    const failingStep = failedRun.nodeExecutions.find((ne) => ne.label === "failing_step")!;
 
-    const template = await api.getTemplateByName("e2e-failure-pipeline");
-    const run = await api.startRun({
-      graphTemplateId: template.id,
-      name: uniqueName("dind-lifetime-failure-logs"),
-    });
-
-    const failingStep = await api.waitForNodeStatus(run.id, "failing_step", ["failed"], 120_000);
-
-    // waitForNodeStatus returns the instant the status column flips to "failed", which the
-    // workflow writes before its failure path's own log entries (pod logs, "Node failed: ...")
-    // — those land moments later via separate activities. Poll instead of reading once, or this
-    // races the workflow and sees only the pre-failure "Agent launched" log line.
-    await expect
-      .poll(
-        async () => {
-          const logs = await api.getNodeLogs(run.id, failingStep.id);
-          return logs.map((l) => l.message).join("\n");
-        },
-        { timeout: 60_000, intervals: [2_000] },
-      )
-      .toContain("Mock agent: timeout scenario");
+    // One read relies on failedRun being in awaiting_retry: the workflow writes a failed node's pod
+    // logs before it parks the run there, not before it marks the node failed.
+    const logs = await api.getNodeLogs(failedRun.id, failingStep.id);
+    expect(logs.map((l) => l.message).join("\n")).toContain("Mock agent: timeout scenario");
   });
 });

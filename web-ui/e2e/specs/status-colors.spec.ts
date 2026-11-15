@@ -70,17 +70,9 @@ test.describe("Run Monitor status colors", () => {
 
   test("awaiting_human renders a color distinct from a completed node's, in both themes", async ({
     runMonitorPage,
-    api,
+    parkedGateRun,
   }) => {
-    const template = await api.getTemplateByName("e2e-human-gate");
-    const run = await api.startRun({
-      graphTemplateId: template.id,
-      name: uniqueName("e2e-status-colors-gate"),
-    });
-
-    await api.waitForNodeStatus(run.id, "review_gate", ["awaiting_human"], 60_000);
-
-    await runMonitorPage.goto(run.id);
+    await runMonitorPage.goto(parkedGateRun.id);
     await expect(runMonitorPage.dagNodes.first()).toBeVisible({ timeout: 15_000 });
 
     expect(await runMonitorPage.nodeStatusColor("review_gate")).not.toBe(
@@ -123,9 +115,10 @@ test.describe("Roadmap Graph status colors and legend fidelity", () => {
     await api.startTask(inProgressTask.id);
 
     // Get doneTask to "done" without depending on its Task-triggered run
-    // actually completing (mirrors roadmap-graph.spec.ts's "creates a
-    // blocking-chain..." test) — completeTask only requires the Task's
-    // most recent linked run to be terminal, not specifically "completed".
+    // actually completing — completeTask only requires the Task's most recent
+    // linked run to be terminal, not specifically "completed". Cancel only once
+    // it is "running": an earlier cancel is overwritten by the orchestrator's
+    // dispatch callback, which writes run status with no terminal-state guard.
     const started = await api.startTask(doneTask.id);
     await api.waitForRunStatus(started.latestRunId!, ["running"], 15_000);
     await api.cancelRun(started.latestRunId!);
@@ -153,9 +146,8 @@ test.describe("Roadmap Graph status colors and legend fidelity", () => {
 
     // No cleanup: starting inProgressTask/doneTask has moved them out of
     // "backlog", and DefaultEpicService#delete refuses to delete an Epic with
-    // any started descendant Task (see roadmap-graph.spec.ts's blocking-chain
-    // test) — the uniqueName() titles keep this fixture from colliding with
-    // concurrent runs.
+    // any started descendant Task — the uniqueName() titles keep this fixture
+    // from colliding with concurrent runs.
   });
 
   test("the blocking-dependency legend swatch matches its edge's stroke color, in both themes", async ({

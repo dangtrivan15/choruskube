@@ -36,10 +36,6 @@ export class ApprovalsPage {
     ).toBeVisible({ timeout: 15_000 });
   }
 
-  async getGateCount(): Promise<number> {
-    return this.gateCards.count();
-  }
-
   async approveGate(nodeLabel: string, feedback?: string) {
     const card = this.gateCards.filter({ hasText: nodeLabel });
     if (feedback) {
@@ -75,9 +71,5 @@ export class ApprovalsPage {
 
   async expectGateVisible(nodeLabel: string) {
     await expect(this.gateCards.filter({ hasText: nodeLabel })).toBeVisible();
-  }
-
-  async expectNoGates() {
-    await expect(this.emptyState).toBeVisible();
   }
 }
