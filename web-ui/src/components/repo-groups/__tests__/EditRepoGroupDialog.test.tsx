@@ -221,5 +221,81 @@ describe("EditRepoGroupDialog", () => {
       expect(await screen.findByText("Dependency cycle: r1 -> r2 -> r1")).toBeInTheDocument();
       expect(onOpenChange).not.toHaveBeenCalledWith(false);
     });
+
+    it("addedMemberGetsRowAndItsEdgesAreSent", async () => {
+      const user = userEvent.setup();
+      mockApi.put.mockResolvedValue(makeGroup());
+      renderWithProviders(
+        <EditRepoGroupDialog
+          group={makeGroup()}
+          open={true}
+          onOpenChange={vi.fn()}
+          availableRepos={availableRepos}
+        />,
+      );
+      await user.click(screen.getByLabelText("Test only affected repos"));
+      expect(screen.queryByRole("group", { name: "r3" })).not.toBeInTheDocument();
+      await user.click(screen.getByLabelText("r3", { selector: "#repo-group-member-r3" }));
+      expect(screen.getByRole("group", { name: "r3" })).toBeInTheDocument();
+      await user.click(screen.getByLabelText("r3 depends on r1"));
+      await user.click(screen.getByRole("button", { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockApi.put).toHaveBeenCalledWith("/repo-groups/g1/test-scope", {
+          affectedOnly: true,
+          dependencies: [{ repoId: "r3", dependsOnRepoIds: ["r1"] }],
+        });
+      });
+    });
+
+    it("removedMemberDropsRowAndEveryEdgeTouchingIt", async () => {
+      const user = userEvent.setup();
+      mockApi.put.mockResolvedValue(makeGroup());
+      renderWithProviders(
+        <EditRepoGroupDialog
+          group={makeGroup({
+            testAffectedOnly: true,
+            dependencies: [
+              { repoId: "r1", dependsOnRepoIds: ["r2"] },
+              { repoId: "r2", dependsOnRepoIds: ["r1"] },
+            ],
+          })}
+          open={true}
+          onOpenChange={vi.fn()}
+          availableRepos={availableRepos}
+        />,
+      );
+      await user.click(screen.getByLabelText("r2", { selector: "#repo-group-member-r2" }));
+      expect(screen.queryByRole("group", { name: "r2" })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("r1 depends on r2")).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockApi.put).toHaveBeenCalledWith("/repo-groups/g1/test-scope", {
+          affectedOnly: true,
+          dependencies: [],
+        });
+      });
+    });
+
+    it("savesWhenAnOlderApiOmitsTheScopeFields", async () => {
+      const user = userEvent.setup();
+      const onOpenChange = vi.fn();
+      mockApi.put.mockResolvedValue(makeGroup());
+      const legacy = makeGroup() as Partial<RepoGroup>;
+      delete legacy.dependencies;
+      delete legacy.testAffectedOnly;
+      renderWithProviders(
+        <EditRepoGroupDialog
+          group={legacy as RepoGroup}
+          open={true}
+          onOpenChange={onOpenChange}
+          availableRepos={availableRepos}
+        />,
+      );
+      await user.click(screen.getByRole("button", { name: /save/i }));
+      await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+      expect(mockApi.put).toHaveBeenCalledTimes(1);
+    });
   });
 });

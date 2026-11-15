@@ -104,24 +104,28 @@ public class RepoGroupService {
     public void replaceTestScope(UUID groupId, boolean affectedOnly, Map<UUID, Set<UUID>> dependsOn) {
         RepoGroup group =
                 groups.findById(groupId).orElseThrow(() -> new NotFoundException("RepoGroup not found: " + groupId));
-        Set<UUID> memberIds = new HashSet<>();
-        group.getMembers().forEach(m -> memberIds.add(m.getGitRepo().getId()));
+        Map<UUID, String> names = new HashMap<>();
+        group.getMembers()
+                .forEach(m -> names.put(m.getGitRepo().getId(), m.getGitRepo().getName()));
         for (Map.Entry<UUID, Set<UUID>> edge : dependsOn.entrySet()) {
-            assertMember(memberIds, edge.getKey());
+            assertMember(names, edge.getKey());
             for (UUID target : edge.getValue()) {
-                assertMember(memberIds, target);
+                assertMember(names, target);
                 if (target.equals(edge.getKey())) {
-                    throw new BadRequestException("A repo cannot depend on itself: " + target);
+                    throw new BadRequestException("A repo cannot depend on itself: " + names.get(target));
                 }
             }
         }
         RepoDependencyGraph.findCycle(dependsOn).ifPresent(cycle -> {
             throw new BadRequestException("Repo dependencies form a cycle: "
-                    + cycle.stream().map(UUID::toString).collect(Collectors.joining(" → ")));
+                    + cycle.stream()
+                            .map(id -> names.getOrDefault(id, id.toString()))
+                            .collect(Collectors.joining(" → ")));
         });
         group.setTestAffectedOnly(affectedOnly);
         dependencies.deleteByRepoGroupId(groupId);
-        // Bulk delete runs as SQL; flush so re-inserting an unchanged edge does not hit its stale row.
+        // Hibernate runs inserts before deletes at flush; without this, re-inserting an unchanged
+        // edge collides with its not-yet-deleted row.
         entityManager.flush();
         List<RepoGroupDependency> edges = new ArrayList<>();
         dependsOn.forEach(
@@ -138,14 +142,18 @@ public class RepoGroupService {
         group.getMembers().forEach(m -> position.put(m.getGitRepo().getId(), m.getPosition()));
         Map<UUID, List<UUID>> result = new LinkedHashMap<>();
         for (RepoGroupDependency edge : dependencies.findByRepoGroupId(groupId)) {
+            // A concurrent member removal can leave an edge to a non-member; it has no position.
+            if (!position.containsKey(edge.getGitRepoId()) || !position.containsKey(edge.getDependsOnGitRepoId())) {
+                continue;
+            }
             result.computeIfAbsent(edge.getGitRepoId(), k -> new ArrayList<>()).add(edge.getDependsOnGitRepoId());
         }
         result.values().forEach(l -> l.sort(Comparator.comparing(position::get)));
         return result;
     }
 
-    private static void assertMember(Set<UUID> memberIds, UUID id) {
-        if (!memberIds.contains(id)) {
+    private static void assertMember(Map<UUID, String> memberNames, UUID id) {
+        if (!memberNames.containsKey(id)) {
             throw new BadRequestException("Repo is not a member of this group: " + id);
         }
     }

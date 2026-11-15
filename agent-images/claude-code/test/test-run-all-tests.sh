@@ -626,7 +626,7 @@ expect_eq() {
     [ "$2" = "$3" ] && ok "$1" || fail "$1 (got [$2], want [$3])"
 }
 
-# affected_off_runs_all: the switch absent is today's behaviour, byte for byte.
+# affected_off_runs_all: with the switch absent every repo runs and the report has no scope or skip text.
 SA="$TESTDIR/affected_off_runs_all"
 make_repo "$SA" x; make_repo "$SA" y
 write_config "$SA" "" "x:y" "y:"
@@ -727,6 +727,22 @@ write_config "$SH" true "x:" "y:"
 run_scoped "$SH"
 expect_eq "unresolvable_base_counts_as_changed: exits 0" "$RC" 0
 expect_eq "unresolvable_base_counts_as_changed: x ran, unchanged y did not" "$(ran_set "$SH")" "x"
+
+# affected_failure_fails_run: x (affected) has a failing suite, y is unaffected.
+SM="$TESTDIR/affected_failure_fails_run"
+make_repo "$SM" x; make_repo "$SM" y
+commit_in "$SM" x
+write_config "$SM" true "x:" "y:"
+jq '.repos[0].test_command = "exit 1"' "$SM/workspace/config.json" > "$SM/config.tmp" \
+    && mv "$SM/config.tmp" "$SM/workspace/config.json"
+run_scoped "$SM"
+expect_eq "affected_failure_fails_run: exits 1" "$RC" 1
+section_of "$SM/workspace/out/test_report.md" x | grep -qF "**Status:** FAILED" \
+    && ok "affected_failure_fails_run: x reported FAILED" \
+    || fail "affected_failure_fails_run: x reported FAILED"
+section_has_line "$SM/workspace/out/test_report.md" y "$SKIP_LINE" \
+    && ok "affected_failure_fails_run: unaffected y still SKIPPED" \
+    || fail "affected_failure_fails_run: unaffected y still SKIPPED"
 
 # changed_set_computed_before_running: x's suite writes an untracked file into unchanged y.
 SI="$TESTDIR/changed_set_computed_before_running"

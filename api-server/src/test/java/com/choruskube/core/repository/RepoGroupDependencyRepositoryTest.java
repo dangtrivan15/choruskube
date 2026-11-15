@@ -89,6 +89,21 @@ class RepoGroupDependencyRepositoryTest extends SharedContextTest {
     }
 
     @Test
+    void gitRepoHardDeleteRemovesItsEdges() {
+        GitRepo a = newRepo();
+        GitRepo b = newRepo();
+        RepoGroup group = newGroup(a, b);
+        repo.saveAndFlush(new RepoGroupDependency(group.getId(), a.getId(), b.getId()));
+        entityManager.clear();
+
+        jdbcTemplate.update("DELETE FROM repo_group_member WHERE git_repo_id = ?", b.getId());
+        jdbcTemplate.update("DELETE FROM git_repo WHERE id = ?", b.getId());
+        entityManager.clear();
+
+        assertThat(repo.findByRepoGroupId(group.getId())).isEmpty();
+    }
+
+    @Test
     void testAffectedOnlyDefaultsFalse() {
         RepoGroup group = newGroup(newRepo());
         entityManager.flush();

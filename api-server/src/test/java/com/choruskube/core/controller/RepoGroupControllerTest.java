@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -485,7 +486,11 @@ class RepoGroupControllerTest extends SharedContextTest {
         mockMvc.perform(put("/api/v1/repo-groups/{id}/test-scope", group.getId())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(scopeBody(true, edge(a.getId(), b.getId()), edge(b.getId(), a.getId()))))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("cy-")))
+                .andExpect(content()
+                        .string(org.hamcrest.Matchers.not(
+                                org.hamcrest.Matchers.containsString(a.getId().toString()))));
     }
 
     @Test

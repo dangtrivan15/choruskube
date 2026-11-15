@@ -7,6 +7,7 @@ import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.dto.RepoGroupRequest;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.model.GitRepo;
+import com.choruskube.core.model.RepoGroupDependency;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.RepoGroupDependencyRepository;
 import com.choruskube.core.repository.RepoGroupRepository;
@@ -102,9 +103,29 @@ class RepoGroupServiceTestScopeTest extends SharedContextTest {
     void replaceTestScope_cycle_400_namesCycle() {
         assertThatThrownBy(() -> service.replaceTestScope(groupId, true, Map.of(x, Set.of(y), y, Set.of(x))))
                 .isInstanceOf(BadRequestException.class)
-                .hasMessageContaining("→")
-                .hasMessageContaining(x.toString())
-                .hasMessageContaining(y.toString());
+                .hasMessageMatching("Repo dependencies form a cycle: dep-[xy]-[0-9a-f-]{36} → dep-[xy]-[0-9a-f-]{36}"
+                        + "( → dep-[xy]-[0-9a-f-]{36})?")
+                .hasMessageNotContaining(x.toString())
+                .hasMessageNotContaining(y.toString());
+    }
+
+    @Test
+    void replaceTestScope_identicalEdgesTwice_succeeds() {
+        service.replaceTestScope(groupId, false, Map.of(x, Set.of(y)));
+        service.replaceTestScope(groupId, true, Map.of(x, Set.of(y)));
+        flushAndClear();
+
+        assertThat(service.dependenciesOf(groupId)).isEqualTo(Map.of(x, List.of(y)));
+    }
+
+    @Test
+    void dependenciesOf_ignoresEdgeToNonMember() {
+        UUID outsider = saveRepo("dep-outsider");
+        dependencies.saveAndFlush(new RepoGroupDependency(groupId, x, outsider));
+        dependencies.saveAndFlush(new RepoGroupDependency(groupId, x, y));
+        flushAndClear();
+
+        assertThat(service.dependenciesOf(groupId)).isEqualTo(Map.of(x, List.of(y)));
     }
 
     @Test

@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import RepoGroupForm from "@/components/repo-groups/RepoGroupForm";
 import RepoGroupTestScopeSection from "@/components/repo-groups/RepoGroupTestScopeSection";
-import type { RepoGroup, RepoGroupRequest, RepoGroupTestScopeRequest } from "@/lib/types";
+import type { RepoGroup, RepoGroupMember, RepoGroupRequest, RepoGroupTestScopeRequest } from "@/lib/types";
 
 /** Order-insensitive form of a scope so equal edge sets compare equal. */
 function canonicalScope(scope: RepoGroupTestScopeRequest, memberIds?: string[]): string {
@@ -114,11 +114,24 @@ function EditRepoGroupBody({
   onDone,
 }: BodyProps) {
   const initialScope: RepoGroupTestScopeRequest = {
-    affectedOnly: group.testAffectedOnly,
-    dependencies: group.dependencies,
+    // An older API omits both fields; treat that as the default scope.
+    affectedOnly: group.testAffectedOnly ?? false,
+    dependencies: group.dependencies ?? [],
   };
   const [scope, setScope] = useState<RepoGroupTestScopeRequest>(initialScope);
-  const members = group.members.slice().sort((a, b) => a.position - b.position);
+  const savedMembers = group.members.slice().sort((a, b) => a.position - b.position);
+  const [selectedIds, setSelectedIds] = useState<string[]>(savedMembers.map((m) => m.gitRepoId));
+  // Rows follow the form's current selection, not the saved members, so a repo added in
+  // this save can already be given dependencies.
+  const members: RepoGroupMember[] = selectedIds.map((id, position) => ({
+    gitRepoId: id,
+    name:
+      availableRepos.find((r) => r.id === id)?.name ??
+      savedMembers.find((m) => m.gitRepoId === id)?.name ??
+      id,
+    position,
+  }));
+  const visibleScope = JSON.parse(canonicalScope(scope, selectedIds)) as RepoGroupTestScopeRequest;
 
   function handleSubmit(body: RepoGroupRequest) {
     // Edges naming a member removed in this same save would be rejected as non-members.
@@ -163,6 +176,7 @@ function EditRepoGroupBody({
         memberRepoIds: members.map((m) => m.gitRepoId),
       }}
       availableRepos={availableRepos}
+      onSelectionChange={setSelectedIds}
       onSubmit={handleSubmit}
       submitLabel="Save"
       submitting={updateMut.isPending || scopeMut.isPending}
@@ -170,7 +184,7 @@ function EditRepoGroupBody({
     >
       <RepoGroupTestScopeSection
         members={members}
-        value={scope}
+        value={visibleScope}
         onChange={setScope}
         error={scopeError}
       />

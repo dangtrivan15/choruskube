@@ -17,6 +17,8 @@ interface RepoGroupFormProps {
   submitting?: boolean;
   /** Inline error message (e.g. from a failed mutation). */
   error?: string | null;
+  /** Called with the current member selection (click order) whenever it changes. */
+  onSelectionChange?: (memberRepoIds: string[]) => void;
   /** Extra sections rendered after the members list, inside the scrolling body. */
   children?: ReactNode;
 }
@@ -40,6 +42,7 @@ export default function RepoGroupForm({
   submitLabel = "Save",
   submitting = false,
   error = null,
+  onSelectionChange,
   children,
 }: RepoGroupFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
@@ -55,9 +58,9 @@ export default function RepoGroupForm({
   const canSave = trimmedName.length > 0 && selected.length > 0;
 
   function toggleMember(id: string) {
-    setSelected((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
+    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
+    setSelected(next);
+    onSelectionChange?.(next);
   }
 
   function handleSubmit() {
