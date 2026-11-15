@@ -33,7 +33,7 @@ waiting build finished sooner than when both ran at once, because they no longer
 at build start would make that inner build wait on its own parent forever. The inner build runs no
 tests, so it never asks for the lock.
 
-**The agent system prompt also asks for one memory-heavy job at a time.** Its Memory section asks the agent not to overlap builds, test suites or compilers, including ones it moved to the background or handed to subagents. It also explains the lock's waiting message, so the agent doesn't read a queued build as hung. The prompt covers jobs the lock can't see, like `go build` or vitest. The lock still holds when the agent ignores the prompt.
+**The agent system prompt also asks for one memory-heavy job at a time.** Its Memory section asks the agent not to overlap builds, test suites or compilers, including ones it moved to the background or handed to subagents. It also says a job a tool reports as waiting is queued, not hung. The section stays tool-agnostic, because the base agent image serves any project, not only Gradle builds. The prompt covers jobs the lock can't see, like `go build` or vitest. The lock still holds when the agent ignores the prompt.
 
 **`api-server/gradle.properties` carries the root's `org.gradle.jvmargs`.** A build started in
 `api-server/` reuses the daemon a root build left. Keep the two lines identical; a mismatch only
