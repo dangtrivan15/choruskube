@@ -173,10 +173,11 @@ public class EpicControllerTest extends SharedContextTest {
     @Test
     void listEpics_returnsAll() throws Exception {
         GitRepo repo = createGitRepo("https://github.com/test/list-all.git");
-        createEpic(repo, "Epic A");
-        createEpic(repo, "Epic B");
+        String tag = "list-all-" + UUID.randomUUID();
+        createEpic(repo, "Epic A " + tag);
+        createEpic(repo, "Epic B " + tag);
 
-        mockMvc.perform(get("/api/v1/epics"))
+        mockMvc.perform(get("/api/v1/epics").param("title", tag))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content.length()").value(2))
                 .andExpect(jsonPath("$.totalElements").value(2));
@@ -209,13 +210,17 @@ public class EpicControllerTest extends SharedContextTest {
     @Test
     void listEpics_readyFilter_pagesCorrectly() throws Exception {
         GitRepo repo = createGitRepo("https://github.com/test/ready-filter-paging.git");
+        String tag = "ready-paging-" + UUID.randomUUID();
         for (int i = 0; i < 3; i++) {
-            Epic epic = createEpic(repo, "Ready Epic " + i);
+            Epic epic = createEpic(repo, "Ready Epic " + i + " " + tag);
             var story = makeStory(epic.getId(), "S" + i);
             taskService.create(story.id(), new TaskRequest("T" + i, "D"));
         }
 
-        mockMvc.perform(get("/api/v1/epics").param("readiness", "READY").param("size", "2"))
+        mockMvc.perform(get("/api/v1/epics")
+                        .param("readiness", "READY")
+                        .param("title", tag)
+                        .param("size", "2"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content.length()").value(2))
                 .andExpect(jsonPath("$.totalElements").value(3))
@@ -235,11 +240,12 @@ public class EpicControllerTest extends SharedContextTest {
         // fall back to the unfiltered page. Seed an Epic that would appear in both the unfiltered
         // list and the READY-filtered list, to prove ?readiness=BLOCKED excludes it too.
         GitRepo repo = createGitRepo("https://github.com/test/ready-filter-blocked-value.git");
-        Epic readyEpic = createEpic(repo, "Ready Epic For Blocked Value Filter");
+        String tag = "blocked-value-" + UUID.randomUUID();
+        Epic readyEpic = createEpic(repo, "Ready Epic For Blocked Value Filter " + tag);
         var unblockedStory = makeStory(readyEpic.getId(), "Unblocked");
         taskService.create(unblockedStory.id(), new TaskRequest("T", "D"));
 
-        mockMvc.perform(get("/api/v1/epics").param("readiness", "BLOCKED"))
+        mockMvc.perform(get("/api/v1/epics").param("readiness", "BLOCKED").param("title", tag))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content.length()").value(0))
                 .andExpect(jsonPath("$.totalElements").value(0));
