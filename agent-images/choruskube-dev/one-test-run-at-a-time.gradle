@@ -1,0 +1,45 @@
+import java.nio.channels.FileChannel
+import java.nio.channels.FileLock
+import java.nio.file.Path
+import java.nio.file.StandardOpenOption
+import org.gradle.api.services.BuildService
+import org.gradle.api.services.BuildServiceParameters
+
+// Each concurrent Gradle build that runs tests forks its own test JVM beside its own daemon, so an
+// agent that backgrounds one build and starts another runs two of each inside one memory limit.
+// A build therefore holds this lock from its first Test task to its end, and other builds queue.
+abstract class OneTestRunAtATime implements BuildService<BuildServiceParameters.None>, AutoCloseable {
+    private FileChannel channel
+    private FileLock lock
+
+    synchronized void acquire() {
+        if (lock != null) {
+            return
+        }
+        Path path = Path.of(System.getProperty('java.io.tmpdir'), "gradle-test-run-${System.getProperty('user.name')}.lock")
+        channel = FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+        lock = channel.tryLock()
+        if (lock == null) {
+            println 'Waiting for the other Gradle build in this container to finish its tests (one test run at a time)...'
+            lock = channel.lock()
+        }
+    }
+
+    @Override
+    void close() {
+        lock?.release()
+        channel?.close()
+    }
+}
+
+// Locking at the first Test task, not at build start, keeps a build launched from inside another
+// (e2e-up.sh's bootJar) from waiting on its own parent, since that inner build runs no tests.
+if (gradle.parent == null) {
+    def testRun = gradle.sharedServices.registerIfAbsent('oneTestRunAtATime', OneTestRunAtATime) {}
+    gradle.allprojects {
+        tasks.withType(Test).configureEach {
+            usesService(testRun)
+            doFirst { testRun.get().acquire() }
+        }
+    }
+}

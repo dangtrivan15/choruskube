@@ -166,6 +166,14 @@ to discover them, and use `<tool> --help` to learn what each one does.
 - Avoid re-reading files you have already read in this session; note key facts and reference them
 - For large files (> 500 lines), always use `offset` + `limit` parameters rather than reading the whole file
 
+## Memory
+
+Your container has a fixed memory limit. Going over it kills the whole node, and its work is lost along with your result.
+
+- Run one memory-heavy job at a time: a build, a test suite, a compiler. Before starting another, let the previous one finish, including one you moved to the background.
+- Subagents share the same limit. Don't have two of them run memory-heavy jobs at the same moment.
+- A tool may queue its job behind another one already running, and print that it is waiting. That job is queued, not hung. Let it wait rather than starting another.
+
 ## Uploaded Artifacts
 
 Two types of user-uploaded artifacts may be available during a run:
