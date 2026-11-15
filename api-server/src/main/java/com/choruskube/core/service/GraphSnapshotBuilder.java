@@ -3,6 +3,8 @@ package com.choruskube.core.service;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.NodeDefinition;
+import com.choruskube.core.model.RepoGroup;
+import com.choruskube.core.model.RepoGroupDependency;
 import com.choruskube.core.model.RuntimeRequirements;
 import com.choruskube.core.model.SoftwareProject;
 import com.choruskube.core.model.TemplateEdge;
@@ -12,6 +14,7 @@ import com.choruskube.core.model.enums.ExecutorType;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeDefinitionRepository;
+import com.choruskube.core.repository.RepoGroupDependencyRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
 import com.choruskube.core.repository.TemplateEdgeRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
@@ -20,6 +23,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +46,7 @@ public class GraphSnapshotBuilder {
     private final SoftwareProjectRepository softwareProjectRepo;
     private final ObjectMapper objectMapper;
     private final DecisionOptionsResolver decisionOptionsResolver;
+    private final RepoGroupDependencyRepository repoGroupDependencyRepo;
 
     public GraphSnapshotBuilder(
             TemplateNodeRepository templateNodeRepo,
@@ -51,7 +56,8 @@ public class GraphSnapshotBuilder {
             GraphTemplateRepository graphTemplateRepo,
             SoftwareProjectRepository softwareProjectRepo,
             ObjectMapper objectMapper,
-            DecisionOptionsResolver decisionOptionsResolver) {
+            DecisionOptionsResolver decisionOptionsResolver,
+            RepoGroupDependencyRepository repoGroupDependencyRepo) {
         this.templateNodeRepo = templateNodeRepo;
         this.nodeDefRepo = nodeDefRepo;
         this.edgeRepo = edgeRepo;
@@ -60,6 +66,7 @@ public class GraphSnapshotBuilder {
         this.softwareProjectRepo = softwareProjectRepo;
         this.objectMapper = objectMapper;
         this.decisionOptionsResolver = decisionOptionsResolver;
+        this.repoGroupDependencyRepo = repoGroupDependencyRepo;
     }
 
     private JsonNode parseJsonField(String json, String fallback) {
@@ -255,6 +262,12 @@ public class GraphSnapshotBuilder {
             snapshot.set("inputs", objectMapper.valueToTree(enrichedInputs));
         }
 
+        Map<UUID, List<UUID>> dependsOn = Map.of();
+        if (project instanceof RepoGroup group) {
+            snapshot.put("test_affected_only", group.isTestAffectedOnly());
+            dependsOn = dependenciesByRepo(group.getId());
+        }
+
         if (!repos.isEmpty()) {
             ArrayNode reposArray = objectMapper.createArrayNode();
             for (GitRepo r : repos) {
@@ -267,6 +280,16 @@ public class GraphSnapshotBuilder {
                 }
                 if (r.getAgentImage() != null) {
                     repoNode.put("agent_image", r.getAgentImage());
+                }
+                List<UUID> dependencyIds = dependsOn.getOrDefault(r.getId(), List.of());
+                if (!dependencyIds.isEmpty()) {
+                    ArrayNode dependsOnNames = repoNode.putArray("depends_on");
+                    // Snapshot order, so the names are stable and match repos[].name.
+                    for (GitRepo candidate : repos) {
+                        if (dependencyIds.contains(candidate.getId())) {
+                            dependsOnNames.add(deriveRepoName(candidate.getUrl()));
+                        }
+                    }
                 }
                 reposArray.add(repoNode);
             }
@@ -323,6 +346,14 @@ public class GraphSnapshotBuilder {
         GitRepo single = resolveGitRepo(inputs);
         if (single != null) return new ResolvedRepos(List.of(single), null);
         return new ResolvedRepos(List.of(), null);
+    }
+
+    private Map<UUID, List<UUID>> dependenciesByRepo(UUID groupId) {
+        Map<UUID, List<UUID>> byRepo = new HashMap<>();
+        for (RepoGroupDependency edge : repoGroupDependencyRepo.findByRepoGroupId(groupId)) {
+            byRepo.computeIfAbsent(edge.getGitRepoId(), k -> new ArrayList<>()).add(edge.getDependsOnGitRepoId());
+        }
+        return byRepo;
     }
 
     private record ResolvedRepos(List<GitRepo> repos, SoftwareProject project) {}

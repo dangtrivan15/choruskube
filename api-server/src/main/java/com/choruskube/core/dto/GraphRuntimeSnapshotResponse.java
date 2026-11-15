@@ -14,18 +14,20 @@ public record GraphRuntimeSnapshotResponse(
         List<RuntimeEdge> edges,
         Map<String, Object> inputs,
         List<RuntimeRepo> repos,
-        @Nullable TaskContext taskContext) {
+        @Nullable TaskContext taskContext,
+        boolean testAffectedOnly) {
 
     public GraphRuntimeSnapshotResponse(List<RuntimeNode> nodes, List<RuntimeEdge> edges, Map<String, Object> inputs) {
-        this(nodes, edges, inputs, List.of(), null);
+        this(nodes, edges, inputs, List.of(), null, false);
     }
 
     public GraphRuntimeSnapshotResponse(
             List<RuntimeNode> nodes, List<RuntimeEdge> edges, Map<String, Object> inputs, List<RuntimeRepo> repos) {
-        this(nodes, edges, inputs, repos, null);
+        this(nodes, edges, inputs, repos, null, false);
     }
 
-    public record RuntimeRepo(String id, String url, String name, String testCommand, String agentImage) {}
+    public record RuntimeRepo(
+            String id, String url, String name, String testCommand, String agentImage, List<String> dependsOn) {}
 
     /**
      * The triggering Task's identity, resolved live off {@code workflow_run.task_id} and the

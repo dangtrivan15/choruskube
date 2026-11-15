@@ -14,6 +14,8 @@ import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -139,6 +141,57 @@ class GraphSnapshotBuilderSoftwareProjectTest extends SharedContextTest {
 
         assertThat(snapshotJson.get("agent_memory_request").asText()).isEqualTo("4Gi");
         assertThat(snapshotJson.get("dind_memory_request").asText()).isEqualTo("3Gi");
+    }
+
+    @Test
+    void repoGroupSnapshot_carriesDependsOnByName() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        GitRepo x = createGitRepoWithName("dx-" + suffix, "https://github.com/test/dx-" + suffix, null, false);
+        GitRepo y = createGitRepoWithName("dy-" + suffix, "https://github.com/test/dy-" + suffix, null, false);
+        RepoGroup group = repoGroupService.create(new RepoGroupRequest(
+                "gdep-" + suffix, null, null, List.of(x.getId(), y.getId()), null, null, null, null));
+        repoGroupService.replaceTestScope(group.getId(), true, Map.of(x.getId(), Set.of(y.getId())));
+
+        JsonNode repos = objectMapper
+                .readTree(snapshotBuilder.buildSnapshotForRun(runFor(group.getId())))
+                .get("repos");
+
+        assertThat(repos.get(0).get("name").asText()).isEqualTo("dx-" + suffix);
+        assertThat(repos.get(0).get("depends_on")).hasSize(1);
+        assertThat(repos.get(0).get("depends_on").get(0).asText()).isEqualTo("dy-" + suffix);
+        assertThat(repos.get(1).has("depends_on")).isFalse();
+    }
+
+    @Test
+    void repoGroupSnapshot_carriesSwitch() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        GitRepo x = createGitRepoWithName("sx-" + suffix, "https://github.com/test/sx-" + suffix, null, false);
+        RepoGroup group = repoGroupService.create(
+                new RepoGroupRequest("gsw-" + suffix, null, null, List.of(x.getId()), null, null, null, null));
+
+        JsonNode off = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(runFor(group.getId())));
+        assertThat(off.get("test_affected_only").asBoolean()).isFalse();
+
+        repoGroupService.replaceTestScope(group.getId(), true, Map.of());
+        JsonNode on = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(runFor(group.getId())));
+        assertThat(on.get("test_affected_only").asBoolean()).isTrue();
+    }
+
+    @Test
+    void singleRepoSnapshot_hasNoSwitch() throws Exception {
+        GitRepo repo = createGitRepoWithName("solo", "https://github.com/test/solo", null, false);
+
+        JsonNode snapshotJson = objectMapper.readTree(snapshotBuilder.buildSnapshotForRun(runFor(repo.getId())));
+
+        assertThat(snapshotJson.has("test_affected_only")).isFalse();
+        assertThat(snapshotJson.get("repos").get(0).has("depends_on")).isFalse();
+    }
+
+    private WorkflowRun runFor(UUID projectId) {
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(createTemplateWithSoftwareProjectSchema().getId());
+        run.setInputs("{\"software_project_id\":\"" + projectId + "\",\"feature_request\":\"test\"}");
+        return runRepo.save(run);
     }
 
     private GraphTemplate createTemplateWithSoftwareProjectSchema() {

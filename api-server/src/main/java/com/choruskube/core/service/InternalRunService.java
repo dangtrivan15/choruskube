@@ -443,18 +443,27 @@ public class InternalRunService {
             List<GraphRuntimeSnapshotResponse.RuntimeRepo> repos = new ArrayList<>();
             if (snapshot.has("repos") && snapshot.get("repos").isArray()) {
                 for (JsonNode r : snapshot.get("repos")) {
+                    List<String> dependsOn = new ArrayList<>();
+                    r.path("depends_on").forEach(n -> dependsOn.add(n.asText()));
                     repos.add(new GraphRuntimeSnapshotResponse.RuntimeRepo(
                             r.path("id").asText(),
                             r.path("url").asText(),
                             r.path("name").asText(),
                             r.path("test_command").asText(null),
-                            r.path("agent_image").asText(null)));
+                            r.path("agent_image").asText(null),
+                            dependsOn));
                 }
             }
 
             GraphRuntimeSnapshotResponse.TaskContext taskContext = buildTaskContext(run);
 
-            return new GraphRuntimeSnapshotResponse(nodes, edges, inputs, repos, taskContext);
+            return new GraphRuntimeSnapshotResponse(
+                    nodes,
+                    edges,
+                    inputs,
+                    repos,
+                    taskContext,
+                    snapshot.path("test_affected_only").asBoolean(false));
         } catch (Exception e) {
             throw new RuntimeException("Failed to build graph runtime snapshot", e);
         }
