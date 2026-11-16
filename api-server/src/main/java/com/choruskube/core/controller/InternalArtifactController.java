@@ -89,8 +89,9 @@ public class InternalArtifactController {
         return ResponseEntity.ok(new PresignResponse(url));
     }
 
-    // A leading/trailing/doubled '/' or a literal '.'/'..' segment is never a real object key;
-    // refusing it here keeps a malformed key from ever reaching the presigner or the store.
+    // A proxy in front of the store that normalises paths rewrites a key with an empty or dot
+    // segment, and the rewritten request no longer matches its signature; refusing the key here
+    // keeps every key working whichever endpoint the run's URLs name.
     private static boolean hasEmptyOrDotSegment(String path) {
         for (String segment : path.split("/", -1)) {
             if (segment.isEmpty() || segment.equals(".") || segment.equals("..")) {

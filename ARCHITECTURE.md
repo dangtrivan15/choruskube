@@ -255,8 +255,9 @@ endpoint instead.
 
 Presign also refuses, with 400 before signing anything, a requested key containing
 an empty path segment (a leading, trailing, or doubled `/`) or a literal `.`/`..`
-segment — none of those is ever a real object key, so there is nothing for the seam
-or the presigner to see.
+segment. A proxy in front of the store that normalises paths would rewrite such a
+key, and the rewritten request no longer matches its signature; refusing the key at
+signing keeps every key behaving the same whichever endpoint a run's URLs name.
 
 ```mermaid
 sequenceDiagram

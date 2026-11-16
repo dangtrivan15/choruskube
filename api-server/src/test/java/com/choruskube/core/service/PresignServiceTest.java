@@ -8,6 +8,7 @@ import com.choruskube.core.config.ArtifactPresigners;
 import java.net.URI;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -39,7 +40,7 @@ class PresignServiceTest {
         when(endpointResolverProvider.getIfAvailable(any()))
                 .thenAnswer(inv -> resolver != null
                         ? resolver
-                        : ((java.util.function.Supplier<ArtifactSigningEndpointResolver>) inv.getArgument(0)).get());
+                        : ((Supplier<ArtifactSigningEndpointResolver>) inv.getArgument(0)).get());
         return new PresignService(artifactPresigners, endpointResolverProvider, "choruskube");
     }
 
@@ -271,5 +272,33 @@ class PresignServiceTest {
                 () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET"));
 
         verify(artifactPresigners, never()).forEndpoint(any());
+    }
+
+    @Test
+    void generatePresignedUrl_seamAnswersNoHost_throwsBeforeSigning() {
+        // An opaque http URI parses with a scheme but no host, so only the host check refuses it.
+        ArtifactSigningEndpointResolver resolver = runId -> Optional.of(URI.create("https:artifacts.example.com"));
+        PresignService service = serviceWithResolver(resolver);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET"));
+
+        verify(artifactPresigners, never()).forEndpoint(any());
+    }
+
+    @Test
+    void generatePresignedUrl_seamAnswersRootPathAndPort_isAccepted() throws Exception {
+        URI endpoint = URI.create("https://artifacts.example.com:8443/");
+        S3Presigner presigner = mock(S3Presigner.class);
+        when(artifactPresigners.forEndpoint(endpoint)).thenReturn(presigner);
+        stubPut(presigner, "https://artifacts.example.com:8443/choruskube/runs/abc/file.txt?sig=ddd");
+
+        PresignService service = serviceWithResolver(runId -> Optional.of(endpoint));
+
+        String url = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "PUT");
+
+        assertEquals("https://artifacts.example.com:8443/choruskube/runs/abc/file.txt?sig=ddd", url);
+        verify(artifactPresigners).forEndpoint(endpoint);
     }
 }

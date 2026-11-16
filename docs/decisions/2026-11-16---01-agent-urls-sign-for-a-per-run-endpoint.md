@@ -52,9 +52,12 @@ the same method and key — the endpoint is folded into the cache key alongside 
 verb and the object path.
 
 **Presign refuses an empty or dot path segment before signing anything.** A path
-containing a leading, trailing, or doubled `/`, or a literal `.`/`..` segment, is
-never a real object key; `InternalArtifactController` now answers 400 for one,
-checked before calling `PresignService` at all.
+containing a leading, trailing, or doubled `/`, or a literal `.`/`..` segment, is one
+a proxy in front of the store that normalises paths would rewrite, after which the
+request no longer matches its signature. Such a key would work on the server's own
+endpoint and fail through a proxy, so `InternalArtifactController` answers 400 for
+it, for every run, before calling `PresignService` at all — every key then behaves
+the same whichever endpoint a run's URLs name.
 
 ## Consequences
 
