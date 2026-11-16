@@ -93,29 +93,83 @@ fi
 
 # --- Step 1: Pull input artifacts via presigned URLs ---
 # Keys are paths ("<source_label>/<filename>"), not flat names, so create each
-# parent dir. Absence is normal — a prior iteration missing on iteration 1, an
-# unattached gate file — so only api-server-required keys are fatal; the rest log and continue.
+# parent dir. Only a missing object (artifact's exit 4) reads as absent — a prior
+# iteration missing on iteration 1, an unattached gate file. Any other failure
+# fails the node instead of running without an input it never confirmed absent.
+
+# Sends a failed callback and exits, for an input failure discovered before the
+# agent ever runs. Running anyway would let the node report success against
+# whatever inputs it happened to have — worse than a failure the platform retries.
+fail_node_before_run() {
+  local message="$1"
+  local body
+  body=$(jq -n \
+    --arg id "$NODE_EXECUTION_ID" \
+    --arg run_id "$RUN_ID" \
+    --arg error "$message" \
+    '{
+      node_execution_id: $id,
+      run_id: $run_id,
+      status: "failed",
+      result: "",
+      artifact_refs: {},
+      error_message: $error,
+      resume_at: null,
+      session_id: null,
+      session_artifact_path: null
+    }')
+  send-callback "$body"
+  exit 1
+}
+
 mkdir -p "$WORKSPACE_IN"
 REQUIRED_KEYS=$(jq -r '.required_input_artifacts // [] | .[]' "$CONFIG_FILE" 2>/dev/null || true)
 INPUT_KEYS=$(jq -r '.input_artifacts // {} | keys[]' "$CONFIG_FILE" 2>/dev/null || true)
+INPUT_ERR_FILE="/tmp/input_artifact.err"
 while IFS= read -r key; do
   [ -z "$key" ] && continue
   MINIO_PATH=$(jq -r ".input_artifacts.\"$key\"" "$CONFIG_FILE")
   DEST="${WORKSPACE_IN}/${key}"
   mkdir -p "$(dirname "$DEST")"
-  if artifact get "$MINIO_PATH" "$DEST" 2>/dev/null; then
+  : > "$INPUT_ERR_FILE" 2>/dev/null || true
+  if artifact get "$MINIO_PATH" "$DEST" 2>"$INPUT_ERR_FILE"; then
     echo "Pulled input artifact: $key from $MINIO_PATH"
-  elif grep -qxF "$key" <<< "$REQUIRED_KEYS"; then
-    echo "ERROR: required input artifact missing: $key ($MINIO_PATH)" >&2
-    exit 1
   else
-    echo "Optional input artifact absent, skipping: $key ($MINIO_PATH)"
+    INPUT_RC=$?
+    if [ "$INPUT_RC" -eq 4 ]; then
+      if grep -qxF "$key" <<< "$REQUIRED_KEYS"; then
+        echo "ERROR: required input artifact missing: $key ($MINIO_PATH)" >&2
+        fail_node_before_run "required input artifact missing: $key ($MINIO_PATH)"
+      else
+        echo "Optional input artifact absent, skipping: $key ($MINIO_PATH)"
+      fi
+    else
+      ERR_EXCERPT=$(tail -c 200 "$INPUT_ERR_FILE" 2>/dev/null || true)
+      echo "ERROR: input artifact could not be fetched: $key ($MINIO_PATH)" >&2
+      fail_node_before_run "input artifact could not be fetched: $key ($MINIO_PATH)${ERR_EXCERPT:+: $ERR_EXCERPT}"
+    fi
   fi
 done <<< "$INPUT_KEYS"
+rm -f "$INPUT_ERR_FILE"
 
-# Pull run log (may not exist for first iteration, that's OK)
+# Pull run log. Absent (exit 4) is normal on a run's first iteration; any other
+# failure fails the node the same way a required input's would.
 if [ -n "$RUN_LOG_PATH" ]; then
-  artifact get "$RUN_LOG_PATH" "${WORKSPACE_IN}/run_log.md" 2>/dev/null || true
+  RUN_LOG_ERR_FILE="/tmp/run_log.err"
+  : > "$RUN_LOG_ERR_FILE" 2>/dev/null || true
+  if artifact get "$RUN_LOG_PATH" "${WORKSPACE_IN}/run_log.md" 2>"$RUN_LOG_ERR_FILE"; then
+    echo "Pulled run log from $RUN_LOG_PATH"
+  else
+    RUN_LOG_RC=$?
+    if [ "$RUN_LOG_RC" -eq 4 ]; then
+      echo "Run log absent, skipping: $RUN_LOG_PATH"
+    else
+      ERR_EXCERPT=$(tail -c 200 "$RUN_LOG_ERR_FILE" 2>/dev/null || true)
+      echo "ERROR: run log could not be fetched ($RUN_LOG_PATH)" >&2
+      fail_node_before_run "run log could not be fetched ($RUN_LOG_PATH)${ERR_EXCERPT:+: $ERR_EXCERPT}"
+    fi
+  fi
+  rm -f "$RUN_LOG_ERR_FILE"
 fi
 
 # --- Step 2: Configure git credentials (before clone, so private repos work) ---
@@ -725,8 +779,9 @@ ${PROMPT}"
     # secret, exactly what an operator needs when a restore degrades to a fresh run.
     #
     # artifact's stderr is captured and excerpted for the same reason: it never prints
-    # the signed URL, only the presign endpoint's error body or curl's -f message —
-    # no signature. Without it a silently degrading restore loses its whole diagnosis.
+    # the signed URL, only its own diagnostic line (a presign error body, or a
+    # transfer's attempt/status line) — no signature. Without it a silently
+    # degrading restore loses its whole diagnosis.
     RESTORE_ERR_FILE="/tmp/session_restore.err"
     # Truncated up front: a failing mkdir short-circuits the && before the redirection
     # creates the file, and a stale file would attach the wrong cause to the warning.
@@ -1113,13 +1168,38 @@ if [ -n "$QUOTA_RESET_AT" ]; then
 fi
 
 # --- Step 5: Push output artifacts via presigned URLs ---
+# A loop in the main shell, not a subshell: a bare failing put in a subshell
+# aborts it under `set -e`, and the subshell's own nonzero exit then aborts
+# this shell too, before Step 6 ever sends a callback — the node would then
+# surface only at its heartbeat timeout. Guarding the put with `if` here keeps
+# the failure in this shell without aborting it, so Step 6 still runs.
 ARTIFACT_REFS="{}"
 if [ -d "$WORKSPACE_OUT" ] && [ "$(ls -A "$WORKSPACE_OUT" 2>/dev/null)" ]; then
-  (cd "$WORKSPACE_OUT" && find . -type f | while read -r file; do
+  OUTPUT_PUT_ERR_FILE="/tmp/output_put.err"
+  OUTPUT_UPLOAD_FAILED=""
+  while IFS= read -r file; do
     rel_path="${file#./}"
-    artifact put "$WORKSPACE_OUT/$rel_path" "${OUTPUT_PATH}${rel_path}"
-  done)
-  ARTIFACT_REFS=$(jq -n --arg path "$OUTPUT_PATH" '{"output": $path}')
+    : > "$OUTPUT_PUT_ERR_FILE" 2>/dev/null || true
+    if artifact put "$WORKSPACE_OUT/$rel_path" "${OUTPUT_PATH}${rel_path}" 2>"$OUTPUT_PUT_ERR_FILE"; then
+      continue
+    fi
+    ERR_EXCERPT=$(tail -c 200 "$OUTPUT_PUT_ERR_FILE" 2>/dev/null || true)
+    OUTPUT_UPLOAD_FAILED="$rel_path${ERR_EXCERPT:+: $ERR_EXCERPT}"
+    break
+  done < <(cd "$WORKSPACE_OUT" && find . -type f)
+  rm -f "$OUTPUT_PUT_ERR_FILE"
+
+  if [ -n "$OUTPUT_UPLOAD_FAILED" ]; then
+    RESULT_STATUS="failed"
+    ERROR_MESSAGE="${ERROR_MESSAGE:+${ERROR_MESSAGE}; }could not upload output artifact: $OUTPUT_UPLOAD_FAILED"
+    ARTIFACT_REFS="{}"
+    # A failed node is retried from scratch, so a park reference or reset
+    # instant here would point the retry at state nothing will resume.
+    SESSION_ARTIFACT_PATH=""
+    QUOTA_RESET_AT=""
+  else
+    ARTIFACT_REFS=$(jq -n --arg path "$OUTPUT_PATH" '{"output": $path}')
+  fi
 fi
 
 # --- Step 6: POST callback to orchestrator ---
