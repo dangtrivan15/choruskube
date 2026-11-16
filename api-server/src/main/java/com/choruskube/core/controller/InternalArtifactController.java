@@ -80,8 +80,23 @@ public class InternalArtifactController {
         if (!runStorageScope.contains(agentExec.getWorkflowRunId(), path)) {
             return ResponseEntity.status(403).body(Map.of("error", "Access denied: path outside allowed scope"));
         }
+        if (hasEmptyOrDotSegment(path)) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Invalid path: must not contain an empty or '.'/'..' segment"));
+        }
 
-        String url = presignService.generatePresignedUrl(path, method.toUpperCase());
+        String url = presignService.generatePresignedUrl(agentExec.getWorkflowRunId(), path, method.toUpperCase());
         return ResponseEntity.ok(new PresignResponse(url));
+    }
+
+    // A leading/trailing/doubled '/' or a literal '.'/'..' segment is never a real object key;
+    // refusing it here keeps a malformed key from ever reaching the presigner or the store.
+    private static boolean hasEmptyOrDotSegment(String path) {
+        for (String segment : path.split("/", -1)) {
+            if (segment.isEmpty() || segment.equals(".") || segment.equals("..")) {
+                return true;
+            }
+        }
+        return false;
     }
 }
