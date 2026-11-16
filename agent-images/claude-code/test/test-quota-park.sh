@@ -720,6 +720,10 @@ build_resume_harness() {
       # endpoint's error body there, never the signed URL, so it is exactly the
       # text the warning must carry.
       echo 'artifact() { echo "artifact $*" >> "$CALL_LOG"; if [ "$1" = "get" ]; then echo "Access denied: path outside allowed scope" >&2; return 1; fi; return 0; }'
+    elif [ "$scenario" = "get_absent" ]; then
+      # Exit 4: the store answered 404, the one status `artifact` reserves for
+      # "no such object".
+      echo 'artifact() { echo "artifact $*" >> "$CALL_LOG"; if [ "$1" = "get" ]; then echo "artifact: GET (attempt 1/5): HTTP 404" >&2; return 4; fi; return 0; }'
     elif [ "$scenario" = "put_fails" ]; then
       echo 'artifact() { echo "artifact $*" >> "$CALL_LOG"; if [ "$1" = "get" ]; then printf stub > "$3"; return 0; fi; [ "$1" = "put" ] && { echo "SIZE:$(wc -c < "$2" | tr -d " ")" >> "$CALL_LOG"; return 1; }; return 0; }'
     else
@@ -810,14 +814,28 @@ else
 fi
 
 # 38c2: the warning names the cause. `artifact` never prints the signed URL --
-# on failure it prints the presign endpoint's error body, and curl's -f message
-# carries no URL either -- so discarding its stderr threw away the whole
-# diagnosis of a silently degrading restore. Asserted as an exact substring of
-# the warning line, not merely as "the text appears somewhere in the output".
+# on failure it prints the presign endpoint's error body or its own per-attempt
+# status line, neither carrying a signature -- so discarding its stderr threw away
+# the whole diagnosis of a silently degrading restore. Asserted as an exact
+# substring of the warning line, not merely as "the text appears somewhere in the
+# output".
 if grep -qF "could not restore the parked session; starting fresh (Access denied: path outside allowed scope)" <<< "$OUT_GET_FAILS"; then
   ok "resume block: the restore warning carries artifact's own diagnostic"
 else
   fail "resume block: the restore warning carries artifact's own diagnostic (got: $OUT_GET_FAILS)"
+fi
+
+# 38c3: a parked session whose object is gone (artifact's exit 4, "no such
+# object") falls back to a fresh run exactly like any other failed restore -- the
+# distinct status that lets Step 1 skip an optional input earns no special case here.
+OUT_GET_ABSENT=$(run_resume_scenario get_absent)
+if grep -q "RESUME_BLOCK_SENTINEL" <<< "$OUT_GET_ABSENT" \
+    && grep -q '^RESUME_SESSION_ID_RESULT:$' <<< "$OUT_GET_ABSENT" \
+    && grep -qF "could not restore the parked session; starting fresh" <<< "$OUT_GET_ABSENT" \
+    && ! grep -q "^artifact put" <<< "$OUT_GET_ABSENT"; then
+  ok "resume block: a missing parked session (exit 4) also falls back to a fresh run"
+else
+  fail "resume block: a missing parked session (exit 4) also falls back to a fresh run (got: $OUT_GET_ABSENT)"
 fi
 
 # 38d: restore succeeds but the consume-once clear fails -- the node must still
@@ -1069,22 +1087,35 @@ LOOP_REFRESH_CALLS=$(grep -c '^ *refresh_quota_reset_at$' "$ENTRYPOINT" || true)
 # it is Step 5 clearing QUOTA_RESET_AT and SESSION_ARTIFACT_PATH on a failed put
 # that stops Step 6 from rendering a rate_limited callback the orchestrator
 # would reject (resume_at required, pointing at a session nothing can resume).
-# `artifact put` is stubbed to fail; `send-callback` is stubbed to capture.
+# `artifact put` is stubbed to fail on one file; `send-callback` is stubbed to capture.
 build_step5_then_6_harness() {
-  # $1 = WORKSPACE_OUT dir (one file already in it), $2 = callback capture file
+  # $1 = WORKSPACE_OUT dir, $2 = callback capture file, $3 = "quota" to start
+  # from an in-flight quota park (anything else: an ordinary completed run),
+  # $4 = output file, relative to $1, whose put fails ("" = none), $5 = log of
+  # every put attempted, one "<local> -> <object>" line each
   {
     echo 'set -euo pipefail'
     printf 'WORKSPACE_OUT=%q\n' "$1"
     echo 'OUTPUT_PATH="acme/runs/run-1/exec-1/out/"'
     echo 'NODE_EXECUTION_ID=exec-1'
     echo 'RUN_ID=run-1'
-    echo 'RESULT_STATUS=rate_limited'
-    echo 'RESULT=""'
-    echo 'ERROR_MESSAGE="Claude quota exhausted; resuming at 15:00 UTC"'
-    printf 'QUOTA_RESET_AT=%q\n' "1787230680"
-    echo 'CLAUDE_SESSION_ID=sess-quota-1'
-    echo 'SESSION_ARTIFACT_PATH="acme/runs/run-1/exec-1/session/sess-quota-1.jsonl"'
-    echo 'artifact() { [ "$1" = "put" ] && { echo "stub: upload refused" >&2; return 1; } || return 0; }'
+    if [ "$3" = "quota" ]; then
+      echo 'RESULT_STATUS=rate_limited'
+      echo 'RESULT=""'
+      echo 'ERROR_MESSAGE="Claude quota exhausted; resuming at 15:00 UTC"'
+      printf 'QUOTA_RESET_AT=%q\n' "1787230680"
+      echo 'CLAUDE_SESSION_ID=sess-quota-1'
+      echo 'SESSION_ARTIFACT_PATH="acme/runs/run-1/exec-1/session/sess-quota-1.jsonl"'
+    else
+      echo 'RESULT_STATUS=completed'
+      echo 'RESULT="all done"'
+      echo 'ERROR_MESSAGE=""'
+      echo 'QUOTA_RESET_AT=""'
+      echo 'CLAUDE_SESSION_ID=sess-1'
+      echo 'SESSION_ARTIFACT_PATH=""'
+    fi
+    printf 'FAIL_PUT=%q\nPUT_LOG=%q\n' "${4:+$1/$4}" "$5"
+    echo 'artifact() { [ "$1" = "put" ] || return 0; echo "$2 -> $3" >> "$PUT_LOG"; if [ "$2" = "$FAIL_PUT" ]; then echo "stub: upload refused" >&2; return 1; fi; return 0; }'
     printf 'send-callback() { printf %%s "$1" > %q; }\n' "$2"
     awk '/^# --- Step 5: Push output artifacts/{f=1} /^# --- Step 6: POST callback/{f=0} f' "$ENTRYPOINT"
     awk '/^# --- Step 6: POST callback to orchestrator ---/{f=1} f{print} /^send-callback "\$CALLBACK_BODY"/{f=0}' "$ENTRYPOINT"
@@ -1095,7 +1126,7 @@ STEP56_OUT_DIR="$TESTDIR/step56_out"
 mkdir -p "$STEP56_OUT_DIR"
 echo "some output" > "$STEP56_OUT_DIR/result.md"
 STEP56_CALLBACK="$TESTDIR/step56_callback.json"
-build_step5_then_6_harness "$STEP56_OUT_DIR" "$STEP56_CALLBACK" > "$TESTDIR/step56.sh"
+build_step5_then_6_harness "$STEP56_OUT_DIR" "$STEP56_CALLBACK" quota result.md "$TESTDIR/step56_puts.log" > "$TESTDIR/step56.sh"
 set +e
 STEP56_OUT=$(bash "$TESTDIR/step56.sh" 2>&1)
 STEP56_RC=$?
@@ -1121,6 +1152,55 @@ if jq -e '.error_message | contains("Claude quota exhausted") and contains("coul
   ok "the failed callback keeps the quota reason and names the upload failure"
 else
   fail "the failed callback keeps the quota reason and names the upload failure (got: $(cat "$STEP56_CALLBACK" 2>/dev/null))"
+fi
+
+# --- Test 42: Step 5 outside a quota hit ---
+# The same Step 5 + Step 6 harness on an ordinary completed run with three
+# outputs, one nested: every put succeeding reports the output prefix, and one
+# failing put fails the node and stops the uploads at that file.
+STEP42_OUT_DIR="$TESTDIR/step42_out"
+mkdir -p "$STEP42_OUT_DIR/sub"
+echo a > "$STEP42_OUT_DIR/a.md"; echo b > "$STEP42_OUT_DIR/b.md"; echo c > "$STEP42_OUT_DIR/sub/c.md"
+run_step42() {
+  # $1 = output file whose put fails ("" = none), $2 = label
+  STEP42_CALLBACK="$TESTDIR/step42_callback_$2.json"
+  STEP42_PUTS="$TESTDIR/step42_puts_$2.log"
+  : > "$STEP42_PUTS"
+  build_step5_then_6_harness "$STEP42_OUT_DIR" "$STEP42_CALLBACK" plain "$1" "$STEP42_PUTS" > "$TESTDIR/step42_$2.sh"
+  set +e
+  STEP42_OUT=$(bash "$TESTDIR/step42_$2.sh" 2>&1)
+  STEP42_RC=$?
+  set -e
+}
+
+run_step42 "" ok
+if [ "$STEP42_RC" -eq 0 ] \
+    && jq -e '.status == "completed" and .error_message == null and .artifact_refs == {"output": "acme/runs/run-1/exec-1/out/"}' \
+      "$STEP42_CALLBACK" >/dev/null 2>&1 \
+    && [ "$(wc -l < "$STEP42_PUTS")" -eq 3 ] \
+    && grep -qxF "$STEP42_OUT_DIR/sub/c.md -> acme/runs/run-1/exec-1/out/sub/c.md" "$STEP42_PUTS"; then
+  ok "every output uploads under the output prefix and the callback references it"
+else
+  fail "every output uploads under the output prefix and the callback references it (rc=$STEP42_RC, out: $STEP42_OUT, callback: $(cat "$STEP42_CALLBACK" 2>/dev/null), puts: $(cat "$STEP42_PUTS"))"
+fi
+
+# Fails the file Step 5 will try first (find's order is the filesystem's), so
+# any put after it would be a put past the failure.
+STEP42_FIRST=$(cd "$STEP42_OUT_DIR" && find . -type f | head -n 1)
+STEP42_FIRST="${STEP42_FIRST#./}"
+run_step42 "$STEP42_FIRST" failed
+if [ "$STEP42_RC" -eq 0 ] \
+    && jq -e --arg f "$STEP42_FIRST" '.status == "failed" and .artifact_refs == {} and .resume_at == null
+        and (.error_message | contains("could not upload output artifact: " + $f) and contains("stub: upload refused"))' \
+      "$STEP42_CALLBACK" >/dev/null 2>&1; then
+  ok "a failed output upload on a completed run reports failed and names the file"
+else
+  fail "a failed output upload on a completed run reports failed and names the file (rc=$STEP42_RC, out: $STEP42_OUT, callback: $(cat "$STEP42_CALLBACK" 2>/dev/null))"
+fi
+if [ "$(wc -l < "$STEP42_PUTS")" -eq 1 ]; then
+  ok "uploads stop at the first failed put"
+else
+  fail "uploads stop at the first failed put (puts: $(cat "$STEP42_PUTS"))"
 fi
 
 echo

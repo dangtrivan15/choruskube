@@ -144,7 +144,7 @@ while IFS= read -r key; do
         echo "Optional input artifact absent, skipping: $key ($MINIO_PATH)"
       fi
     else
-      ERR_EXCERPT=$(head -c 200 "$INPUT_ERR_FILE" 2>/dev/null || true)
+      ERR_EXCERPT=$(tail -c 200 "$INPUT_ERR_FILE" 2>/dev/null || true)
       echo "ERROR: input artifact could not be fetched: $key ($MINIO_PATH)" >&2
       fail_node_before_run "input artifact could not be fetched: $key ($MINIO_PATH)${ERR_EXCERPT:+: $ERR_EXCERPT}"
     fi
@@ -164,7 +164,7 @@ if [ -n "$RUN_LOG_PATH" ]; then
     if [ "$RUN_LOG_RC" -eq 4 ]; then
       echo "Run log absent, skipping: $RUN_LOG_PATH"
     else
-      ERR_EXCERPT=$(head -c 200 "$RUN_LOG_ERR_FILE" 2>/dev/null || true)
+      ERR_EXCERPT=$(tail -c 200 "$RUN_LOG_ERR_FILE" 2>/dev/null || true)
       echo "ERROR: run log could not be fetched ($RUN_LOG_PATH)" >&2
       fail_node_before_run "run log could not be fetched ($RUN_LOG_PATH)${ERR_EXCERPT:+: $ERR_EXCERPT}"
     fi
@@ -1183,7 +1183,7 @@ if [ -d "$WORKSPACE_OUT" ] && [ "$(ls -A "$WORKSPACE_OUT" 2>/dev/null)" ]; then
     if artifact put "$WORKSPACE_OUT/$rel_path" "${OUTPUT_PATH}${rel_path}" 2>"$OUTPUT_PUT_ERR_FILE"; then
       continue
     fi
-    ERR_EXCERPT=$(head -c 200 "$OUTPUT_PUT_ERR_FILE" 2>/dev/null || true)
+    ERR_EXCERPT=$(tail -c 200 "$OUTPUT_PUT_ERR_FILE" 2>/dev/null || true)
     OUTPUT_UPLOAD_FAILED="$rel_path${ERR_EXCERPT:+: $ERR_EXCERPT}"
     break
   done < <(cd "$WORKSPACE_OUT" && find . -type f)

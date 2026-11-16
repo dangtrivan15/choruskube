@@ -19,9 +19,10 @@ resurfaced once its heartbeat finally timed out.
 **A transfer and a presign call both retry what a retry can fix, bounded well
 inside the presigned URL's validity.** Both retry a connection failure, a timeout,
 or HTTP 408/429/5xx, backing off 2s/4s/8s/16s (five attempts total, thirty seconds
-of backoff). A transfer additionally bounds itself to the URL's own validity
-window, never starting a new attempt once it has elapsed, and reuses the same URL
-across its own retries rather than presigning again.
+of backoff). A transfer additionally starts no attempt more than 120 seconds after
+its URL was issued, inside the three minutes or more of validity that even a URL
+served from the presign cache still has, and reuses the same URL across its own
+retries rather than presigning again.
 
 **A 404 on a GET is the only outcome that reports "no such object," and it is final
 at once, with no retry.** Every other outcome — a 403, a malformed presign
@@ -35,9 +36,9 @@ accident.
 optional or is the run log.** A required input that reads "not found" fails the
 node loudly instead of running the agent without it. Any other failure — on any
 input, or on an output upload — fails the node the same way, including a failure
-the previous behavior swallowed silently. Restoring a parked session is the one
-exception: any failure there still falls back to a fresh run, because that outcome
-was always safe.
+the previous behavior swallowed silently. Carrying a session across a quota hit is
+the one exception: a failure to save or restore it still falls back to a fresh run,
+because that outcome was always safe.
 
 **Nothing prints the signed URL or a transfer's response body.** Retried or not,
 the CLI's diagnostics name the method, the object path, the attempt, and the HTTP

@@ -438,6 +438,20 @@ jq -e '.status == "failed" and (.error_message | contains("org/runs/r/run_log.md
   && ok "19e: the failed run log's callback names it and carries the stub's stderr" \
   || fail "19e: the failed run log's callback names it and carries the stub's stderr ($(cat "$CALLBACK_CAPTURE" 2>/dev/null))"
 
+# 19g: the excerpt keeps the end of the CLI's stderr, where its verdict is: a
+# retried failure prints one line per attempt first, which a 200-byte head would
+# fill before the final cause.
+IA_LONG_ERR=""
+for n in 1 2 3; do
+  IA_LONG_ERR+="artifact: GET org/runs/0123456789abcdef0123456789abcdef/0123456789abcdef/out/spec_review.md (attempt $n/5): HTTP 503"$'\n'
+done
+IA_LONG_ERR+="ERROR: transfer failed (HTTP 403)"
+run_step1_harness "org/runs/r/e/out/spec_review.md" 1 "$IA_LONG_ERR" "$TESTDIR/in_long_err" "" "$TESTDIR/step1_19g.sh"
+jq -e '(.error_message | contains("ERROR: transfer failed (HTTP 403)")) and (.error_message | contains("attempt 1/5") | not)' \
+  "$CALLBACK_CAPTURE" >/dev/null 2>&1 \
+  && ok "19g: the callback excerpts the CLI's final verdict, not its first attempts" \
+  || fail "19g: the callback excerpts the CLI's final verdict, not its first attempts ($(cat "$CALLBACK_CAPTURE" 2>/dev/null))"
+
 # 19f: the stub's stderr is excerpted, not discarded to /dev/null — a structural
 # check on the extracted fragment itself, so it can't pass by coincidence of what
 # a particular scenario's stub happened to print.

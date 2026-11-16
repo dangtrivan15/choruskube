@@ -298,9 +298,9 @@ a GET is reported as a distinct, final outcome, "no such object," apart from eve
 other failure. The entrypoint treats only that outcome as absent, and only for an
 optional input or the run log, skipping it; a required input, or any other failure
 on any input or output, fails the node instead of running — or reporting success —
-against a workspace it could not confirm complete. Restoring a parked Claude session
-after a quota hit is the one exception: any failure there degrades to a fresh run,
-since that is always a safe outcome.
+against a workspace it could not confirm complete. Carrying a Claude session across a
+quota hit is the one exception: a failure to save or restore it degrades to a fresh
+run, since that is always a safe outcome.
 
 ```mermaid
 sequenceDiagram

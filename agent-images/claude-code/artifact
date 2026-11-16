@@ -103,11 +103,12 @@ fi
 
 # --- Shared retry classification, for both the presign call and the transfer ---
 
-# curl exit codes for resolve/connect/timeout/TLS-connect/empty-reply/send/recv
-# failures: the ones a retry might actually fix.
+# curl exit codes for resolve/connect/partial-body/timeout/TLS-connect/
+# empty-reply/send/recv/HTTP-2-stream-reset failures: the ones a retry might
+# actually fix. 18 and 92 are a connection a proxy dropped mid-transfer.
 is_retryable_curl_rc() {
   case "$1" in
-    6 | 7 | 28 | 35 | 52 | 55 | 56) return 0 ;;
+    6 | 7 | 18 | 28 | 35 | 52 | 55 | 56 | 92) return 0 ;;
     *) return 1 ;;
   esac
 }
