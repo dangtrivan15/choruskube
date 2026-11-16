@@ -1,7 +1,11 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import com.choruskube.core.config.ArtifactPresigners;
 import com.choruskube.core.config.ObjectStoreConfig;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -9,32 +13,43 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 
 /**
  * Integration test exercising the real AWS SDK v2 presign + object path against a live SeaweedFS
  * (S3-compatible) container.
  *
  * <p>Unit tests mock {@link S3Presigner}, so this is the only check that a real S3-compatible
- * backend actually accepts our presigned URLs. It deliberately builds the clients through the
- * production {@link ObjectStoreConfig} beans (fields set via reflection) so it validates the exact
- * wiring the app ships — path-style addressing, the signing region, and the checksum
- * configuration — rather than a hand-tuned client that could drift from production.
- *
- * <p>The two flows mirror how the agent uses object storage: a presigned PUT (the {@code artifact}
- * CLI uploading a result) and a presigned GET (the agent downloading an input artifact).
+ * backend actually accepts our presigned URLs, actually checks the Host it received against what
+ * was signed, and that signing for a second, deployment-named endpoint produces a URL the same
+ * container still accepts. It deliberately builds the clients through the production {@link
+ * ObjectStoreConfig} beans (fields set via reflection) so it validates the exact wiring the app
+ * ships — path-style addressing, the signing region, and the checksum configuration — rather than
+ * a hand-tuned client that could drift from production.
  */
 @Testcontainers
 class ObjectStorePresignIntegrationTest {
@@ -57,34 +72,49 @@ class ObjectStorePresignIntegrationTest {
     private static final HttpClient HTTP = HttpClient.newHttpClient();
 
     private static S3Client s3;
-    private static PresignService presignService;
+    private static ArtifactPresigners artifactPresigners;
+    private static URI ownEndpoint;
 
-    private static String endpoint() {
-        return "http://" + OBJECT_STORE.getHost() + ":" + OBJECT_STORE.getMappedPort(9000);
-    }
+    // A second, independent authority reaching the exact same container as ownEndpoint (same
+    // mapped port, different host spelling) — proves presigning for a named endpoint signs for
+    // *that* authority specifically, not incidentally whatever the server's own endpoint is.
+    private static URI secondAuthorityEndpoint;
 
     @BeforeAll
     static void setUp() {
+        ownEndpoint = URI.create("http://" + OBJECT_STORE.getHost() + ":" + OBJECT_STORE.getMappedPort(9000));
+        secondAuthorityEndpoint = URI.create("http://127.0.0.1:" + OBJECT_STORE.getMappedPort(9000));
+
         // Build the clients exactly as production does — via the real @Configuration bean methods.
         ObjectStoreConfig config = new ObjectStoreConfig();
-        ReflectionTestUtils.setField(config, "endpoint", endpoint());
+        ReflectionTestUtils.setField(config, "endpoint", ownEndpoint.toString());
         ReflectionTestUtils.setField(config, "accessKey", ACCESS);
         ReflectionTestUtils.setField(config, "secretKey", SECRET);
         ReflectionTestUtils.setField(config, "region", "us-east-1");
 
         s3 = config.s3Client();
-        S3Presigner presigner = config.s3Presigner();
+        artifactPresigners = config.artifactPresigners();
         s3.createBucket(CreateBucketRequest.builder().bucket(BUCKET).build());
-        presignService = new PresignService(presigner, BUCKET);
+    }
+
+    private static PresignService presignServiceWithResolver(ArtifactSigningEndpointResolver resolver) {
+        @SuppressWarnings("unchecked")
+        ObjectProvider<ArtifactSigningEndpointResolver> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable(any()))
+                .thenAnswer(inv -> resolver != null
+                        ? resolver
+                        : ((Supplier<ArtifactSigningEndpointResolver>) inv.getArgument(0)).get());
+        return new PresignService(artifactPresigners, provider, BUCKET);
     }
 
     @Test
     void presignedPut_thenPresignedGet_roundTripsAgainstARealObjectStore() throws Exception {
+        PresignService presignService = presignServiceWithResolver(null);
         String key = "runs/it/out/hello.txt";
         byte[] body = "artifact-bytes-✓".getBytes(StandardCharsets.UTF_8);
 
         // Agent-style upload: PUT the bytes to a presigned PUT URL, as the `artifact` CLI does.
-        String putUrl = presignService.generatePresignedUrl(key, "PUT");
+        String putUrl = presignService.generatePresignedUrl(UUID.randomUUID(), key, "PUT");
         HttpResponse<String> put = HTTP.send(
                 HttpRequest.newBuilder(URI.create(putUrl))
                         .PUT(HttpRequest.BodyPublishers.ofByteArray(body))
@@ -95,11 +125,13 @@ class ObjectStorePresignIntegrationTest {
                 .isBetween(200, 299);
 
         // Agent-style download: GET the bytes back from a presigned GET URL.
-        assertThat(getBytes(presignService.generatePresignedUrl(key, "GET"))).isEqualTo(body);
+        assertThat(getBytes(presignService.generatePresignedUrl(UUID.randomUUID(), key, "GET")))
+                .isEqualTo(body);
     }
 
     @Test
     void serverSideUpload_thenPresignedGet_roundTrips() throws Exception {
+        PresignService presignService = presignServiceWithResolver(null);
         // The real input-artifact flow: the server puts the object (this is the exact
         // S3Client.putObject call shape UploadService uses), the agent fetches it via presigned GET.
         String key = "runs/it/inputs/design.png";
@@ -112,7 +144,142 @@ class ObjectStorePresignIntegrationTest {
                         .build(),
                 RequestBody.fromBytes(body));
 
-        assertThat(getBytes(presignService.generatePresignedUrl(key, "GET"))).isEqualTo(body);
+        assertThat(getBytes(presignService.generatePresignedUrl(UUID.randomUUID(), key, "GET")))
+                .isEqualTo(body);
+    }
+
+    @Test
+    void seamNamingASecondAuthority_signsForThatAuthority_pathStyle() {
+        PresignService presignService = presignServiceWithResolver(runId -> Optional.of(secondAuthorityEndpoint));
+
+        String url = presignService.generatePresignedUrl(UUID.randomUUID(), "runs/it/second-authority.txt", "PUT");
+
+        URI parsed = URI.create(url);
+        assertThat(parsed.getHost()).isEqualTo("127.0.0.1");
+        assertThat(parsed.getPort()).isEqualTo(OBJECT_STORE.getMappedPort(9000));
+        assertThat(parsed.getPath()).isEqualTo("/" + BUCKET + "/runs/it/second-authority.txt");
+    }
+
+    @Test
+    void seamNamingASecondAuthority_putThenGet_roundTripsThroughThatAuthority() throws Exception {
+        UUID runId = UUID.randomUUID();
+        PresignService presignService = presignServiceWithResolver(id -> Optional.of(secondAuthorityEndpoint));
+        String key = "runs/it/second-authority-roundtrip.txt";
+        byte[] body = "second-authority-bytes".getBytes(StandardCharsets.UTF_8);
+
+        String putUrl = presignService.generatePresignedUrl(runId, key, "PUT");
+        HttpResponse<String> put = HTTP.send(
+                HttpRequest.newBuilder(URI.create(putUrl))
+                        .PUT(HttpRequest.BodyPublishers.ofByteArray(body))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(put.statusCode())
+                .as("presigned PUT (second authority) accepted by the object store (body: %s)", put.body())
+                .isBetween(200, 299);
+
+        assertThat(getBytes(presignService.generatePresignedUrl(runId, key, "GET")))
+                .isEqualTo(body);
+    }
+
+    @Test
+    void getSignedUrl_usedForPut_isRefusedByTheStore_andViceVersa() throws Exception {
+        PresignService presignService = presignServiceWithResolver(null);
+        String key = "runs/it/method-mismatch.txt";
+        s3.putObject(PutObjectRequest.builder().bucket(BUCKET).key(key).build(), RequestBody.fromBytes(new byte[] {1}));
+
+        String getUrl = presignService.generatePresignedUrl(UUID.randomUUID(), key, "GET");
+        HttpResponse<String> putWithGetUrl = HTTP.send(
+                HttpRequest.newBuilder(URI.create(getUrl))
+                        .PUT(HttpRequest.BodyPublishers.ofByteArray(new byte[] {2}))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(putWithGetUrl.statusCode())
+                .as("PUT against a GET-signed URL")
+                .isGreaterThanOrEqualTo(400);
+
+        String putUrl = presignService.generatePresignedUrl(UUID.randomUUID(), key + "-other", "PUT");
+        HttpResponse<String> getWithPutUrl = HTTP.send(
+                HttpRequest.newBuilder(URI.create(putUrl)).GET().build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(getWithPutUrl.statusCode())
+                .as("GET against a PUT-signed URL")
+                .isGreaterThanOrEqualTo(400);
+    }
+
+    @Test
+    void urlSignedForOneAuthority_sentDirectlyToAnother_isRefused() throws Exception {
+        PresignService presignService = presignServiceWithResolver(runId -> Optional.of(ownEndpoint));
+        String key = "runs/it/host-bound.txt";
+
+        URI signedForOwnEndpoint = URI.create(presignService.generatePresignedUrl(UUID.randomUUID(), key, "PUT"));
+
+        // Same path and query (same signature), dialled directly against the *other* authority's
+        // socket — both authorities reach the same container, so only the Host sent differs from
+        // what was signed.
+        URI redirectedToSecondAuthority = new URI(
+                secondAuthorityEndpoint.getScheme(),
+                null,
+                secondAuthorityEndpoint.getHost(),
+                secondAuthorityEndpoint.getPort(),
+                signedForOwnEndpoint.getPath(),
+                signedForOwnEndpoint.getQuery(),
+                null);
+
+        HttpResponse<String> response = HTTP.send(
+                HttpRequest.newBuilder(redirectedToSecondAuthority)
+                        .PUT(HttpRequest.BodyPublishers.ofByteArray(new byte[] {3}))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode())
+                .as("same signature sent to a different authority (body: %s)", response.body())
+                .isGreaterThanOrEqualTo(400);
+    }
+
+    @Test
+    void defaultEndpoint_producesTheSameShapeUrl_asThePreChangeBean() throws Exception {
+        S3Presigner rawPresigner = S3Presigner.builder()
+                .endpointOverride(ownEndpoint)
+                .region(Region.of("us-east-1"))
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(ACCESS, SECRET)))
+                .serviceConfiguration(
+                        S3Configuration.builder().pathStyleAccessEnabled(true).build())
+                .build();
+        try {
+            String key = "runs/it/shape-check.txt";
+
+            PresignService presignService = presignServiceWithResolver(null);
+            URI viaService = URI.create(presignService.generatePresignedUrl(UUID.randomUUID(), key, "GET"));
+            URI viaRawPresigner = URI.create(rawPresigner
+                    .presignGetObject(GetObjectPresignRequest.builder()
+                            .signatureDuration(Duration.ofSeconds(900))
+                            .getObjectRequest(GetObjectRequest.builder()
+                                    .bucket(BUCKET)
+                                    .key(key)
+                                    .build())
+                            .build())
+                    .url()
+                    .toString());
+
+            assertThat(viaService.getScheme()).isEqualTo(viaRawPresigner.getScheme());
+            assertThat(viaService.getHost()).isEqualTo(viaRawPresigner.getHost());
+            assertThat(viaService.getPort()).isEqualTo(viaRawPresigner.getPort());
+            assertThat(viaService.getPath()).isEqualTo(viaRawPresigner.getPath());
+            assertThat(queryParamsExcludingSigningTime(viaService))
+                    .isEqualTo(queryParamsExcludingSigningTime(viaRawPresigner));
+        } finally {
+            rawPresigner.close();
+        }
+    }
+
+    private static Map<String, String> queryParamsExcludingSigningTime(URI uri) {
+        Map<String, String> params = new LinkedHashMap<>();
+        for (String pair : uri.getQuery().split("&")) {
+            String[] kv = pair.split("=", 2);
+            if (kv[0].equals("X-Amz-Date") || kv[0].equals("X-Amz-Signature")) {
+                continue;
+            }
+            params.put(kv[0], kv.length > 1 ? kv[1] : "");
+        }
+        return params;
     }
 
     private static byte[] getBytes(String url) throws Exception {

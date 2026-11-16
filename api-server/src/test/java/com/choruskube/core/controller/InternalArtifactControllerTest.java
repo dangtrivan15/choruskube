@@ -1,6 +1,8 @@
 package com.choruskube.core.controller;
 
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -97,7 +99,7 @@ class InternalArtifactControllerTest extends SharedContextTest {
     @Test
     void presign_withValidAgentToken_returnsUrl() throws Exception {
         String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
-        when(presignService.generatePresignedUrl(path, "GET")).thenReturn("https://minio:9000/signed-url");
+        when(presignService.generatePresignedUrl(run.getId(), path, "GET")).thenReturn("https://minio:9000/signed-url");
 
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
                         .param("path", path)
@@ -108,9 +110,23 @@ class InternalArtifactControllerTest extends SharedContextTest {
     }
 
     @Test
+    void presign_withValidAgentToken_passesTheAgentExecutionsRunId() throws Exception {
+        String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
+        when(presignService.generatePresignedUrl(any(), any(), any())).thenReturn("https://minio:9000/signed-url");
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "GET")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isOk());
+
+        verify(presignService).generatePresignedUrl(exec.getWorkflowRunId(), path, "GET");
+    }
+
+    @Test
     void presign_withOrchestratorToken_returnsUrl() throws Exception {
         String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
-        when(presignService.generatePresignedUrl(path, "PUT")).thenReturn("https://minio:9000/put-url");
+        when(presignService.generatePresignedUrl(run.getId(), path, "PUT")).thenReturn("https://minio:9000/put-url");
 
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
                         .param("path", path)
@@ -163,7 +179,7 @@ class InternalArtifactControllerTest extends SharedContextTest {
         // Input attachments moved by RunService land at {orgSlug}/runs/{runId}/inputs/...
         // and must be presignable by the agent.
         String path = "system/runs/" + run.getId() + "/inputs/screenshot.png";
-        when(presignService.generatePresignedUrl(path, "GET")).thenReturn("https://minio:9000/inputs-url");
+        when(presignService.generatePresignedUrl(run.getId(), path, "GET")).thenReturn("https://minio:9000/inputs-url");
 
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
                         .param("path", path)
@@ -209,6 +225,73 @@ class InternalArtifactControllerTest extends SharedContextTest {
                         .param("method", "GET")
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void presign_dotDotSegmentInsideTheTree_isForbidden() throws Exception {
+        // Unchanged RunStorageScope behavior: ".." anywhere in the path already fails contains(),
+        // so this is refused with 403 before the new empty/dot-segment check ever runs.
+        String path = "system/runs/" + run.getId() + "/a/../b";
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "GET")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isForbidden());
+
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any());
+    }
+
+    @Test
+    void presign_doubleSlashSegment_isBadRequest() throws Exception {
+        String path = "system/runs/" + run.getId() + "/a//b";
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "GET")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isBadRequest());
+
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any());
+    }
+
+    @Test
+    void presign_dotSegment_isBadRequest() throws Exception {
+        String path = "system/runs/" + run.getId() + "/./b";
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "GET")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isBadRequest());
+
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any());
+    }
+
+    @Test
+    void presign_trailingSlashSegment_isBadRequest() throws Exception {
+        String path = "system/runs/" + run.getId() + "/a/";
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "GET")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isBadRequest());
+
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any());
+    }
+
+    @Test
+    void presign_leadingEmptySegmentAfterTreePrefix_isBadRequest() throws Exception {
+        String path = "system/runs/" + run.getId() + "//b";
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "GET")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isBadRequest());
+
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any());
     }
 
     @Test

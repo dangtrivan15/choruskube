@@ -11,7 +11,6 @@ import software.amazon.awssdk.core.checksums.ResponseChecksumValidation;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
-import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 /**
  * Wires the S3-compatible object-store clients using the AWS SDK v2. The client talks to any
@@ -62,12 +61,7 @@ public class ObjectStoreConfig {
     }
 
     @Bean
-    public S3Presigner s3Presigner() {
-        return S3Presigner.builder()
-                .endpointOverride(URI.create(endpoint))
-                .region(Region.of(region))
-                .credentialsProvider(credentials())
-                .serviceConfiguration(pathStyle())
-                .build();
+    public ArtifactPresigners artifactPresigners() {
+        return new ArtifactPresigners(URI.create(endpoint), credentials(), Region.of(region), pathStyle());
     }
 }

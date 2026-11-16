@@ -80,8 +80,24 @@ public class InternalArtifactController {
         if (!runStorageScope.contains(agentExec.getWorkflowRunId(), path)) {
             return ResponseEntity.status(403).body(Map.of("error", "Access denied: path outside allowed scope"));
         }
+        if (hasEmptyOrDotSegment(path)) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Invalid path: must not contain an empty or '.'/'..' segment"));
+        }
 
-        String url = presignService.generatePresignedUrl(path, method.toUpperCase());
+        String url = presignService.generatePresignedUrl(agentExec.getWorkflowRunId(), path, method.toUpperCase());
         return ResponseEntity.ok(new PresignResponse(url));
+    }
+
+    // A proxy in front of the store that normalises paths rewrites a key with an empty or dot
+    // segment, and the rewritten request no longer matches its signature; refusing the key here
+    // keeps every key working whichever endpoint the run's URLs name.
+    private static boolean hasEmptyOrDotSegment(String path) {
+        for (String segment : path.split("/", -1)) {
+            if (segment.isEmpty() || segment.equals(".") || segment.equals("..")) {
+                return true;
+            }
+        }
+        return false;
     }
 }

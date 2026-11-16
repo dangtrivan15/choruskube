@@ -273,7 +273,8 @@ class RunScopeInterceptorTest extends SharedContextTest {
     @Test
     void escapeInQueryString_isNotRefusedByTheGuard() throws Exception {
         String decodedPath = "system/runs/" + runA.getId() + "/file.txt";
-        when(presignService.generatePresignedUrl(decodedPath, "GET")).thenReturn("https://minio:9000/signed");
+        when(presignService.generatePresignedUrl(runA.getId(), decodedPath, "GET"))
+                .thenReturn("https://minio:9000/signed");
 
         URI uri = URI.create("/internal/runs/" + runA.getId() + "/node-executions/" + execX.getId()
                 + "/presign?path=system/runs/" + runA.getId() + "%2Ffile.txt&method=GET");

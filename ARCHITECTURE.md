@@ -234,6 +234,60 @@ Inside an agent container the workspace is laid out as:
 A node reads its task from `config.json`, does its work against `repo/`, and writes
 results to `out/`; downstream nodes receive them in their `in/`.
 
+### Who the presigned URL is signed for
+
+The api-server always talks to the object store at its own configured endpoint —
+that never changes. What *can* vary, per run, is the host a presigned URL hands to
+the agent: a deployment whose agents cannot reach the server's own object-store
+endpoint names, per run, a different endpoint to sign for instead, through a seam
+(`ArtifactSigningEndpointResolver`). The open-source core ships only the default
+implementation, which always answers "use the server's own endpoint" — so a
+self-hosted install behaves exactly as before. A deployment that registers its own
+seam implementation can sign for `https://artifacts.example.com` or similar for some
+runs while every other run, and every server-side read or write, still goes through
+the in-cluster endpoint.
+
+A seam answer is validated before it is ever used to sign anything: it must be an
+`http`/`https` scheme plus a host plus an optional port, nothing else — no path,
+query, fragment, or userinfo. A seam that throws fails the presign request outright;
+it is never treated as "no answer" and silently signed against the server's own
+endpoint instead.
+
+Presign also refuses, with 400 before signing anything, a requested key containing
+an empty path segment (a leading, trailing, or doubled `/`) or a literal `.`/`..`
+segment. A proxy in front of the store that normalises paths would rewrite such a
+key, and the rewritten request no longer matches its signature; refusing the key at
+signing keeps every key behaving the same whichever endpoint a run's URLs name.
+
+```mermaid
+sequenceDiagram
+  participant A as Agent container
+  participant P as a proxy in front of the store
+  participant API as api-server
+  participant R as a deployment's signing-endpoint seam
+  participant D as Database
+  participant S as Object store
+
+  A->>API: presign request for a key in its run, Bearer job secret
+  API->>D: job secret matches the execution, and the execution belongs to the path's run
+  API->>API: key inside the run's storage tree, with no empty or dot segment
+  API->>R: endpoint for this run
+  alt the deployment names another endpoint for this run
+    R-->>API: that endpoint
+    API->>API: sign the GET or PUT for that endpoint, 15-minute expiry, cached per endpoint and key
+    API-->>A: presigned URL on that hostname
+    A->>P: GET or PUT on the URL, signature in the query, no S3 headers
+    P->>S: forwarded with Host, path and query exactly as signed
+  else no seam registered, or it names nothing for this run
+    R-->>API: nothing, so the server's own endpoint
+    API->>API: sign the GET or PUT for the in-cluster endpoint
+    API-->>A: presigned URL on the in-cluster host
+    A->>S: GET or PUT on the in-cluster host
+  end
+  S->>S: verify the signature against the Host received, then authorize the identity
+  S-->>A: the object, or 200 stored
+```
+
 ## State and realtime updates
 
 The **api-server is the single source of truth** for run and execution state,
