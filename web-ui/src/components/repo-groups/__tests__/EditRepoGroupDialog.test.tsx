@@ -3,7 +3,10 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import EditRepoGroupDialog from "@/components/repo-groups/EditRepoGroupDialog";
+import { connectInShell } from "@/__tests__/reactFlowShell";
 import type { RepoGroup } from "@/lib/types";
+
+vi.mock("@xyflow/react", async () => (await import("@/__tests__/reactFlowShell")).reactFlowShell);
 
 vi.mock("@/lib/api", async () => ({
   apiErrorMessage: (err: unknown, fallback: string) =>
@@ -190,7 +193,8 @@ describe("EditRepoGroupDialog", () => {
         />,
       );
       await user.click(screen.getByLabelText("Test only affected repos"));
-      await user.click(screen.getByLabelText("r1 depends on r2"));
+      await screen.findByTestId("flow-node-r1");
+      connectInShell("r1", "r2");
       await user.click(screen.getByRole("button", { name: /save/i }));
 
       await waitFor(() => {
@@ -222,7 +226,7 @@ describe("EditRepoGroupDialog", () => {
       expect(onOpenChange).not.toHaveBeenCalledWith(false);
     });
 
-    it("addedMemberGetsRowAndItsEdgesAreSent", async () => {
+    it("addedMemberGetsABoxAndItsArrowsAreSent", async () => {
       const user = userEvent.setup();
       mockApi.put.mockResolvedValue(makeGroup());
       renderWithProviders(
@@ -234,10 +238,11 @@ describe("EditRepoGroupDialog", () => {
         />,
       );
       await user.click(screen.getByLabelText("Test only affected repos"));
-      expect(screen.queryByRole("group", { name: "r3" })).not.toBeInTheDocument();
+      await screen.findByTestId("flow-node-r1");
+      expect(screen.queryByTestId("flow-node-r3")).not.toBeInTheDocument();
       await user.click(screen.getByLabelText("r3", { selector: "#repo-group-member-r3" }));
-      expect(screen.getByRole("group", { name: "r3" })).toBeInTheDocument();
-      await user.click(screen.getByLabelText("r3 depends on r1"));
+      expect(screen.getByTestId("flow-node-r3")).toBeInTheDocument();
+      connectInShell("r3", "r1");
       await user.click(screen.getByRole("button", { name: /save/i }));
 
       await waitFor(() => {
@@ -248,7 +253,7 @@ describe("EditRepoGroupDialog", () => {
       });
     });
 
-    it("removedMemberDropsRowAndEveryEdgeTouchingIt", async () => {
+    it("removedMemberDropsItsBoxAndEveryArrowTouchingIt", async () => {
       const user = userEvent.setup();
       mockApi.put.mockResolvedValue(makeGroup());
       renderWithProviders(
@@ -265,9 +270,13 @@ describe("EditRepoGroupDialog", () => {
           availableRepos={availableRepos}
         />,
       );
+      await screen.findByTestId("flow-node-r2");
+      expect(screen.getByRole("button", { name: "Remove: r1 depends on r2" })).toBeInTheDocument();
       await user.click(screen.getByLabelText("r2", { selector: "#repo-group-member-r2" }));
-      expect(screen.queryByRole("group", { name: "r2" })).not.toBeInTheDocument();
-      expect(screen.queryByLabelText("r1 depends on r2")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("flow-node-r2")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Remove: r1 depends on r2" }),
+      ).not.toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: /save/i }));
 
       await waitFor(() => {

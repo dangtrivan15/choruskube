@@ -1,8 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import RepoGroupTestScopeSection from "@/components/repo-groups/RepoGroupTestScopeSection";
+import { connectInShell } from "@/__tests__/reactFlowShell";
 import type { RepoGroupMember, RepoGroupTestScopeRequest } from "@/lib/types";
+
+vi.mock("@xyflow/react", async () => (await import("@/__tests__/reactFlowShell")).reactFlowShell);
 
 const members: RepoGroupMember[] = [
   { gitRepoId: "r1", name: "alpha", position: 0 },
@@ -24,10 +27,10 @@ describe("RepoGroupTestScopeSection", () => {
         "Runs a repo's tests only when the run changed it or a repo it depends on.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText("alpha")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("repo-dependency-graph")).not.toBeInTheDocument();
   });
 
-  it("togglingOnShowsOneRowPerMember", async () => {
+  it("togglingOnCallsOnChange", async () => {
     const onChange = vi.fn();
     const user = userEvent.setup();
     render(<RepoGroupTestScopeSection members={members} value={off} onChange={onChange} />);
@@ -37,48 +40,39 @@ describe("RepoGroupTestScopeSection", () => {
     expect(onChange).toHaveBeenCalledWith({ affectedOnly: true, dependencies: [] });
   });
 
-  it("showsOneRowPerMemberWhenOn", () => {
+  it("showsOneBoxPerMemberWhenOn", async () => {
     render(<RepoGroupTestScopeSection members={members} value={on} onChange={vi.fn()} />);
 
-    for (const name of ["alpha", "beta", "gamma"]) {
-      expect(screen.getByRole("group", { name })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("repo-dependency-graph")).toHaveAttribute("data-layout-ready", "true"),
+    );
+    for (const id of ["r1", "r2", "r3"]) {
+      expect(screen.getByTestId(`flow-node-${id}`)).toBeInTheDocument();
     }
   });
 
-  it("rowOptionsExcludeTheMemberItself", () => {
-    render(<RepoGroupTestScopeSection members={members} value={on} onChange={vi.fn()} />);
+  it("aGroupOfOneGetsAHintInsteadOfAGraph", () => {
+    render(<RepoGroupTestScopeSection members={members.slice(0, 1)} value={on} onChange={vi.fn()} />);
 
-    expect(screen.queryByLabelText("alpha depends on alpha")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("alpha depends on beta")).toBeInTheDocument();
-    expect(screen.getByLabelText("alpha depends on gamma")).toBeInTheDocument();
+    expect(screen.queryByTestId("repo-dependency-graph")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Add another repo to this group to draw dependencies between them."),
+    ).toBeInTheDocument();
   });
 
-  it("selectingADependencyCallsOnChange", async () => {
+  it("drawingAnArrowCallsOnChangeWithTheSwitchKept", async () => {
     const onChange = vi.fn();
-    const user = userEvent.setup();
     render(<RepoGroupTestScopeSection members={members} value={on} onChange={onChange} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("repo-dependency-graph")).toHaveAttribute("data-layout-ready", "true"),
+    );
 
-    await user.click(screen.getByLabelText("alpha depends on beta"));
+    connectInShell("r1", "r2");
 
     expect(onChange).toHaveBeenCalledWith({
       affectedOnly: true,
       dependencies: [{ repoId: "r1", dependsOnRepoIds: ["r2"] }],
     });
-  });
-
-  it("unselectingTheLastDependencyDropsTheRow", async () => {
-    const onChange = vi.fn();
-    const user = userEvent.setup();
-    const value = {
-      affectedOnly: true,
-      dependencies: [{ repoId: "r1", dependsOnRepoIds: ["r2"] }],
-    };
-    render(<RepoGroupTestScopeSection members={members} value={value} onChange={onChange} />);
-
-    expect(screen.getByLabelText("alpha depends on beta")).toBeChecked();
-    await user.click(screen.getByLabelText("alpha depends on beta"));
-
-    expect(onChange).toHaveBeenCalledWith({ affectedOnly: true, dependencies: [] });
   });
 
   it("offKeepsValues", async () => {

@@ -310,7 +310,7 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
     // Member names are the server-derived display names the dialog labels use.
     const nameA = group.members.find((m) => m.gitRepoId === repoA.id)!.name;
     const nameB = group.members.find((m) => m.gitRepoId === repoB.id)!.name;
-    const dependsLabel = `${nameA} depends on ${nameB}`;
+    const removeAOnB = `Remove: ${nameA} depends on ${nameB}`;
 
     async function openEditDialog() {
       await page.goto("/git-repos");
@@ -322,14 +322,27 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
       ).toBeVisible();
     }
 
-    // 1. Switch on, make A depend on B, save.
+    // 1. Switch on, draw A -> B (click A's outgoing dot, then B's incoming one), save.
     await openEditDialog();
     const affectedSwitch = page.getByRole("switch", {
       name: "Test only affected repos",
     });
     await expect(affectedSwitch).not.toBeChecked();
     await affectedSwitch.check();
-    await page.getByLabel(dependsLabel, { exact: true }).check();
+    await expect(page.getByTestId("repo-dependency-graph")).toHaveAttribute(
+      "data-layout-ready",
+      "true",
+    );
+    await page.getByTestId(`repo-dependency-out-${repoA.id}`).click();
+    await page.getByTestId(`repo-dependency-in-${repoB.id}`).click();
+    await expect(page.getByRole("button", { name: removeAOnB, exact: true })).toBeVisible();
+
+    // From the keyboard, the canvas refuses B -> A on top of A -> B and says why.
+    await page.getByRole("button", { name: `${nameB} depends on…`, exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await page.getByRole("button", { name: `…depends on ${nameA}`, exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("alert")).toContainText("would make a loop");
     await page.getByRole("button", { name: /^save$/i }).click();
     await expect(
       page.getByRole("heading", { name: /edit repo group/i }),
@@ -341,10 +354,10 @@ test.describe("Repo Groups (UI) launches a run via software_project_id", () => {
     await expect(
       page.getByRole("switch", { name: "Test only affected repos" }),
     ).toBeChecked();
-    await expect(page.getByLabel(dependsLabel, { exact: true })).toBeChecked();
+    await expect(page.getByRole("button", { name: removeAOnB, exact: true })).toBeVisible();
     await expect(
-      page.getByLabel(`${nameB} depends on ${nameA}`, { exact: true }),
-    ).not.toBeChecked();
+      page.getByRole("button", { name: `Remove: ${nameB} depends on ${nameA}`, exact: true }),
+    ).toHaveCount(0);
 
     // 3. The server refuses a cycle: B -> A on top of A -> B.
     const cycle = await api.putRepoGroupTestScope(group.id, {
