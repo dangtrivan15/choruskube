@@ -145,14 +145,16 @@ A proxy may refuse:
 - a `/worker` or `/internal` request that carries no bearer credential. A Worker started with no
   token then sees the proxy's own refusal in its logs instead of the api-server's.
 
-This mirrors the two credential tiers described under [Environment](#environment) and
-[Credentials](#credentials): the Fleet credential that authenticates every `/worker/**` call, and
-an agent's own job secret, scoped to its own execution's window under `/internal`.
+The two path shapes a proxy must pass are exactly where the api-server accepts a credential other
+than the orchestrator's: the Fleet credential on every `/worker/**` call (see
+[Configuring which Fleet a Worker serves](#configuring-which-fleet-a-worker-serves)), and an
+agent's own job secret, which `InternalAuthFilter` accepts only at or under that agent's own
+execution path.
 
 ## What a Worker's network must let out
 
-Hosts below are given by role, not by a fixed list of real hostnames, since this file is public
-and serves every deployment. A Worker's own outbound traffic resolves to four roles:
+Hosts are given by role, since each deployment names its own. A Fleet's outbound traffic — the
+Worker's, its agents' and its container runtime's — goes to four roles:
 
 - the configured `API_SERVER_URL`;
 - the Temporal endpoint that registration returns, or the static `TEMPORAL_ADDRESS` when
@@ -163,7 +165,7 @@ and serves every deployment. A Worker's own outbound traffic resolves to four ro
 | Caller | Destination | Protocol | What for |
 |---|---|---|---|
 | Worker | API server | HTTPS | `/worker` routes: registration and its once-a-minute renewal, the node-execution read, workload prepare and complete, status, logs, GitHub token scope |
-| Worker | Temporal endpoint | gRPC over TLS on HTTP/2 | polling, results and heartbeats, as the README's Temporal proxy section already pins |
+| Worker | Temporal endpoint | gRPC over TLS on HTTP/2 | polling, results and heartbeats, as [Reaching Temporal through a proxy](#reaching-temporal-through-a-proxy) pins |
 | Worker | GitHub API, Anthropic API, and the registry its own registry login names | HTTPS | the Fleet's own credentials: gate compares and merges, issues, branch cleanup, credential health checks |
 | Agent | API server | HTTPS | its own execution's `/internal` routes |
 | Agent | object-store host | HTTPS | presigned artifact reads and writes, with no credential |
@@ -171,10 +173,10 @@ and serves every deployment. A Worker's own outbound traffic resolves to four ro
 | Agent | Worker callback port | HTTP inside the Fleet's network | completion, heartbeat, GitHub token; not egress |
 | Container runtime | image registry | HTTPS | the Worker, agent and DinD images, pulled with no login |
 | Container runtime | Docker Hub | HTTPS | the default DinD image, when no other is configured |
-| Agent and DinD workloads | the repo's own package and image sources | as the build needs | the customer's build, not listed by us |
+| Agent and DinD workloads | the repo's own package and image sources | as the build needs | the customer's build, not listed here |
 
-Nothing flows inward — the control plane never dials a Worker, and an agent reaches the Worker's
-own callback port inside the Fleet's own network, not egress to anything of ours.
+Nothing flows inward: the control plane never dials a Worker, and an agent reaches the Worker's
+callback port inside the Fleet's own network.
 
 ## Environment
 
