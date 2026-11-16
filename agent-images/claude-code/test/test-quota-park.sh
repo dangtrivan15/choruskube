@@ -1062,6 +1062,67 @@ LOOP_REFRESH_CALLS=$(grep -c '^ *refresh_quota_reset_at$' "$ENTRYPOINT" || true)
   && ok "the quota re-check runs at the first detection and in all four retry loops" \
   || fail "the quota re-check runs at the first detection and in all four retry loops (found $LOOP_REFRESH_CALLS of 5)"
 
+# --- Test 41: a failed output upload during a quota hit still reports a
+# failed callback, never a rejectable park ---
+# Extracts the real Step 5 (output upload loop) and Step 6 (callback
+# construction) together by marker -- they must run in the same shell, because
+# it is Step 5 clearing QUOTA_RESET_AT and SESSION_ARTIFACT_PATH on a failed put
+# that stops Step 6 from rendering a rate_limited callback the orchestrator
+# would reject (resume_at required, pointing at a session nothing can resume).
+# `artifact put` is stubbed to fail; `send-callback` is stubbed to capture.
+build_step5_then_6_harness() {
+  # $1 = WORKSPACE_OUT dir (one file already in it), $2 = callback capture file
+  {
+    echo 'set -euo pipefail'
+    printf 'WORKSPACE_OUT=%q\n' "$1"
+    echo 'OUTPUT_PATH="acme/runs/run-1/exec-1/out/"'
+    echo 'NODE_EXECUTION_ID=exec-1'
+    echo 'RUN_ID=run-1'
+    echo 'RESULT_STATUS=rate_limited'
+    echo 'RESULT=""'
+    echo 'ERROR_MESSAGE="Claude quota exhausted; resuming at 15:00 UTC"'
+    printf 'QUOTA_RESET_AT=%q\n' "1787230680"
+    echo 'CLAUDE_SESSION_ID=sess-quota-1'
+    echo 'SESSION_ARTIFACT_PATH="acme/runs/run-1/exec-1/session/sess-quota-1.jsonl"'
+    echo 'artifact() { [ "$1" = "put" ] && { echo "stub: upload refused" >&2; return 1; } || return 0; }'
+    printf 'send-callback() { printf %%s "$1" > %q; }\n' "$2"
+    awk '/^# --- Step 5: Push output artifacts/{f=1} /^# --- Step 6: POST callback/{f=0} f' "$ENTRYPOINT"
+    awk '/^# --- Step 6: POST callback to orchestrator ---/{f=1} f{print} /^send-callback "\$CALLBACK_BODY"/{f=0}' "$ENTRYPOINT"
+  }
+}
+
+STEP56_OUT_DIR="$TESTDIR/step56_out"
+mkdir -p "$STEP56_OUT_DIR"
+echo "some output" > "$STEP56_OUT_DIR/result.md"
+STEP56_CALLBACK="$TESTDIR/step56_callback.json"
+build_step5_then_6_harness "$STEP56_OUT_DIR" "$STEP56_CALLBACK" > "$TESTDIR/step56.sh"
+set +e
+STEP56_OUT=$(bash "$TESTDIR/step56.sh" 2>&1)
+STEP56_RC=$?
+set -e
+
+[ "$STEP56_RC" -eq 0 ] && ok "a failed output upload during a quota hit does not crash the pod" \
+  || fail "a failed output upload during a quota hit does not crash the pod (rc=$STEP56_RC, got: $STEP56_OUT)"
+
+if jq -e '
+    .status == "failed"
+    and .resume_at == null
+    and .session_id == null
+    and .session_artifact_path == null
+    and .artifact_refs == {}
+  ' "$STEP56_CALLBACK" >/dev/null 2>&1; then
+  ok "a failed output upload during a quota hit reports failed with no park reference"
+else
+  fail "a failed output upload during a quota hit reports failed with no park reference (got: $(cat "$STEP56_CALLBACK" 2>/dev/null))"
+fi
+
+if jq -e '.error_message | contains("Claude quota exhausted") and contains("could not upload output artifact")' \
+    "$STEP56_CALLBACK" >/dev/null 2>&1; then
+  ok "the failed callback keeps the quota reason and names the upload failure"
+else
+  fail "the failed callback keeps the quota reason and names the upload failure (got: $(cat "$STEP56_CALLBACK" 2>/dev/null))"
+fi
+
 echo
 echo "PASS: $PASS  FAIL: $FAIL"
 [ "$FAIL" -eq 0 ]

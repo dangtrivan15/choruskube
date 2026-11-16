@@ -288,6 +288,42 @@ sequenceDiagram
   S-->>A: the object, or 200 stored
 ```
 
+### How a transfer tells a missing object from a failed one
+
+A transfer judges its own outcome rather than trusting a bare success or failure.
+The agent's artifact CLI retries a connection failure, a timeout, or an HTTP
+408/429/5xx, backing off within the presigned URL's remaining validity window, and
+never retries a refusal (403) or a malformed request — those fail at once. A 404 on
+a GET is reported as a distinct, final outcome, "no such object," apart from every
+other failure. The entrypoint treats only that outcome as absent, and only for an
+optional input or the run log, skipping it; a required input, or any other failure
+on any input or output, fails the node instead of running — or reporting success —
+against a workspace it could not confirm complete. Restoring a parked Claude session
+after a quota hit is the one exception: any failure there degrades to a fresh run,
+since that is always a safe outcome.
+
+```mermaid
+sequenceDiagram
+  participant A as Agent container
+  participant P as A proxy in front of the store
+  participant S as Object store
+  participant W as Worker
+
+  A->>P: request with no signature, an Authorization header or a copy-source header
+  P-->>A: 403, never forwarded
+  A->>A: a refusal is a failed transfer, never a missing object
+  A->>P: presigned GET for an optional input
+  P->>S: forwarded
+  S-->>A: 503 while the store restarts
+  A->>A: back off, within the URL's remaining validity
+  A->>P: the same presigned GET
+  P->>S: forwarded
+  S-->>A: 404, no such object
+  A->>A: optional input absent, so skip it
+  A->>A: a required input, or any final failure other than 404, fails the node
+  A->>W: callback with a failed status
+```
+
 ## State and realtime updates
 
 The **api-server is the single source of truth** for run and execution state,

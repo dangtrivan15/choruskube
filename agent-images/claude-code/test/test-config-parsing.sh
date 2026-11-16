@@ -308,9 +308,11 @@ grep -q "JOB_SECRET environment variable not set" <<< "$EFFORT_OUTPUT" \
   && ok "unknown effort value runs past the effort read" \
   || fail "unknown effort value runs past the effort read"
 
-# --- Test 19: input artifact download loop — nested keys, required vs optional ---
-# Runs the real Step 1 block against a stub `artifact` so the required/optional branch is
-# exercised without object storage. A shell function shadows the PATH binary.
+# --- Test 19: input artifact download loop — absent vs failed, required vs optional ---
+# Runs the real Step 1 block (now through its "# --- Step 2" marker, since the run
+# log fetch and the fail_node_before_run helper both moved inside Step 1) against a
+# stub `artifact` and a stub `send-callback`, so the exit-4-is-absent /
+# anything-else-fails-the-node branch is exercised without object storage.
 IA_CONFIG="$TESTDIR/config_input_artifacts.json"
 cat > "$IA_CONFIG" <<'EOF'
 {
@@ -321,45 +323,131 @@ cat > "$IA_CONFIG" <<'EOF'
   "required_input_artifacts": ["spec_review/spec_and_plan.md"]
 }
 EOF
+CALLBACK_CAPTURE="$TESTDIR/ia_callback_capture.json"
 
 build_step1_harness() {
-  # $1 = object path the stub should fail to fetch, $2 = workspace-in dir
+  # $1 = object path the stub should fail on (an input key or the run log path;
+  #      "" never fails), $2 = exit code the stub returns for that path,
+  # $3 = stderr line the stub writes when it fails ("" = none),
+  # $4 = workspace-in dir, $5 = RUN_LOG_PATH ("" skips the run log fetch, same as
+  # entrypoint.sh's own guard).
+  local fail_path="$1" fail_code="$2" stderr_msg="$3" ws_in="$4" run_log_path="$5"
   {
     echo 'set -euo pipefail'
-    echo "CONFIG_FILE=\"$IA_CONFIG\""
-    echo "WORKSPACE_IN=\"$2\""
-    echo "artifact() { if [ \"\$2\" = \"$1\" ]; then return 1; fi; printf stub > \"\$3\"; return 0; }"
-    awk '/^# --- Step 1: Pull input artifacts/{f=1} /^# Pull run log/{f=0} f' "$ENTRYPOINT"
+    printf 'CONFIG_FILE=%q\n' "$IA_CONFIG"
+    printf 'WORKSPACE_IN=%q\n' "$ws_in"
+    printf 'RUN_LOG_PATH=%q\n' "$run_log_path"
+    echo 'NODE_EXECUTION_ID=exec-1'
+    echo 'RUN_ID=run-1'
+    printf 'CALLBACK_CAPTURE=%q\n' "$CALLBACK_CAPTURE"
+    echo 'send-callback() { printf %s "$1" > "$CALLBACK_CAPTURE"; }'
+    printf 'artifact() {\n'
+    printf '  if [ "$2" = %q ]; then\n' "$fail_path"
+    if [ -n "$stderr_msg" ]; then
+      printf '    echo %q >&2\n' "$stderr_msg"
+    fi
+    printf '    return %q\n' "$fail_code"
+    printf '  fi\n'
+    printf '  printf stub > "$3"\n'
+    printf '  return 0\n'
+    printf '}\n'
+    awk '/^# --- Step 1: Pull input artifacts/{f=1} /^# --- Step 2: Configure/{f=0} f' "$ENTRYPOINT"
   }
 }
 
-# 19a: an absent OPTIONAL artifact is skipped, and the rest still land
-IA_IN_A="$TESTDIR/in_optional"
-build_step1_harness "org/runs/r/e/out/spec_review.md" "$IA_IN_A" > "$TESTDIR/step1_optional.sh"
-set +e
-IA_OUT_A=$(bash "$TESTDIR/step1_optional.sh" 2>&1)
-IA_RC_A=$?
-set -e
-[ "$IA_RC_A" -eq 0 ] && ok "absent optional input artifact does not fail the pod" \
-  || fail "absent optional input artifact does not fail the pod ($IA_OUT_A)"
-[ -f "$IA_IN_A/spec_review/spec_and_plan.md" ] \
-  && ok "nested input artifact key creates its parent directory" \
-  || fail "nested input artifact key creates its parent directory"
-grep -q "Optional input artifact absent" <<< "$IA_OUT_A" \
-  && ok "absent optional input artifact is logged" || fail "absent optional input artifact is logged"
+run_step1_harness() {
+  # $1..$5 = build_step1_harness args, $6 = script path to write
+  rm -f "$CALLBACK_CAPTURE"
+  build_step1_harness "$1" "$2" "$3" "$4" "$5" > "$6"
+  set +e
+  IA_OUT=$(bash "$6" 2>&1)
+  IA_RC=$?
+  set -e
+}
 
-# 19b: an absent REQUIRED artifact stops the pod with a clear error
+# 19a: an absent OPTIONAL artifact (exit 4) is skipped, the rest still land, exit 0,
+# no callback sent.
+IA_IN_A="$TESTDIR/in_optional"
+run_step1_harness "org/runs/r/e/out/spec_review.md" 4 "" "$IA_IN_A" "" "$TESTDIR/step1_19a.sh"
+[ "$IA_RC" -eq 0 ] && ok "19a: absent optional input artifact does not fail the pod" \
+  || fail "19a: absent optional input artifact does not fail the pod ($IA_OUT)"
+[ -f "$IA_IN_A/spec_review/spec_and_plan.md" ] \
+  && ok "19a: nested input artifact key creates its parent directory" \
+  || fail "19a: nested input artifact key creates its parent directory"
+grep -q "Optional input artifact absent" <<< "$IA_OUT" \
+  && ok "19a: absent optional input artifact is logged" || fail "19a: absent optional input artifact is logged"
+[ ! -f "$CALLBACK_CAPTURE" ] && ok "19a: no callback sent" || fail "19a: no callback sent ($(cat "$CALLBACK_CAPTURE"))"
+
+# 19b: an absent REQUIRED artifact (exit 4) stops the pod with a clear error and a
+# failed callback.
 IA_IN_B="$TESTDIR/in_required"
-build_step1_harness "org/runs/r/e/out/spec_and_plan.md" "$IA_IN_B" > "$TESTDIR/step1_required.sh"
-set +e
-IA_OUT_B=$(bash "$TESTDIR/step1_required.sh" 2>&1)
-IA_RC_B=$?
-set -e
-[ "$IA_RC_B" -ne 0 ] && ok "absent required input artifact exits non-zero" \
-  || fail "absent required input artifact exits non-zero"
-grep -q "required input artifact missing" <<< "$IA_OUT_B" \
-  && ok "absent required input artifact logs a clear error" \
-  || fail "absent required input artifact logs a clear error"
+run_step1_harness "org/runs/r/e/out/spec_and_plan.md" 4 "" "$IA_IN_B" "" "$TESTDIR/step1_19b.sh"
+[ "$IA_RC" -ne 0 ] && ok "19b: absent required input artifact exits non-zero" \
+  || fail "19b: absent required input artifact exits non-zero"
+grep -q "required input artifact missing" <<< "$IA_OUT" \
+  && ok "19b: absent required input artifact logs a clear error" \
+  || fail "19b: absent required input artifact logs a clear error"
+jq -e '.status == "failed"' "$CALLBACK_CAPTURE" >/dev/null 2>&1 \
+  && ok "19b: callback reports status failed" \
+  || fail "19b: callback reports status failed ($(cat "$CALLBACK_CAPTURE" 2>/dev/null))"
+
+# 19c: an OPTIONAL artifact that fails outright (exit 1, not 4) still fails the
+# node — absence is the only outcome that gets a pass — and the failed callback
+# names the key and carries the stub's stderr line.
+IA_IN_C="$TESTDIR/in_optional_failed"
+run_step1_harness "org/runs/r/e/out/spec_review.md" 1 "stub: transfer refused" "$IA_IN_C" "" "$TESTDIR/step1_19c.sh"
+[ "$IA_RC" -ne 0 ] && ok "19c: a failed (not absent) optional input artifact fails the pod" \
+  || fail "19c: a failed (not absent) optional input artifact fails the pod ($IA_OUT)"
+grep -q "input artifact could not be fetched: spec_review/spec_review.md" <<< "$IA_OUT" \
+  && ok "19c: the failure names the key" || fail "19c: the failure names the key ($IA_OUT)"
+jq -e '.status == "failed" and (.error_message | contains("spec_review/spec_review.md")) and (.error_message | contains("stub: transfer refused"))' \
+  "$CALLBACK_CAPTURE" >/dev/null 2>&1 \
+  && ok "19c: callback names the key and carries the stub's stderr" \
+  || fail "19c: callback names the key and carries the stub's stderr ($(cat "$CALLBACK_CAPTURE" 2>/dev/null))"
+
+# 19d: a REQUIRED artifact that fails outright (exit 1) gets the generic failure
+# message, not the "required ... missing" wording reserved for exit 4.
+IA_IN_D="$TESTDIR/in_required_failed"
+run_step1_harness "org/runs/r/e/out/spec_and_plan.md" 1 "stub: connection reset" "$IA_IN_D" "" "$TESTDIR/step1_19d.sh"
+[ "$IA_RC" -ne 0 ] && ok "19d: a failed (not absent) required input artifact fails the pod" \
+  || fail "19d: a failed (not absent) required input artifact fails the pod ($IA_OUT)"
+grep -q "input artifact could not be fetched: spec_review/spec_and_plan.md" <<< "$IA_OUT" \
+  && ok "19d: the failure uses the generic (not 'missing') wording" \
+  || fail "19d: the failure uses the generic (not 'missing') wording ($IA_OUT)"
+jq -e '.status == "failed" and (.error_message | contains("spec_review/spec_and_plan.md")) and (.error_message | contains("stub: connection reset"))' \
+  "$CALLBACK_CAPTURE" >/dev/null 2>&1 \
+  && ok "19d: callback names the key and carries the stub's stderr" \
+  || fail "19d: callback names the key and carries the stub's stderr ($(cat "$CALLBACK_CAPTURE" 2>/dev/null))"
+
+# 19e: the run log is absent (exit 4) and is skipped with no callback; a run log
+# that fails outright (exit 1) fails the node with a failed callback.
+RUN_LOG_PATH_T="org/runs/r/run_log.md"
+run_step1_harness "$RUN_LOG_PATH_T" 4 "" "$TESTDIR/in_runlog_absent" "$RUN_LOG_PATH_T" "$TESTDIR/step1_19e_absent.sh"
+[ "$IA_RC" -eq 0 ] && ok "19e: an absent run log does not fail the pod" \
+  || fail "19e: an absent run log does not fail the pod ($IA_OUT)"
+grep -q "Run log absent, skipping" <<< "$IA_OUT" \
+  && ok "19e: an absent run log is logged" || fail "19e: an absent run log is logged ($IA_OUT)"
+[ ! -f "$CALLBACK_CAPTURE" ] && ok "19e: an absent run log sends no callback" \
+  || fail "19e: an absent run log sends no callback ($(cat "$CALLBACK_CAPTURE"))"
+
+run_step1_harness "$RUN_LOG_PATH_T" 1 "stub: 500 from the store" "$TESTDIR/in_runlog_failed" "$RUN_LOG_PATH_T" "$TESTDIR/step1_19e_failed.sh"
+[ "$IA_RC" -ne 0 ] && ok "19e: a run log that fails outright fails the pod" \
+  || fail "19e: a run log that fails outright fails the pod ($IA_OUT)"
+jq -e '.status == "failed" and (.error_message | contains("org/runs/r/run_log.md")) and (.error_message | contains("stub: 500 from the store"))' \
+  "$CALLBACK_CAPTURE" >/dev/null 2>&1 \
+  && ok "19e: the failed run log's callback names it and carries the stub's stderr" \
+  || fail "19e: the failed run log's callback names it and carries the stub's stderr ($(cat "$CALLBACK_CAPTURE" 2>/dev/null))"
+
+# 19f: the stub's stderr is excerpted, not discarded to /dev/null — a structural
+# check on the extracted fragment itself, so it can't pass by coincidence of what
+# a particular scenario's stub happened to print.
+STEP1_FRAGMENT=$(awk '/^# --- Step 1: Pull input artifacts/{f=1} /^# --- Step 2: Configure/{f=0} f' "$ENTRYPOINT")
+grep -qF 'INPUT_ERR_FILE' <<< "$STEP1_FRAGMENT" \
+  && ok "19f: input artifact fetches capture stderr to a file" \
+  || fail "19f: input artifact fetches capture stderr to a file"
+grep -F 'artifact get' <<< "$STEP1_FRAGMENT" | grep -qF '2>/dev/null' \
+  && fail "19f: Step 1 still suppresses artifact stderr to /dev/null" \
+  || ok "19f: Step 1 no longer suppresses artifact stderr to /dev/null"
 
 # --- Test 20: absent required_input_artifacts key — every input is best-effort ---
 IA_LEGACY="$TESTDIR/config_legacy_inputs.json"

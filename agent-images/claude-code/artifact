@@ -1,5 +1,7 @@
 #!/bin/bash
-# artifact — download or upload artifacts via presigned URLs.
+# artifact — download or upload artifacts via presigned URLs, retrying
+# transient failures and telling a missing object apart from every other
+# failure.
 #
 # Usage:
 #   artifact get <object-path> <local-path>   # download from object storage
@@ -17,13 +19,49 @@
 #
 # Exit codes:
 #   0  Operation completed successfully
-#   1  Missing environment, invalid arguments, or transfer error
+#   4  The object store answered 404 ("no such object") to a GET — the only
+#      way this status is produced
+#   1  Everything else: missing/invalid environment or arguments, a refused
+#      presign, a transfer that still fails after its retries (a 403, a PUT's
+#      404, an unresolvable host, a persistent 5xx), or any inner command's
+#      own failure
+#
+# Retries (the presign call and the transfer, independently): a connection
+# failure, a timeout, HTTP 408, HTTP 429 or any HTTP 5xx. Up to 5 attempts
+# total, backing off 2s/4s/8s/16s between them. A transfer never starts an
+# attempt more than 120s after its URL was issued, and a backoff that would
+# cross that deadline ends it as a failure instead of sleeping past it.
+# Everything else (a 403, a 404 on a PUT, a malformed response) fails on the
+# first attempt, with no retry.
+#
+# Nothing here ever prints a signed URL or a transfer's response body — an
+# S3 error body can echo the request signature back.
 set -euo pipefail
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
     sed -n '2,/^set -euo pipefail$/{ /^set -euo pipefail$/d; s/^# \?//; p }' "$0"
     exit 0
 fi
+
+EXIT_NOT_FOUND=4
+# Set only immediately before the one intentional `exit $EXIT_NOT_FOUND` below,
+# so the EXIT trap can tell that apart from an unrelated inner command (jq,
+# mkdir, curl) that happens to leak the same number under `set -e` — otherwise
+# such a leak would masquerade as "object not found" instead of a real failure.
+INTENTIONAL_EXIT=""
+trap '
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    exit 0
+  elif [ -n "$INTENTIONAL_EXIT" ] && [ "$rc" -eq "$INTENTIONAL_EXIT" ]; then
+    exit "$rc"
+  else
+    exit 1
+  fi
+' EXIT
+
+RETRY_DELAYS=(2 4 8 16)
+MAX_ATTEMPTS=5
 
 # --- Validate args ---
 ACTION="${1:-}"
@@ -63,30 +101,181 @@ else
     METHOD="PUT"
 fi
 
-# --- Get presigned URL ---
-PRESIGN_URL="$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/presign"
-RESPONSE=$(curl -s -w "\n%{http_code}" \
-    -H "Authorization: Bearer $JOB_SECRET" \
-    "$PRESIGN_URL?path=$(printf '%s' "$MINIO_PATH" | jq -sRr @uri)&method=$METHOD")
-HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-BODY=$(echo "$RESPONSE" | sed '$d')
+# --- Shared retry classification, for both the presign call and the transfer ---
 
-if [ "$HTTP_CODE" != "200" ]; then
-    echo "ERROR: Presign request failed (HTTP $HTTP_CODE): $BODY" >&2
+# curl exit codes for resolve/connect/timeout/TLS-connect/empty-reply/send/recv
+# failures: the ones a retry might actually fix.
+is_retryable_curl_rc() {
+  case "$1" in
+    6 | 7 | 28 | 35 | 52 | 55 | 56) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_retryable_http_status() {
+  case "$1" in
+    408 | 429 | 5??) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Names the method, the object path, the attempt, and the HTTP status or curl
+# exit code behind it. Never the signed URL or a response body.
+log_diag() {
+  echo "artifact: $1 $2 (attempt $3/$MAX_ATTEMPTS): $4" >&2
+}
+
+# Goes through the external `sleep` binary (bash has no builtin of that name),
+# so a test can shim it on PATH and assert the recorded delays without waiting.
+backoff() {
+  sleep "$1"
+}
+
+# Sleeps for the backoff after a transfer attempt, unless doing so would push
+# the next attempt past $2 (the transfer deadline) — in which case this fails
+# instead of retrying past the presigned URL's validity window.
+backoff_or_give_up() {
+  local attempt="$1" deadline="$2"
+  local delay="${RETRY_DELAYS[$((attempt - 1))]}"
+  local now=$(date +%s)
+  if [ $((now + delay)) -gt "$deadline" ]; then
+    echo "ERROR: next retry would start past the presigned URL's validity window; failing" >&2
+    return 1
+  fi
+  backoff "$delay"
+}
+
+# --- Presign call, retried ---
+# $1=method $2=object path. Prints the presign response body on success; a
+# 200 body is never printed anywhere else, only returned here for the caller
+# to parse — it carries the signed URL.
+do_presign() {
+  local method="$1" path="$2" attempt=1
+  local url="$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/presign?path=$(printf '%s' "$path" | jq -sRr @uri)&method=$method"
+  while :; do
+    local response http_code body curl_rc
+    set +e
+    response=$(curl -s --connect-timeout 10 --speed-limit 1 --speed-time 60 \
+      -w '\n%{http_code}' \
+      -H "Authorization: Bearer $JOB_SECRET" \
+      "$url" 2>/dev/null)
+    curl_rc=$?
+    set -e
+
+    if [ "$curl_rc" -ne 0 ]; then
+      log_diag "PRESIGN $method" "$path" "$attempt" "curl exit $curl_rc"
+      if [ "$attempt" -lt "$MAX_ATTEMPTS" ] && is_retryable_curl_rc "$curl_rc"; then
+        backoff "${RETRY_DELAYS[$((attempt - 1))]}"
+        attempt=$((attempt + 1))
+        continue
+      fi
+      echo "ERROR: presign request failed after $attempt attempt(s) (curl exit $curl_rc)" >&2
+      exit 1
+    fi
+
+    http_code=$(tail -n 1 <<< "$response")
+    body=$(sed '$d' <<< "$response")
+    if [ "$http_code" = "200" ]; then
+      printf '%s' "$body"
+      return 0
+    fi
+
+    log_diag "PRESIGN $method" "$path" "$attempt" "HTTP $http_code"
+    if [ "$attempt" -lt "$MAX_ATTEMPTS" ] && is_retryable_http_status "$http_code"; then
+      backoff "${RETRY_DELAYS[$((attempt - 1))]}"
+      attempt=$((attempt + 1))
+      continue
+    fi
+    echo "ERROR: presign request failed (HTTP $http_code): $body" >&2
     exit 1
-fi
+  done
+}
 
-SIGNED_URL=$(echo "$BODY" | jq -r '.url')
+# --- Transfer, retried within the presigned URL's validity window ---
+# $1=method $2=signed url $3=local path $4=object path (diagnostics only)
+# $5=deadline (epoch seconds, from when the URL was issued).
+do_transfer() {
+  local method="$1" url="$2" local_path="$3" obj_path="$4" deadline="$5"
+  local attempt=1
+  local part_path="${local_path}.part"
+
+  while :; do
+    local now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      echo "ERROR: the presigned URL's validity window elapsed before attempt $attempt" >&2
+      exit 1
+    fi
+
+    local http_code curl_rc
+    set +e
+    if [ "$method" = "GET" ]; then
+      mkdir -p "$(dirname "$local_path")"
+      http_code=$(curl -s -L -o "$part_path" -w '%{http_code}' \
+        --connect-timeout 10 --speed-limit 1 --speed-time 60 \
+        "$url" 2>/dev/null)
+    else
+      http_code=$(curl -s -L -o /dev/null -w '%{http_code}' \
+        --connect-timeout 10 --speed-limit 1 --speed-time 60 \
+        -T "$local_path" \
+        "$url" 2>/dev/null)
+    fi
+    curl_rc=$?
+    set -e
+
+    if [ "$curl_rc" -ne 0 ]; then
+      rm -f "$part_path"
+      log_diag "$method" "$obj_path" "$attempt" "curl exit $curl_rc"
+      if [ "$attempt" -lt "$MAX_ATTEMPTS" ] && is_retryable_curl_rc "$curl_rc" \
+        && backoff_or_give_up "$attempt" "$deadline"; then
+        attempt=$((attempt + 1))
+        continue
+      fi
+      echo "ERROR: transfer failed after $attempt attempt(s) (curl exit $curl_rc)" >&2
+      exit 1
+    fi
+
+    case "$http_code" in
+      2??)
+        if [ "$method" = "GET" ]; then
+          mv "$part_path" "$local_path"
+        fi
+        return 0
+        ;;
+      404)
+        rm -f "$part_path"
+        log_diag "$method" "$obj_path" "$attempt" "HTTP 404"
+        if [ "$method" = "GET" ]; then
+          INTENTIONAL_EXIT=$EXIT_NOT_FOUND
+          exit $EXIT_NOT_FOUND
+        fi
+        echo "ERROR: transfer failed (HTTP 404)" >&2
+        exit 1
+        ;;
+      *)
+        rm -f "$part_path"
+        log_diag "$method" "$obj_path" "$attempt" "HTTP $http_code"
+        if [ "$attempt" -lt "$MAX_ATTEMPTS" ] && is_retryable_http_status "$http_code" \
+          && backoff_or_give_up "$attempt" "$deadline"; then
+          attempt=$((attempt + 1))
+          continue
+        fi
+        echo "ERROR: transfer failed (HTTP $http_code)" >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+# --- Presign, then transfer against the same URL ---
+PRESIGN_BODY=$(do_presign "$METHOD" "$MINIO_PATH")
+# The deadline is taken the moment the presign response arrives, not when the
+# transfer starts — the clock on the URL's validity has been running since then.
+DEADLINE=$(($(date +%s) + 120))
+
+SIGNED_URL=$(printf '%s' "$PRESIGN_BODY" | jq -r '.url')
 if [ -z "$SIGNED_URL" ] || [ "$SIGNED_URL" = "null" ]; then
-    echo "ERROR: No URL in presign response: $BODY" >&2
+    echo "ERROR: no URL in presign response" >&2
     exit 1
 fi
 
-# --- Execute transfer ---
-if [ "$ACTION" = "get" ]; then
-    # Ensure parent directory exists
-    mkdir -p "$(dirname "$LOCAL_PATH")"
-    curl -fsSL "$SIGNED_URL" -o "$LOCAL_PATH"
-else
-    curl -fsSL -X PUT -T "$LOCAL_PATH" "$SIGNED_URL"
-fi
+do_transfer "$METHOD" "$SIGNED_URL" "$LOCAL_PATH" "$MINIO_PATH" "$DEADLINE"
