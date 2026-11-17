@@ -127,12 +127,63 @@ A proxy in front of Temporal must pass a Worker:
 `worker/temporal_methods_test.go` fails when the set of methods the Worker calls stops matching
 this table, so a change to that set is an edit here.
 
+## Reaching the API server through a proxy
+
+A proxy in front of the API server must pass:
+
+- every path under `/worker/**`;
+- every path at or under `/internal/runs/{runId}/node-executions/{nodeExecId}`, including that
+  bare execution path itself;
+- the `Authorization` header unchanged;
+- the query string unaltered, with no decoding and no redirect. The api-server's presign route
+  carries an artifact's path inside a query parameter with every `/` escaped as `%2F`; a proxy
+  that decodes the query or redirects an encoded-slash URL breaks every artifact read and write.
+
+A proxy may refuse:
+
+- the rest of `/internal` — nothing else under `/internal` is ever called from a Worker's network;
+- a `/worker` or `/internal` request that carries no bearer credential. A Worker started with no
+  token then sees the proxy's own refusal in its logs instead of the api-server's.
+
+The two path shapes a proxy must pass are exactly where the api-server accepts a credential other
+than the orchestrator's: the Fleet credential on every `/worker/**` call (see
+[Configuring which Fleet a Worker serves](#configuring-which-fleet-a-worker-serves)), and an
+agent's own job secret, which `InternalAuthFilter` accepts only at or under that agent's own
+execution path.
+
+## What a Worker's network must let out
+
+Hosts are given by role, since each deployment names its own. A Fleet's outbound traffic — the
+Worker's, its agents' and its container runtime's — goes to four roles:
+
+- the configured `API_SERVER_URL`;
+- the Temporal endpoint that registration returns, or the static `TEMPORAL_ADDRESS` when
+  configured;
+- the object-store host that presigned URLs name;
+- the registry that the image names it is told to run carry.
+
+| Caller | Destination | Protocol | What for |
+|---|---|---|---|
+| Worker | API server | HTTPS | `/worker` routes: registration and its once-a-minute renewal, the node-execution read, workload prepare and complete, status, logs, GitHub token scope |
+| Worker | Temporal endpoint | gRPC over TLS on HTTP/2 | polling, results and heartbeats, as [Reaching Temporal through a proxy](#reaching-temporal-through-a-proxy) pins |
+| Worker | GitHub API, Anthropic API, and the registry its own registry login names | HTTPS | the Fleet's own credentials: gate compares and merges, issues, branch cleanup, credential health checks |
+| Agent | API server | HTTPS | its own execution's `/internal` routes |
+| Agent | object-store host | HTTPS | presigned artifact reads and writes, with no credential |
+| Agent | GitHub and Anthropic API | HTTPS | clone and push, pull requests, model calls |
+| Agent | Worker callback port | HTTP inside the Fleet's network | completion, heartbeat, GitHub token; not egress |
+| Container runtime | image registry | HTTPS | the Worker, agent and DinD images, pulled with no login |
+| Container runtime | Docker Hub | HTTPS | the default DinD image, when no other is configured |
+| Agent and DinD workloads | the repo's own package and image sources | as the build needs | the customer's build, not listed here |
+
+Nothing flows inward: the control plane never dials a Worker, and an agent reaches the Worker's
+callback port inside the Fleet's own network.
+
 ## Environment
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
 | `TEMPORAL_ADDRESS` | static path, or when registration supplies no endpoint | Temporal frontend to dial. A registered Fleet may override it. |
-| `API_SERVER_URL` | yes | api-server base URL, for registration and the workload executor. |
+| `API_SERVER_URL` | yes | api-server base URL, for registration and the workload executor. The Worker also passes it along as every agent's own configured `api_server_url`, so it is the base URL every agent calls too. |
 | `CALLBACK_URL` | yes | Where a launched agent container reports its result. |
 | `FLEET_TOKEN` | one of | Selects registration. Must match the server's `WORKER_REGISTRATION_TOKEN`. |
 | `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | one of | Select the static single Fleet. |
@@ -307,6 +358,7 @@ the api-server.
 | `DOCKER_HOST` | Docker SDK's own environment-based default | Daemon socket, e.g. `unix:///var/run/docker.sock`. |
 | `DOCKER_NETWORK` | `choruskube` | Docker network agent containers and DinD sidecars attach to. |
 | `DOCKER_STAGING_DIR` | `/tmp/choruskube-agent-staging` | Base directory for per-execution config/credential staging. In Docker-out-of-Docker deployments this path must be bind-mounted identically on both sides — the Worker's own filesystem and the host daemon it talks to. |
+| `DIND_IMAGE` | `docker:29-dind` | The DinD sidecar image, pulled from Docker Hub, used when the node's repo sets none. |
 
 A node that requests Docker gets a DinD sidecar plus a per-execution `ck-workspace-<id>` volume
 mounted at `/workspace` in both the agent and the sidecar, so a bind mount the agent sends to the
