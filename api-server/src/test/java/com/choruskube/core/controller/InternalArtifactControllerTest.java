@@ -1,5 +1,6 @@
 package com.choruskube.core.controller;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -11,6 +12,7 @@ import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.InternalAuthFilter;
 import com.choruskube.core.model.*;
 import com.choruskube.core.model.enums.ExecutorType;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.*;
 import com.choruskube.core.service.PresignService;
 import java.util.UUID;
@@ -26,7 +28,8 @@ import org.springframework.transaction.annotation.Transactional;
 @TestPropertySource(
         properties = {
             "internal.auth.orchestrator-secret-hash=d6c5f99f36089f6757e4a7946de9dd0ef1d69983ab5920d40ce5ee1d5066159d",
-            "worker.registration.token=test-fleet"
+            "worker.registration.token=test-fleet",
+            "objectstore.run-upload-budget=1KB"
         })
 class InternalArtifactControllerTest extends SharedContextTest {
 
@@ -99,7 +102,8 @@ class InternalArtifactControllerTest extends SharedContextTest {
     @Test
     void presign_withValidAgentToken_returnsUrl() throws Exception {
         String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
-        when(presignService.generatePresignedUrl(run.getId(), path, "GET")).thenReturn("https://minio:9000/signed-url");
+        when(presignService.generatePresignedUrl(run.getId(), path, "GET", null))
+                .thenReturn("https://minio:9000/signed-url");
 
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
                         .param("path", path)
@@ -112,7 +116,8 @@ class InternalArtifactControllerTest extends SharedContextTest {
     @Test
     void presign_withValidAgentToken_passesTheAgentExecutionsRunId() throws Exception {
         String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
-        when(presignService.generatePresignedUrl(any(), any(), any())).thenReturn("https://minio:9000/signed-url");
+        when(presignService.generatePresignedUrl(any(), any(), any(), any()))
+                .thenReturn("https://minio:9000/signed-url");
 
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
                         .param("path", path)
@@ -120,17 +125,19 @@ class InternalArtifactControllerTest extends SharedContextTest {
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isOk());
 
-        verify(presignService).generatePresignedUrl(exec.getWorkflowRunId(), path, "GET");
+        verify(presignService).generatePresignedUrl(exec.getWorkflowRunId(), path, "GET", null);
     }
 
     @Test
     void presign_withOrchestratorToken_returnsUrl() throws Exception {
         String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
-        when(presignService.generatePresignedUrl(run.getId(), path, "PUT")).thenReturn("https://minio:9000/put-url");
+        when(presignService.generatePresignedUrl(run.getId(), path, "PUT", 100L))
+                .thenReturn("https://minio:9000/put-url");
 
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
                         .param("path", path)
                         .param("method", "PUT")
+                        .param("size", "100")
                         .header("Authorization", "Bearer " + ORCHESTRATOR_SECRET))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.url").value("https://minio:9000/put-url"));
@@ -179,7 +186,8 @@ class InternalArtifactControllerTest extends SharedContextTest {
         // Input attachments moved by RunService land at {orgSlug}/runs/{runId}/inputs/...
         // and must be presignable by the agent.
         String path = "system/runs/" + run.getId() + "/inputs/screenshot.png";
-        when(presignService.generatePresignedUrl(run.getId(), path, "GET")).thenReturn("https://minio:9000/inputs-url");
+        when(presignService.generatePresignedUrl(run.getId(), path, "GET", null))
+                .thenReturn("https://minio:9000/inputs-url");
 
         mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
                         .param("path", path)
@@ -239,7 +247,7 @@ class InternalArtifactControllerTest extends SharedContextTest {
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isForbidden());
 
-        verify(presignService, never()).generatePresignedUrl(any(), any(), any());
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any(), any());
     }
 
     @Test
@@ -252,7 +260,7 @@ class InternalArtifactControllerTest extends SharedContextTest {
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isBadRequest());
 
-        verify(presignService, never()).generatePresignedUrl(any(), any(), any());
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any(), any());
     }
 
     @Test
@@ -265,7 +273,7 @@ class InternalArtifactControllerTest extends SharedContextTest {
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isBadRequest());
 
-        verify(presignService, never()).generatePresignedUrl(any(), any(), any());
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any(), any());
     }
 
     @Test
@@ -278,7 +286,7 @@ class InternalArtifactControllerTest extends SharedContextTest {
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isBadRequest());
 
-        verify(presignService, never()).generatePresignedUrl(any(), any(), any());
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any(), any());
     }
 
     @Test
@@ -291,7 +299,7 @@ class InternalArtifactControllerTest extends SharedContextTest {
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isBadRequest());
 
-        verify(presignService, never()).generatePresignedUrl(any(), any(), any());
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any(), any());
     }
 
     @Test
@@ -322,5 +330,155 @@ class InternalArtifactControllerTest extends SharedContextTest {
                         .param("method", "GET")
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void presign_putWithoutSize_isBadRequest() throws Exception {
+        String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "PUT")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(containsString("size")));
+
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any(), any());
+    }
+
+    @Test
+    void presign_putWithNegativeSize_isBadRequest() throws Exception {
+        String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "PUT")
+                        .param("size", "-1")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isBadRequest());
+
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any(), any());
+    }
+
+    @Test
+    void presign_putWithDecimalSize_isBadRequest() throws Exception {
+        String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "PUT")
+                        .param("size", "1.5")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isBadRequest());
+
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any(), any());
+    }
+
+    @Test
+    void presign_putWithNonNumericSize_isBadRequest() throws Exception {
+        String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "PUT")
+                        .param("size", "abc")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isBadRequest());
+
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any(), any());
+    }
+
+    @Test
+    void presign_putWithOverflowingSize_isBadRequest() throws Exception {
+        String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "PUT")
+                        .param("size", "99999999999999999999")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isBadRequest());
+
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any(), any());
+    }
+
+    @Test
+    void presign_putWithValidInBudgetSize_admitsAndPassesDeclaredSize() throws Exception {
+        String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
+        long declared = 200L;
+        when(presignService.generatePresignedUrl(run.getId(), path, "PUT", declared))
+                .thenReturn("https://minio:9000/put-url");
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "PUT")
+                        .param("size", String.valueOf(declared))
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.url").value("https://minio:9000/put-url"));
+
+        verify(presignService).generatePresignedUrl(exec.getWorkflowRunId(), path, "PUT", declared);
+    }
+
+    @Test
+    void presign_putOnCancelledRun_isConflict() throws Exception {
+        run.setStatus(WorkflowRunStatus.cancelled);
+        runRepo.save(run);
+        String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "PUT")
+                        .param("size", "100")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isConflict());
+
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any(), any());
+    }
+
+    @Test
+    void presign_putOverBudget_isPayloadTooLarge() throws Exception {
+        String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "PUT")
+                        .param("size", "2000")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.error").exists())
+                .andExpect(jsonPath("$.budgetBytes").value(1024))
+                .andExpect(jsonPath("$.bookedBytes").value(0))
+                .andExpect(jsonPath("$.declaredBytes").value(2000))
+                .andExpect(jsonPath("$.url").doesNotExist());
+
+        verify(presignService, never()).generatePresignedUrl(any(), any(), any(), any());
+    }
+
+    @Test
+    void presign_getWithSizeParamPresent_ignoresItAndBooksNothing() throws Exception {
+        String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
+        when(presignService.generatePresignedUrl(run.getId(), path, "GET", null))
+                .thenReturn("https://minio:9000/signed-url");
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "GET")
+                        .param("size", "999999")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.url").value("https://minio:9000/signed-url"));
+
+        verify(presignService).generatePresignedUrl(run.getId(), path, "GET", null);
+
+        // A subsequent PUT at the full budget still succeeds, proving the GET booked nothing.
+        when(presignService.generatePresignedUrl(run.getId(), path, "PUT", 1024L))
+                .thenReturn("https://minio:9000/put-url");
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "PUT")
+                        .param("size", "1024")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isOk());
     }
 }

@@ -114,7 +114,7 @@ class ObjectStorePresignIntegrationTest {
         byte[] body = "artifact-bytes-✓".getBytes(StandardCharsets.UTF_8);
 
         // Agent-style upload: PUT the bytes to a presigned PUT URL, as the `artifact` CLI does.
-        String putUrl = presignService.generatePresignedUrl(UUID.randomUUID(), key, "PUT");
+        String putUrl = presignService.generatePresignedUrl(UUID.randomUUID(), key, "PUT", (long) body.length);
         HttpResponse<String> put = HTTP.send(
                 HttpRequest.newBuilder(URI.create(putUrl))
                         .PUT(HttpRequest.BodyPublishers.ofByteArray(body))
@@ -125,7 +125,7 @@ class ObjectStorePresignIntegrationTest {
                 .isBetween(200, 299);
 
         // Agent-style download: GET the bytes back from a presigned GET URL.
-        assertThat(getBytes(presignService.generatePresignedUrl(UUID.randomUUID(), key, "GET")))
+        assertThat(getBytes(presignService.generatePresignedUrl(UUID.randomUUID(), key, "GET", null)))
                 .isEqualTo(body);
     }
 
@@ -144,7 +144,7 @@ class ObjectStorePresignIntegrationTest {
                         .build(),
                 RequestBody.fromBytes(body));
 
-        assertThat(getBytes(presignService.generatePresignedUrl(UUID.randomUUID(), key, "GET")))
+        assertThat(getBytes(presignService.generatePresignedUrl(UUID.randomUUID(), key, "GET", null)))
                 .isEqualTo(body);
     }
 
@@ -152,7 +152,7 @@ class ObjectStorePresignIntegrationTest {
     void seamNamingASecondAuthority_signsForThatAuthority_pathStyle() {
         PresignService presignService = presignServiceWithResolver(runId -> Optional.of(secondAuthorityEndpoint));
 
-        String url = presignService.generatePresignedUrl(UUID.randomUUID(), "runs/it/second-authority.txt", "PUT");
+        String url = presignService.generatePresignedUrl(UUID.randomUUID(), "runs/it/second-authority.txt", "PUT", 1L);
 
         URI parsed = URI.create(url);
         assertThat(parsed.getHost()).isEqualTo("127.0.0.1");
@@ -167,7 +167,7 @@ class ObjectStorePresignIntegrationTest {
         String key = "runs/it/second-authority-roundtrip.txt";
         byte[] body = "second-authority-bytes".getBytes(StandardCharsets.UTF_8);
 
-        String putUrl = presignService.generatePresignedUrl(runId, key, "PUT");
+        String putUrl = presignService.generatePresignedUrl(runId, key, "PUT", (long) body.length);
         HttpResponse<String> put = HTTP.send(
                 HttpRequest.newBuilder(URI.create(putUrl))
                         .PUT(HttpRequest.BodyPublishers.ofByteArray(body))
@@ -177,7 +177,7 @@ class ObjectStorePresignIntegrationTest {
                 .as("presigned PUT (second authority) accepted by the object store (body: %s)", put.body())
                 .isBetween(200, 299);
 
-        assertThat(getBytes(presignService.generatePresignedUrl(runId, key, "GET")))
+        assertThat(getBytes(presignService.generatePresignedUrl(runId, key, "GET", null)))
                 .isEqualTo(body);
     }
 
@@ -187,7 +187,7 @@ class ObjectStorePresignIntegrationTest {
         String key = "runs/it/method-mismatch.txt";
         s3.putObject(PutObjectRequest.builder().bucket(BUCKET).key(key).build(), RequestBody.fromBytes(new byte[] {1}));
 
-        String getUrl = presignService.generatePresignedUrl(UUID.randomUUID(), key, "GET");
+        String getUrl = presignService.generatePresignedUrl(UUID.randomUUID(), key, "GET", null);
         HttpResponse<String> putWithGetUrl = HTTP.send(
                 HttpRequest.newBuilder(URI.create(getUrl))
                         .PUT(HttpRequest.BodyPublishers.ofByteArray(new byte[] {2}))
@@ -197,7 +197,7 @@ class ObjectStorePresignIntegrationTest {
                 .as("PUT against a GET-signed URL")
                 .isGreaterThanOrEqualTo(400);
 
-        String putUrl = presignService.generatePresignedUrl(UUID.randomUUID(), key + "-other", "PUT");
+        String putUrl = presignService.generatePresignedUrl(UUID.randomUUID(), key + "-other", "PUT", 1L);
         HttpResponse<String> getWithPutUrl = HTTP.send(
                 HttpRequest.newBuilder(URI.create(putUrl)).GET().build(), HttpResponse.BodyHandlers.ofString());
         assertThat(getWithPutUrl.statusCode())
@@ -210,7 +210,7 @@ class ObjectStorePresignIntegrationTest {
         PresignService presignService = presignServiceWithResolver(runId -> Optional.of(ownEndpoint));
         String key = "runs/it/host-bound.txt";
 
-        URI signedForOwnEndpoint = URI.create(presignService.generatePresignedUrl(UUID.randomUUID(), key, "PUT"));
+        URI signedForOwnEndpoint = URI.create(presignService.generatePresignedUrl(UUID.randomUUID(), key, "PUT", 1L));
 
         // Same path and query (same signature), dialled directly against the *other* authority's
         // socket — both authorities reach the same container, so only the Host sent differs from
@@ -235,6 +235,60 @@ class ObjectStorePresignIntegrationTest {
     }
 
     @Test
+    void urlSignedForNBytes_acceptsExactlyN_refusesOffByOneAndEmpty() throws Exception {
+        PresignService presignService = presignServiceWithResolver(null);
+        int n = 10;
+
+        assertThat(putStatus(presignService, "runs/it/sized-exact.txt", n, new byte[n]))
+                .as("PUT at exactly the signed length")
+                .isBetween(200, 299);
+        assertThat(putStatus(presignService, "runs/it/sized-short.txt", n, new byte[n - 1]))
+                .as("PUT one byte short of the signed length")
+                .isGreaterThanOrEqualTo(400);
+        assertThat(putStatus(presignService, "runs/it/sized-long.txt", n, new byte[n + 1]))
+                .as("PUT one byte over the signed length")
+                .isGreaterThanOrEqualTo(400);
+        assertThat(putStatus(presignService, "runs/it/sized-empty.txt", n, new byte[0]))
+                .as("PUT an empty body against a URL signed for a non-zero length")
+                .isGreaterThanOrEqualTo(400);
+    }
+
+    @Test
+    void urlSignedForZeroBytes_acceptsEmptyBody_refusesOneByteBody() throws Exception {
+        PresignService presignService = presignServiceWithResolver(null);
+
+        assertThat(putStatus(presignService, "runs/it/sized-zero-empty.txt", 0, new byte[0]))
+                .as("PUT an empty body against a URL signed for zero bytes")
+                .isBetween(200, 299);
+        assertThat(putStatus(presignService, "runs/it/sized-zero-nonempty.txt", 0, new byte[1]))
+                .as("PUT a one-byte body against a URL signed for zero bytes")
+                .isGreaterThanOrEqualTo(400);
+    }
+
+    @Test
+    void sameKey_differentContentLength_yieldsADifferentUrl() {
+        PresignService presignService = presignServiceWithResolver(null);
+        UUID runId = UUID.randomUUID();
+        String key = "runs/it/sized-cache-key.txt";
+
+        String url10 = presignService.generatePresignedUrl(runId, key, "PUT", 10L);
+        String url20 = presignService.generatePresignedUrl(runId, key, "PUT", 20L);
+
+        assertThat(url10).isNotEqualTo(url20);
+    }
+
+    private static int putStatus(PresignService presignService, String key, long signedLength, byte[] body)
+            throws Exception {
+        String putUrl = presignService.generatePresignedUrl(UUID.randomUUID(), key, "PUT", signedLength);
+        HttpResponse<String> response = HTTP.send(
+                HttpRequest.newBuilder(URI.create(putUrl))
+                        .PUT(HttpRequest.BodyPublishers.ofByteArray(body))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+        return response.statusCode();
+    }
+
+    @Test
     void defaultEndpoint_producesTheSameShapeUrl_asThePreChangeBean() throws Exception {
         S3Presigner rawPresigner = S3Presigner.builder()
                 .endpointOverride(ownEndpoint)
@@ -247,7 +301,7 @@ class ObjectStorePresignIntegrationTest {
             String key = "runs/it/shape-check.txt";
 
             PresignService presignService = presignServiceWithResolver(null);
-            URI viaService = URI.create(presignService.generatePresignedUrl(UUID.randomUUID(), key, "GET"));
+            URI viaService = URI.create(presignService.generatePresignedUrl(UUID.randomUUID(), key, "GET", null));
             URI viaRawPresigner = URI.create(rawPresigner
                     .presignGetObject(GetObjectPresignRequest.builder()
                             .signatureDuration(Duration.ofSeconds(900))

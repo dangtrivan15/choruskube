@@ -182,7 +182,8 @@ class RunStartAttachmentE2ETest extends SharedContextTest {
         exec = execRepo.save(exec);
 
         // 7. Agent presigns the rewritten path — must succeed.
-        when(presignService.generatePresignedUrl(runId, runScopedKey, "GET")).thenReturn("https://minio:9000/signed");
+        when(presignService.generatePresignedUrl(runId, runScopedKey, "GET", null))
+                .thenReturn("https://minio:9000/signed");
         mockMvc.perform(get("/internal/runs/" + runId + "/node-executions/" + exec.getId() + "/presign")
                         .param("path", runScopedKey)
                         .param("method", "GET")
