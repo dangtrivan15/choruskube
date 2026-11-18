@@ -274,7 +274,7 @@ sequenceDiagram
   API->>R: endpoint for this run
   alt the deployment names another endpoint for this run
     R-->>API: that endpoint
-    API->>API: sign the GET or PUT for that endpoint, 15-minute expiry, cached per endpoint and key
+    API->>API: sign the GET or PUT for that endpoint, 15-minute expiry, cached per endpoint, key and size
     API-->>A: presigned URL on that hostname
     A->>P: GET or PUT on the URL, signature in the query, no S3 headers
     P->>S: forwarded with Host, path and query exactly as signed
@@ -287,6 +287,25 @@ sequenceDiagram
   S->>S: verify the signature against the Host received, then authorize the identity
   S-->>A: the object, or 200 stored
 ```
+
+### How an upload is sized and budgeted
+
+An upload is admitted once, at presign, and the URL it gets back enforces that
+admission. The artifact CLI declares the exact byte count of the file it is about to
+send; the api-server signs that length into the PUT URL, so the store refuses a body
+of any other length — SigV4 can sign an exact length but not a maximum. Before
+signing, the api-server books the size against the run's upload budget
+(`objectstore.run-upload-budget`, 512 MB by default) in a reservation ledger: one row
+per run and object key, holding the largest size that key was ever signed for, since
+a presigned URL cannot be revoked once issued. The check and the booking run under a
+lock on the run row, so two presigns racing for the last bytes of the budget admit at
+most one. An unsized PUT presign gets 400, a closed run 409, and one past the budget
+413; none of these carries a URL or books anything, and a GET presign books nothing.
+Server-side writes (run inputs, gate attachments, the run log the orchestrator
+appends) are not booked against this budget at all — they go through
+`UploadService`/`S3Client` or the orchestrator's own object-store client, never
+`InternalArtifactController`. Why each of these choices:
+[docs/decisions/2026-11-18---01-agent-uploads-are-sized-and-budgeted-per-run.md](docs/decisions/2026-11-18---01-agent-uploads-are-sized-and-budgeted-per-run.md).
 
 ### How a transfer tells a missing object from a failed one
 

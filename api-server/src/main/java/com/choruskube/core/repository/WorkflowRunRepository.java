@@ -2,14 +2,17 @@ package com.choruskube.core.repository;
 
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
+import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -17,6 +20,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>, JpaSpecificationExecutor<WorkflowRun> {
     List<WorkflowRun> findByStatus(WorkflowRunStatus status);
+
+    /**
+     * {@code SELECT ... FOR UPDATE} on one run, held until the surrounding transaction ends —
+     * serialises concurrent upload admissions against the same run so two presigns racing for the
+     * last bytes of its budget can never both be admitted.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT w FROM WorkflowRun w WHERE w.id = :id")
+    Optional<WorkflowRun> findByIdForUpdate(@Param("id") UUID id);
 
     boolean existsByGraphTemplateIdAndStatusIn(UUID graphTemplateId, Collection<WorkflowRunStatus> statuses);
 

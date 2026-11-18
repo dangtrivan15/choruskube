@@ -5,6 +5,8 @@ import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
+import com.choruskube.core.service.ArtifactUploadBudget;
+import com.choruskube.core.service.ArtifactUploadBudget.Admission;
 import com.choruskube.core.service.AuthorizationService;
 import com.choruskube.core.service.PresignService;
 import com.choruskube.core.service.RunStorageScope;
@@ -22,18 +24,21 @@ public class InternalArtifactController {
     private final WorkflowRunRepository runRepo;
     private final AuthorizationService authService;
     private final RunStorageScope runStorageScope;
+    private final ArtifactUploadBudget uploadBudget;
 
     public InternalArtifactController(
             PresignService presignService,
             NodeExecutionRepository execRepo,
             WorkflowRunRepository runRepo,
             AuthorizationService authService,
-            RunStorageScope runStorageScope) {
+            RunStorageScope runStorageScope,
+            ArtifactUploadBudget uploadBudget) {
         this.presignService = presignService;
         this.execRepo = execRepo;
         this.runRepo = runRepo;
         this.authService = authService;
         this.runStorageScope = runStorageScope;
+        this.uploadBudget = uploadBudget;
     }
 
     @GetMapping("/{runId}/node-executions/{nodeExecId}/presign")
@@ -41,7 +46,8 @@ public class InternalArtifactController {
             @PathVariable UUID runId,
             @PathVariable UUID nodeExecId,
             @RequestParam(required = false) String path,
-            @RequestParam(required = false) String method) {
+            @RequestParam(required = false) String method,
+            @RequestParam(required = false) String size) {
 
         if (path == null || path.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Missing required parameter: path"));
@@ -52,6 +58,21 @@ public class InternalArtifactController {
         if (!method.equalsIgnoreCase("GET") && !method.equalsIgnoreCase("PUT")) {
             return ResponseEntity.badRequest()
                     .body(Map.of("error", "Invalid method: " + method + ". Only GET and PUT are allowed."));
+        }
+        boolean isPut = method.equalsIgnoreCase("PUT");
+
+        // A PUT's declared size is what the budget books and the store enforces; a GET carries no
+        // body, so this is checked only for PUT, before anything else, alongside path/method.
+        long declaredBytes = 0;
+        if (isPut) {
+            Long parsed = parseDeclaredSize(size);
+            if (parsed == null) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of(
+                                "error",
+                                "Missing or invalid required parameter for PUT: size (the upload's exact byte count)"));
+            }
+            declaredBytes = parsed;
         }
 
         // InternalAuthFilter has already loaded this NodeExecution to validate JOB_SECRET.
@@ -85,8 +106,50 @@ public class InternalArtifactController {
                     .body(Map.of("error", "Invalid path: must not contain an empty or '.'/'..' segment"));
         }
 
-        String url = presignService.generatePresignedUrl(agentExec.getWorkflowRunId(), path, method.toUpperCase());
+        if (isPut) {
+            Admission admission = uploadBudget.admit(agentExec.getWorkflowRunId(), path, declaredBytes);
+            if (admission instanceof Admission.RunClosed closed) {
+                return ResponseEntity.status(409)
+                        .body(Map.of("error", "Run is closed (" + closed.status() + "); uploads are refused"));
+            }
+            if (admission instanceof Admission.OverBudget overBudget) {
+                return ResponseEntity.status(413)
+                        .body(Map.of(
+                                "error",
+                                "Upload would exceed the run's upload budget (budgetBytes="
+                                        + overBudget.budgetBytes()
+                                        + ", bookedBytes="
+                                        + overBudget.bookedBytes()
+                                        + ", declaredBytes="
+                                        + overBudget.declaredBytes()
+                                        + ")",
+                                "budgetBytes",
+                                overBudget.budgetBytes(),
+                                "bookedBytes",
+                                overBudget.bookedBytes(),
+                                "declaredBytes",
+                                overBudget.declaredBytes()));
+            }
+        }
+
+        Long contentLength = isPut ? declaredBytes : null;
+        String url = presignService.generatePresignedUrl(
+                agentExec.getWorkflowRunId(), path, method.toUpperCase(), contentLength);
         return ResponseEntity.ok(new PresignResponse(url));
+    }
+
+    // Plain ASCII digits only: no sign, no decimal point, no leading/trailing whitespace. Rejects
+    // a value too large for `long` instead of silently wrapping it, so an oversized declaration
+    // fails closed rather than booking a wrapped-negative or truncated size.
+    private static Long parseDeclaredSize(String size) {
+        if (size == null || size.isBlank() || !size.matches("[0-9]+")) {
+            return null;
+        }
+        try {
+            return Long.parseLong(size);
+        } catch (NumberFormatException overflow) {
+            return null;
+        }
     }
 
     // A proxy in front of the store that normalises paths rewrites a key with an empty or dot

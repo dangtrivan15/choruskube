@@ -35,10 +35,19 @@ public class PresignService {
         this.bucket = bucket;
     }
 
-    public String generatePresignedUrl(UUID runId, String objectPath, String method) {
+    public String generatePresignedUrl(UUID runId, String objectPath, String method, Long contentLength) {
         String verb = method.toUpperCase();
         if (!verb.equals("GET") && !verb.equals("PUT")) {
             throw new IllegalArgumentException("Unsupported method: " + method + ". Only GET and PUT are allowed.");
+        }
+        // A PUT's signed content-length is what lets the store refuse any other body length; a
+        // GET carries no body, so a size here would sign a check the request can never satisfy.
+        if (verb.equals("PUT")) {
+            if (contentLength == null || contentLength < 0) {
+                throw new IllegalArgumentException("PUT requires a non-null, non-negative contentLength");
+            }
+        } else if (contentLength != null) {
+            throw new IllegalArgumentException("GET must not carry a contentLength");
         }
 
         // Resolved and validated before any cache lookup or presigner call: a seam that throws
@@ -46,9 +55,10 @@ public class PresignService {
         // forEndpoint with an answer the cache or the presigner would mis-sign for.
         URI endpoint = resolveEndpoint(runId);
 
-        // The endpoint is part of the cache key so a URL signed for one endpoint is never handed
-        // to a caller whose run resolved a different one.
-        String cacheKey = endpoint + "|" + verb + "|" + objectPath;
+        // The endpoint and size are both part of the cache key: a URL signed for one endpoint or
+        // one length is never handed to a caller whose run resolved a different endpoint, or who
+        // declared a different length, than the URL it would return.
+        String cacheKey = endpoint + "|" + verb + "|" + objectPath + "|" + contentLength;
         CachedUrl cached = cache.get(cacheKey);
         if (cached != null && !cached.isExpired()) {
             return cached.url;
@@ -74,6 +84,7 @@ public class PresignService {
                                     .putObjectRequest(PutObjectRequest.builder()
                                             .bucket(bucket)
                                             .key(objectPath)
+                                            .contentLength(contentLength)
                                             .build())
                                     .build())
                             .url()

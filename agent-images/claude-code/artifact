@@ -7,6 +7,13 @@
 #   artifact get <object-path> <local-path>   # download from object storage
 #   artifact put <local-path> <object-path>   # upload to object storage
 #
+# A put measures the local file's exact byte count and declares it on the
+# presign request; the api-server signs that length into the URL, books it
+# against the run's upload budget, and the store then refuses any other
+# body length. A presign answer of 400 (missing/invalid size), 409 (the run
+# is closed) or 413 (past the run's budget) fails the upload at once, with
+# no retry and no transfer attempt, and prints the server's error message.
+#
 # Environment:
 #   API_SERVER_URL      — Base URL of the ChorusKube API server
 #   RUN_ID              — Workflow run UUID
@@ -21,10 +28,11 @@
 #   0  Operation completed successfully
 #   4  The object store answered 404 ("no such object") to a GET — the only
 #      way this status is produced
-#   1  Everything else: missing/invalid environment or arguments, a refused
-#      presign, a transfer that still fails after its retries (a 403, a PUT's
-#      404, an unresolvable host, a persistent 5xx), or any inner command's
-#      own failure
+#   1  Everything else: missing/invalid environment or arguments, an
+#      unreadable local file on a put, a refused presign (400/409/413
+#      included), a transfer that still fails after its retries (a 403, a
+#      PUT's 404, an unresolvable host, a persistent 5xx), or any inner
+#      command's own failure
 #
 # Retries (the presign call and the transfer, independently): a connection
 # failure, a timeout, HTTP 408, HTTP 429 or any HTTP 5xx. Up to 5 attempts
@@ -95,10 +103,17 @@ if [ "$ACTION" = "get" ]; then
     MINIO_PATH="$2"
     LOCAL_PATH="$3"
     METHOD="GET"
+    DECLARED_SIZE=""
 else
     LOCAL_PATH="$2"
     MINIO_PATH="$3"
     METHOD="PUT"
+    # Measured before presigning, never after: the api-server books and signs this exact byte
+    # count, so an unreadable file must fail here rather than reach the presign request at all.
+    DECLARED_SIZE=$(wc -c < "$LOCAL_PATH") || {
+        echo "ERROR: cannot read local file: $LOCAL_PATH" >&2
+        exit 1
+    }
 fi
 
 # --- Shared retry classification, for both the presign call and the transfer ---
@@ -147,12 +162,15 @@ backoff_or_give_up() {
 }
 
 # --- Presign call, retried ---
-# $1=method $2=object path. Prints the presign response body on success; a
-# 200 body is never printed anywhere else, only returned here for the caller
-# to parse — it carries the signed URL.
+# $1=method $2=object path $3=declared size (PUT only; empty for GET). Prints
+# the presign response body on success; a 200 body is never printed anywhere
+# else, only returned here for the caller to parse — it carries the signed URL.
 do_presign() {
-  local method="$1" path="$2" attempt=1
+  local method="$1" path="$2" size="${3:-}" attempt=1
   local url="$API_SERVER_URL/internal/runs/$RUN_ID/node-executions/$NODE_EXECUTION_ID/presign?path=$(printf '%s' "$path" | jq -sRr @uri)&method=$method"
+  if [ -n "$size" ]; then
+    url="${url}&size=${size}"
+  fi
   while :; do
     local response http_code body curl_rc
     set +e
@@ -268,7 +286,7 @@ do_transfer() {
 }
 
 # --- Presign, then transfer against the same URL ---
-PRESIGN_BODY=$(do_presign "$METHOD" "$MINIO_PATH")
+PRESIGN_BODY=$(do_presign "$METHOD" "$MINIO_PATH" "$DECLARED_SIZE")
 # The deadline is taken the moment the presign response arrives, not when the
 # transfer starts — the clock on the URL's validity has been running since then.
 DEADLINE=$(($(date +%s) + 120))

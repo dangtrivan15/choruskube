@@ -11,6 +11,7 @@ import java.util.UUID;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.ObjectProvider;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
@@ -61,7 +62,7 @@ class PresignServiceTest {
         PresignService service = serviceWithResolver(null); // no seam bean registered
         stubGet(ownPresigner, "https://minio:9000/choruskube/runs/abc/out/file.txt?sig=xxx");
 
-        String url = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/out/file.txt", "GET");
+        String url = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/out/file.txt", "GET", null);
 
         assertEquals("https://minio:9000/choruskube/runs/abc/out/file.txt?sig=xxx", url);
         verify(ownPresigner).presignGetObject(any(GetObjectPresignRequest.class));
@@ -72,7 +73,7 @@ class PresignServiceTest {
         PresignService service = serviceWithResolver(null);
         stubPut(ownPresigner, "https://minio:9000/choruskube/runs/abc/out/file.txt?sig=yyy");
 
-        String url = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/out/file.txt", "PUT");
+        String url = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/out/file.txt", "PUT", 100L);
 
         assertEquals("https://minio:9000/choruskube/runs/abc/out/file.txt?sig=yyy", url);
         verify(ownPresigner).presignPutObject(any(PutObjectPresignRequest.class));
@@ -83,7 +84,86 @@ class PresignServiceTest {
         PresignService service = serviceWithResolver(null);
         assertThrows(
                 IllegalArgumentException.class,
-                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "DELETE"));
+                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "DELETE", null));
+    }
+
+    @Test
+    void generatePresignedUrl_PUT_passesContentLengthOnThePutObjectRequest() throws Exception {
+        PresignService service = serviceWithResolver(null);
+        stubPut(ownPresigner, "https://minio:9000/choruskube/runs/abc/out/file.txt?sig=len");
+
+        service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/out/file.txt", "PUT", 12345L);
+
+        ArgumentCaptor<PutObjectPresignRequest> captor = ArgumentCaptor.forClass(PutObjectPresignRequest.class);
+        verify(ownPresigner).presignPutObject(captor.capture());
+        assertEquals(12345L, captor.getValue().putObjectRequest().contentLength());
+    }
+
+    @Test
+    void generatePresignedUrl_PUT_nullContentLength_throwsBeforeSigning() {
+        PresignService service = serviceWithResolver(null);
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "PUT", null));
+
+        verifyNoInteractions(ownPresigner);
+    }
+
+    @Test
+    void generatePresignedUrl_PUT_negativeContentLength_throwsBeforeSigning() {
+        PresignService service = serviceWithResolver(null);
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "PUT", -1L));
+
+        verifyNoInteractions(ownPresigner);
+    }
+
+    @Test
+    void generatePresignedUrl_GET_nonNullContentLength_throwsBeforeSigning() {
+        PresignService service = serviceWithResolver(null);
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET", 100L));
+
+        verifyNoInteractions(ownPresigner);
+    }
+
+    @Test
+    void generatePresignedUrl_PUT_differentContentLengths_areDifferentCacheEntries() throws Exception {
+        PresignService service = serviceWithResolver(null);
+        PresignedPutObjectRequest presigned100 = mock(PresignedPutObjectRequest.class);
+        PresignedPutObjectRequest presigned200 = mock(PresignedPutObjectRequest.class);
+        when(presigned100.url())
+                .thenReturn(URI.create("https://minio:9000/size-100").toURL());
+        when(presigned200.url())
+                .thenReturn(URI.create("https://minio:9000/size-200").toURL());
+        when(ownPresigner.presignPutObject(any(PutObjectPresignRequest.class)))
+                .thenReturn(presigned100)
+                .thenReturn(presigned200);
+
+        UUID runId = UUID.randomUUID();
+        String url1 = service.generatePresignedUrl(runId, "runs/abc/file.txt", "PUT", 100L);
+        String url2 = service.generatePresignedUrl(runId, "runs/abc/file.txt", "PUT", 200L);
+
+        assertNotEquals(url1, url2);
+        verify(ownPresigner, times(2)).presignPutObject(any(PutObjectPresignRequest.class));
+    }
+
+    @Test
+    void generatePresignedUrl_PUT_sameContentLength_isCachedAcrossCalls() throws Exception {
+        PresignService service = serviceWithResolver(null);
+        stubPut(ownPresigner, "https://minio:9000/same-size");
+
+        UUID runId = UUID.randomUUID();
+        String url1 = service.generatePresignedUrl(runId, "runs/abc/file.txt", "PUT", 100L);
+        String url2 = service.generatePresignedUrl(runId, "runs/abc/file.txt", "PUT", 100L);
+
+        assertEquals(url1, url2);
+        verify(ownPresigner, times(1)).presignPutObject(any(PutObjectPresignRequest.class));
     }
 
     @Test
@@ -92,8 +172,8 @@ class PresignServiceTest {
         stubGet(ownPresigner, "https://minio:9000/url1");
 
         UUID runId = UUID.randomUUID();
-        String url1 = service.generatePresignedUrl(runId, "runs/abc/file.txt", "GET");
-        String url2 = service.generatePresignedUrl(runId, "runs/abc/file.txt", "GET");
+        String url1 = service.generatePresignedUrl(runId, "runs/abc/file.txt", "GET", null);
+        String url2 = service.generatePresignedUrl(runId, "runs/abc/file.txt", "GET", null);
 
         assertEquals(url1, url2);
         verify(ownPresigner, times(1)).presignGetObject(any(GetObjectPresignRequest.class));
@@ -106,8 +186,8 @@ class PresignServiceTest {
         stubPut(ownPresigner, "https://put-url");
 
         UUID runId = UUID.randomUUID();
-        String getUrl = service.generatePresignedUrl(runId, "runs/abc/file.txt", "GET");
-        String putUrl = service.generatePresignedUrl(runId, "runs/abc/file.txt", "PUT");
+        String getUrl = service.generatePresignedUrl(runId, "runs/abc/file.txt", "GET", null);
+        String putUrl = service.generatePresignedUrl(runId, "runs/abc/file.txt", "PUT", 100L);
 
         assertNotEquals(getUrl, putUrl);
         verify(ownPresigner, times(1)).presignGetObject(any(GetObjectPresignRequest.class));
@@ -120,7 +200,7 @@ class PresignServiceTest {
         PresignService service = serviceWithResolver(null);
         stubGet(ownPresigner, "https://minio:9000/own-endpoint-url");
 
-        String url = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET");
+        String url = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET", null);
 
         assertEquals("https://minio:9000/own-endpoint-url", url);
         verify(artifactPresigners).forEndpoint(OWN_ENDPOINT);
@@ -136,7 +216,7 @@ class PresignServiceTest {
         ArtifactSigningEndpointResolver resolver = runId -> Optional.of(otherEndpoint);
         PresignService service = serviceWithResolver(resolver);
 
-        String url = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET");
+        String url = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET", null);
 
         assertEquals("https://artifacts.example.com/choruskube/runs/abc/file.txt?sig=zzz", url);
         verify(artifactPresigners).forEndpoint(otherEndpoint);
@@ -167,8 +247,8 @@ class PresignServiceTest {
         };
         PresignService service = serviceWithResolver(resolver);
 
-        String urlA = service.generatePresignedUrl(runA, "runs/abc/file.txt", "GET");
-        String urlB = service.generatePresignedUrl(runB, "runs/abc/file.txt", "GET");
+        String urlA = service.generatePresignedUrl(runA, "runs/abc/file.txt", "GET", null);
+        String urlB = service.generatePresignedUrl(runB, "runs/abc/file.txt", "GET", null);
 
         assertNotEquals(urlA, urlB);
         verify(artifactPresigners).forEndpoint(endpointA);
@@ -187,8 +267,8 @@ class PresignServiceTest {
         ArtifactSigningEndpointResolver resolver = runId -> Optional.of(endpoint);
         PresignService service = serviceWithResolver(resolver);
 
-        String url1 = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET");
-        String url2 = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET");
+        String url1 = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET", null);
+        String url2 = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET", null);
 
         assertEquals(url1, url2);
         verify(presigner, times(1)).presignGetObject(any(GetObjectPresignRequest.class));
@@ -203,7 +283,7 @@ class PresignServiceTest {
 
         assertThrows(
                 IllegalStateException.class,
-                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET"));
+                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET", null));
 
         verify(artifactPresigners, never()).forEndpoint(OWN_ENDPOINT);
         verifyNoInteractions(ownPresigner);
@@ -217,7 +297,7 @@ class PresignServiceTest {
 
         assertThrows(
                 IllegalStateException.class,
-                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET"));
+                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET", null));
 
         verifyNoInteractions(ownPresigner);
         verify(artifactPresigners, never()).forEndpoint(any());
@@ -231,7 +311,7 @@ class PresignServiceTest {
 
         assertThrows(
                 IllegalStateException.class,
-                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET"));
+                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET", null));
 
         verify(artifactPresigners, never()).forEndpoint(any());
     }
@@ -244,7 +324,7 @@ class PresignServiceTest {
 
         assertThrows(
                 IllegalStateException.class,
-                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET"));
+                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET", null));
 
         verify(artifactPresigners, never()).forEndpoint(any());
     }
@@ -257,7 +337,7 @@ class PresignServiceTest {
 
         assertThrows(
                 IllegalStateException.class,
-                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET"));
+                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET", null));
 
         verify(artifactPresigners, never()).forEndpoint(any());
     }
@@ -269,7 +349,7 @@ class PresignServiceTest {
 
         assertThrows(
                 IllegalStateException.class,
-                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET"));
+                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET", null));
 
         verify(artifactPresigners, never()).forEndpoint(any());
     }
@@ -282,7 +362,7 @@ class PresignServiceTest {
 
         assertThrows(
                 IllegalStateException.class,
-                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET"));
+                () -> service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "GET", null));
 
         verify(artifactPresigners, never()).forEndpoint(any());
     }
@@ -296,7 +376,7 @@ class PresignServiceTest {
 
         PresignService service = serviceWithResolver(runId -> Optional.of(endpoint));
 
-        String url = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "PUT");
+        String url = service.generatePresignedUrl(UUID.randomUUID(), "runs/abc/file.txt", "PUT", 100L);
 
         assertEquals("https://artifacts.example.com:8443/choruskube/runs/abc/file.txt?sig=ddd", url);
         verify(artifactPresigners).forEndpoint(endpoint);

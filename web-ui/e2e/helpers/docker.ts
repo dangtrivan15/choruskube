@@ -8,10 +8,21 @@
  * `worker/executor/docker/docker.go`) -- so these shell out to the `docker` CLI instead, reading
  * back the same `choruskube/*` labels that executor stamps on every object it creates.
  */
-import { execFile } from "node:child_process";
+import { execFile, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
+
+// util.promisify's own type for execFile omits the `.child` property Node attaches to the
+// returned promise (documented at nodejs.org/api/child_process.html#child_processexecfilefile-args-options-callback);
+// this is the minimal cast to reach it without `any`.
+function childOf(promise: ReturnType<typeof run>): ChildProcess {
+  return (promise as unknown as { child: ChildProcess }).child;
+}
+
+// Reads the signed URL off stdin rather than argv (see `putFromWorkload`), then PUTs `$1` (the
+// body) to it and prints only the HTTP status code.
+const CURL_PUT_SCRIPT = 'url=$(cat); curl -s -o /dev/null -w "%{http_code}" -X PUT --data-binary "$1" "$url"';
 
 export interface WorkloadObjects {
   /** Names of containers (the agent container and/or its DinD sidecar) labelled for the run. */
@@ -113,6 +124,8 @@ export interface AgentWorkload {
   jobSecret: string;
   /** The `output_path` the Worker wrote into the container's own `/workspace/config.json`. */
   outputPath: string;
+  /** The agent container's own name, for a `docker exec` run inside it (e.g. {@link putFromWorkload}). */
+  container: string;
 }
 
 /**
@@ -151,7 +164,7 @@ export async function agentWorkload(execId: string): Promise<AgentWorkload> {
       throw new Error(`container for exec id ${execId} has no output_path in its config.json`);
     }
 
-    return { jobSecret, outputPath };
+    return { jobSecret, outputPath, container };
   } catch (err) {
     // A fresh error holding one line: the original carries docker's stdout and stderr, so a report
     // that prints it can carry the container environment, secret included.
@@ -168,4 +181,17 @@ function parseJsonQuietly(text: string, what: string): unknown {
   } catch {
     throw new Error(`${what} is not valid JSON`);
   }
+}
+
+/**
+ * PUTs `body` to `signedUrl` from inside `container` (the agent, not this host, so the request
+ * goes through whatever network the workload actually has) and returns only the HTTP status
+ * code. `signedUrl` reaches the container over the exec's stdin, never this host's argv: a failed
+ * `execFile` rejects with the full command line, which a test report would then print.
+ */
+export async function putFromWorkload(container: string, signedUrl: string, body: string): Promise<number> {
+  const promise = run("docker", ["exec", "-i", container, "sh", "-c", CURL_PUT_SCRIPT, "sh", body]);
+  childOf(promise).stdin?.end(signedUrl);
+  const { stdout } = await promise;
+  return Number(stdout.trim());
 }

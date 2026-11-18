@@ -514,6 +514,99 @@ grep -qF "4  The object store answered 404" <<< "$HELP_OUT" \
 grep -qF "1  Everything else" <<< "$HELP_OUT" \
   && ok "--help documents exit status 1" || fail "--help documents exit status 1 (got: $HELP_OUT)"
 
+# --- 19: PUT of an N-byte file sends size=N on the presign query ---
+P19=$(pick_port); LOG19="$TESTDIR/log19"; SLEEP19="$TESTDIR/sleep19"
+SCRIPT19="$TESTDIR/script19.json"
+cat > "$SCRIPT19" <<EOF
+{"presign":[{"status":200,"urlPath":"/objects/put-sized"}],"transfer":[{"status":200}]}
+EOF
+start_stub "$P19" "$SCRIPT19" "$LOG19"
+SRC19="$TESTDIR/put19.bin"
+printf 'abcdefg' > "$SRC19"
+run_artifact put "$SRC19" "runs/r/e/out/put19.bin" "http://127.0.0.1:$P19" "$SLEEP19"
+[ "$ARTIFACT_RC" -eq 0 ] && ok "PUT of a 7-byte file: exits 0" \
+  || fail "PUT of a 7-byte file: exits 0 (got $ARTIFACT_RC: $ARTIFACT_OUT)"
+PRESIGN_PATH19=$(jq -s '[.[] | select(.type=="presign")][0].path' "$LOG19")
+grep -qF "size=7" <<< "$PRESIGN_PATH19" && ok "PUT of a 7-byte file: presign query carries size=7" \
+  || fail "PUT of a 7-byte file: presign query carries size=7 (got: $PRESIGN_PATH19)"
+
+# --- 20: PUT of an empty file sends size=0 on the presign query ---
+P20=$(pick_port); LOG20="$TESTDIR/log20"; SLEEP20="$TESTDIR/sleep20"
+SCRIPT20="$TESTDIR/script20.json"
+cat > "$SCRIPT20" <<EOF
+{"presign":[{"status":200,"urlPath":"/objects/put-empty"}],"transfer":[{"status":200}]}
+EOF
+start_stub "$P20" "$SCRIPT20" "$LOG20"
+SRC20="$TESTDIR/empty_file"
+: > "$SRC20"
+run_artifact put "$SRC20" "runs/r/e/out/put20.bin" "http://127.0.0.1:$P20" "$SLEEP20"
+[ "$ARTIFACT_RC" -eq 0 ] && ok "PUT of an empty file: exits 0" \
+  || fail "PUT of an empty file: exits 0 (got $ARTIFACT_RC: $ARTIFACT_OUT)"
+PRESIGN_PATH20=$(jq -s '[.[] | select(.type=="presign")][0].path' "$LOG20")
+grep -qF "size=0" <<< "$PRESIGN_PATH20" && ok "PUT of an empty file: presign query carries size=0" \
+  || fail "PUT of an empty file: presign query carries size=0 (got: $PRESIGN_PATH20)"
+
+# --- 21: GET sends no size param on the presign query ---
+P21=$(pick_port); LOG21="$TESTDIR/log21"; SLEEP21="$TESTDIR/sleep21"
+SCRIPT21="$TESTDIR/script21.json"
+cat > "$SCRIPT21" <<EOF
+{"presign":[{"status":200,"urlPath":"/objects/get-nosize"}],"transfer":[{"status":200,"body":"data"}]}
+EOF
+start_stub "$P21" "$SCRIPT21" "$LOG21"
+DEST21="$TESTDIR/get21_out.txt"
+run_artifact get "runs/r/e/out/get21.txt" "$DEST21" "http://127.0.0.1:$P21" "$SLEEP21"
+[ "$ARTIFACT_RC" -eq 0 ] && ok "GET: exits 0" || fail "GET: exits 0 (got $ARTIFACT_RC: $ARTIFACT_OUT)"
+PRESIGN_PATH21=$(jq -s '[.[] | select(.type=="presign")][0].path' "$LOG21")
+if grep -qF "size=" <<< "$PRESIGN_PATH21"; then
+  fail "GET: presign query carries no size param (got: $PRESIGN_PATH21)"
+else
+  ok "GET: presign query carries no size param"
+fi
+
+# --- 22-24: a presign rejection (413/409/400) fails at once, with no retry and
+# no transfer attempt, and the server's error text (but not the sentinel)
+# reaches the caller ---
+run_presign_reject_case() {
+  local status="$1" label="$2"
+  local port=$(pick_port) log="$TESTDIR/log_pr_$status" sleeplog="$TESTDIR/sleep_pr_$status"
+  local script="$TESTDIR/script_pr_$status.json"
+  cat > "$script" <<EOF
+{"presign":[{"status":$status,"body":"{\"error\":\"Upload would exceed the run's upload budget (budgetBytes=1,bookedBytes=1,declaredBytes=1)\"}"}],"transfer":[]}
+EOF
+  start_stub "$port" "$script" "$log"
+  local src="$TESTDIR/put_pr_$status.bin"
+  printf 'data' > "$src"
+  run_artifact put "$src" "runs/r/e/out/pr_$status.bin" "http://127.0.0.1:$port" "$sleeplog"
+  [ "$ARTIFACT_RC" -eq 1 ] && ok "$label: exits 1" || fail "$label: exits 1 (got $ARTIFACT_RC: $ARTIFACT_OUT)"
+  [ "$(presign_count "$log")" -eq 1 ] && ok "$label: exactly one presign attempt (no retry)" \
+    || fail "$label: exactly one presign attempt (no retry) (got $(presign_count "$log"))"
+  [ "$(transfer_count "$log")" -eq 0 ] && ok "$label: no transfer attempt" \
+    || fail "$label: no transfer attempt (got $(transfer_count "$log"))"
+  grep -qF "Upload would exceed" <<< "$ARTIFACT_OUT" && ok "$label: server's error text reaches the caller" \
+    || fail "$label: server's error text reaches the caller (got: $ARTIFACT_OUT)"
+  assert_no_signed_url "$label" "$ARTIFACT_OUT"
+}
+run_presign_reject_case 413 "presign 413 (upload budget exceeded)"
+run_presign_reject_case 409 "presign 409 (run closed)"
+run_presign_reject_case 400 "presign 400 (missing/invalid size)"
+
+# --- 25: PUT of a missing local file fails at once, with no presign request ---
+P25=$(pick_port); LOG25="$TESTDIR/log25"; SLEEP25="$TESTDIR/sleep25"
+SCRIPT25="$TESTDIR/script25.json"
+cat > "$SCRIPT25" <<EOF
+{"presign":[{"status":200,"urlPath":"/objects/put-missing-local"}],"transfer":[{"status":200}]}
+EOF
+start_stub "$P25" "$SCRIPT25" "$LOG25"
+run_artifact put "$TESTDIR/does_not_exist.bin" "runs/r/e/out/put25.bin" "http://127.0.0.1:$P25" "$SLEEP25"
+[ "$ARTIFACT_RC" -eq 1 ] && ok "PUT of a missing local file: exits 1" \
+  || fail "PUT of a missing local file: exits 1 (got $ARTIFACT_RC: $ARTIFACT_OUT)"
+[ ! -s "$LOG25" ] && ok "PUT of a missing local file: no request reaches the stub" \
+  || fail "PUT of a missing local file: no request reaches the stub (got: $(cat "$LOG25"))"
+[ "$(presign_count "$LOG25")" -eq 0 ] && ok "PUT of a missing local file: no presign request" \
+  || fail "PUT of a missing local file: no presign request (got $(presign_count "$LOG25"))"
+[ "$(transfer_count "$LOG25")" -eq 0 ] && ok "PUT of a missing local file: no transfer attempt" \
+  || fail "PUT of a missing local file: no transfer attempt (got $(transfer_count "$LOG25"))"
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
