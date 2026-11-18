@@ -301,8 +301,10 @@ a presigned URL cannot be revoked once issued. The check and the booking run und
 lock on the run row, so two presigns racing for the last bytes of the budget admit at
 most one. An unsized PUT presign gets 400, a closed run 409, and one past the budget
 413; none of these carries a URL or books anything, and a GET presign books nothing.
-Server-side writes (run inputs, gate attachments, the run log) are not booked: each
-is bounded per request. Why each of these choices:
+Server-side writes (run inputs, gate attachments, the run log the orchestrator
+appends) are not booked against this budget at all — they go through
+`UploadService`/`S3Client` or the orchestrator's own object-store client, never
+`InternalArtifactController`. Why each of these choices:
 [docs/decisions/2026-11-18---01-agent-uploads-are-sized-and-budgeted-per-run.md](docs/decisions/2026-11-18---01-agent-uploads-are-sized-and-budgeted-per-run.md).
 
 ### How a transfer tells a missing object from a failed one
