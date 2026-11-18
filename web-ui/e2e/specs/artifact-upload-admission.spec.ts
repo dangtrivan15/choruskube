@@ -77,10 +77,17 @@ test.describe("Artifact upload admission", () => {
       );
       expect(overBudget.status).toBe(413);
       expect(overBudget.json.budgetBytes).toBe(536_870_912);
-      expect(typeof overBudget.json.bookedBytes).toBe("number");
-      // A fresh run's budget is per-run, so nothing else could have booked against it yet.
-      expect(overBudget.json.bookedBytes).toBe(0);
+      // Not zero: `start` (and maybe branch_a/branch_c) already uploaded outputs through the sized
+      // CLI, booking them against this same run before branch_b could run.
+      const bookedBytes = overBudget.json.bookedBytes;
+      expect(typeof bookedBytes).toBe("number");
+      expect(bookedBytes as number).toBeGreaterThanOrEqual(0);
+      expect(bookedBytes as number).toBeLessThan(536_870_912);
       expect(overBudget.json.declaredBytes).toBe(Number(ONE_TIB_BYTES));
+      expect(overBudget.json.error).toContain("budgetBytes=536870912");
+      expect(overBudget.json.error).toContain(`bookedBytes=${bookedBytes}`);
+      expect(overBudget.json.error).toContain(`declaredBytes=${ONE_TIB_BYTES}`);
+      expect(overBudget.json.url).toBeUndefined();
 
       // A declaration the budget admits, signed for exactly 5 bytes.
       const admitted = await presignProbe(presignPath, uploadPath, workload.jobSecret, "PUT", "5");

@@ -186,9 +186,8 @@ function parseJsonQuietly(text: string, what: string): unknown {
 /**
  * PUTs `body` to `signedUrl` from inside `container` (the agent, not this host, so the request
  * goes through whatever network the workload actually has) and returns only the HTTP status
- * code. `signedUrl` goes over the exec's stdin, never argv, so it never appears in `docker
- * inspect`/`ps`/a process listing for this container; `body` is not secret, so it's a positional
- * shell argument instead.
+ * code. `signedUrl` reaches the container over the exec's stdin, never this host's argv: a failed
+ * `execFile` rejects with the full command line, which a test report would then print.
  */
 export async function putFromWorkload(container: string, signedUrl: string, body: string): Promise<number> {
   const promise = run("docker", ["exec", "-i", container, "sh", "-c", CURL_PUT_SCRIPT, "sh", body]);

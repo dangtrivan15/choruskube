@@ -24,9 +24,7 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>,
     /**
      * {@code SELECT ... FOR UPDATE} on one run, held until the surrounding transaction ends —
      * serialises concurrent upload admissions against the same run so two presigns racing for the
-     * last bytes of its budget can never both be admitted. An explicit {@code @Query} is required:
-     * Spring Data parses everything after "findBy" as a property path, so the derived form tries
-     * (and fails) to resolve a property named "forUpdate" on {@code WorkflowRun.id}.
+     * last bytes of its budget can never both be admitted.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT w FROM WorkflowRun w WHERE w.id = :id")

@@ -13,8 +13,8 @@ public interface ArtifactUploadBookingRepository extends JpaRepository<ArtifactU
 
     /**
      * Inserts the key's first booking, or raises an existing one to the larger of its current and
-     * this size — never lowers it, so a still-valid URL signed for an earlier, larger size can
-     * never outrun what the ledger counts (see the Story spec's booking decision).
+     * this size — never lowers it, so a still-valid URL signed for an earlier, larger size can never
+     * outrun what the ledger counts (docs/decisions/2026-11-18---01-agent-uploads-are-sized-and-budgeted-per-run.md).
      */
     @Modifying
     @Query(value = """

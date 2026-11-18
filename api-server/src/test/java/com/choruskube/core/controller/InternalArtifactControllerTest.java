@@ -437,6 +437,22 @@ class InternalArtifactControllerTest extends SharedContextTest {
     }
 
     @Test
+    void presign_getOnCancelledRun_stillSigns() throws Exception {
+        run.setStatus(WorkflowRunStatus.cancelled);
+        runRepo.save(run);
+        String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
+        when(presignService.generatePresignedUrl(run.getId(), path, "GET", null))
+                .thenReturn("https://minio:9000/signed-url");
+
+        mockMvc.perform(get("/internal/runs/" + run.getId() + "/node-executions/" + exec.getId() + "/presign")
+                        .param("path", path)
+                        .param("method", "GET")
+                        .header("Authorization", "Bearer " + JOB_SECRET))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.url").value("https://minio:9000/signed-url"));
+    }
+
+    @Test
     void presign_putOverBudget_isPayloadTooLarge() throws Exception {
         String path = "system/runs/" + run.getId() + "/some-node/out/file.txt";
 
@@ -446,7 +462,9 @@ class InternalArtifactControllerTest extends SharedContextTest {
                         .param("size", "2000")
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isPayloadTooLarge())
-                .andExpect(jsonPath("$.error").exists())
+                .andExpect(jsonPath("$.error").value(containsString("budgetBytes=1024")))
+                .andExpect(jsonPath("$.error").value(containsString("bookedBytes=0")))
+                .andExpect(jsonPath("$.error").value(containsString("declaredBytes=2000")))
                 .andExpect(jsonPath("$.budgetBytes").value(1024))
                 .andExpect(jsonPath("$.bookedBytes").value(0))
                 .andExpect(jsonPath("$.declaredBytes").value(2000))

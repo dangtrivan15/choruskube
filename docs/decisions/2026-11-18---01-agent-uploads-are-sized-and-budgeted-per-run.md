@@ -6,9 +6,9 @@
 
 An agent's upload presign carried no size, so the URL it got back accepted a body of
 any length, and the api-server counted nothing against it. A run, a customer's
-Worker, or a bug in the CLI could write without bound. A deployment that puts a proxy
-in front of the store is doubly exposed: SigV4 cannot express a maximum, so only the
-store itself — the last line of defence — was refusing an oversized body.
+Worker, or a bug in the CLI could write without bound. A proxy in front of the store
+does not help: it forwards the body without inspecting it, and SigV4 cannot express a
+maximum, so only a length signed into the URL lets the store itself refuse a body.
 
 ## Decision
 

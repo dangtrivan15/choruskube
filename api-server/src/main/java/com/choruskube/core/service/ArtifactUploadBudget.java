@@ -48,11 +48,11 @@ public class ArtifactUploadBudget {
         long existingForKey = bookingRepo.findBookedBytes(runId, objectKey).orElse(0L);
         long othersBooked = bookingRepo.sumBookedBytesExcludingKey(runId, objectKey);
         long newBookingForKey = Math.max(existingForKey, declaredBytes);
-        long bookedBeforeThisCall = othersBooked + existingForKey;
-        long totalAfterThisCall = othersBooked + newBookingForKey;
 
-        if (totalAfterThisCall > budgetBytes) {
-            return new Admission.OverBudget(budgetBytes, bookedBeforeThisCall, declaredBytes);
+        // Compared as headroom, never as a sum: a declaration near Long.MAX_VALUE added to the run's
+        // other bookings wraps negative and would pass the check, booking an unbounded size.
+        if (newBookingForKey > budgetBytes - othersBooked) {
+            return new Admission.OverBudget(budgetBytes, othersBooked + existingForKey, declaredBytes);
         }
 
         bookingRepo.upsertKeepingLargest(runId, objectKey, declaredBytes);

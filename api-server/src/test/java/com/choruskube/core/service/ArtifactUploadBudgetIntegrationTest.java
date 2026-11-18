@@ -117,6 +117,29 @@ class ArtifactUploadBudgetIntegrationTest extends SharedContextTest {
     }
 
     @Test
+    void declarationThatWouldOverflowTheRunTotal_isOverBudgetAndBooksNothing() {
+        UUID runId = makeRun(WorkflowRunStatus.pending);
+        budget.admit(runId, "key1", 1);
+
+        Admission admission = budget.admit(runId, "key2", Long.MAX_VALUE);
+
+        assertThat(admission).isInstanceOf(Admission.OverBudget.class);
+        assertThat(((Admission.OverBudget) admission).bookedBytes()).isEqualTo(1L);
+        assertThat(bookingRepo.findBookedBytes(runId, "key2")).isEmpty();
+        assertThat(bookingRepo.sumBookedBytes(runId)).isEqualTo(1L);
+    }
+
+    @Test
+    void declarationFillingTheBudgetExactly_isAdmitted() {
+        UUID runId = makeRun(WorkflowRunStatus.pending);
+        budget.admit(runId, "key1", 24);
+
+        assertThat(budget.admit(runId, "key2", BUDGET_BYTES - 24)).isInstanceOf(Admission.Admitted.class);
+        assertThat(budget.admit(runId, "key3", 1)).isInstanceOf(Admission.OverBudget.class);
+        assertThat(bookingRepo.sumBookedBytes(runId)).isEqualTo(BUDGET_BYTES);
+    }
+
+    @Test
     void everyTerminalStatus_returnsRunClosedAndBooksNothing() {
         for (WorkflowRunStatus status : WorkflowRunStatusGroups.TERMINAL) {
             UUID runId = makeRun(status);
