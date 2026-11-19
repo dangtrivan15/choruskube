@@ -322,9 +322,25 @@ public class InternalRunService {
 
     @Transactional
     public void updateRunStatus(UUID runId, InternalUpdateRunStatusRequest req) {
-        WorkflowRun run =
-                runRepo.findById(runId).orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
-        run.setStatus(WorkflowRunStatus.valueOf(req.status()));
+        // Locked so the terminal check serializes with a user's cancel: an unlocked read would
+        // see the run still live and overwrite the cancel once it commits.
+        WorkflowRun run = runRepo.findByIdForUpdate(runId)
+                .orElseThrow(() -> new NotFoundException("Workflow run not found: " + runId));
+        WorkflowRunStatus requested = WorkflowRunStatus.valueOf(req.status());
+        if (WorkflowRunStatusGroups.TERMINAL.contains(run.getStatus())) {
+            log.info(
+                    "Ignored a late status write for finished run {}: it is {}, the write asked for {}",
+                    runId,
+                    run.getStatus(),
+                    requested);
+            // A repeat end still voids live approvals: one that committed after the run first ended
+            // is voided by no other path.
+            if (WorkflowRunStatusGroups.TERMINAL.contains(requested)) {
+                gateRecheck.voidLiveForRun(runId, GateRecheckService.RUN_ENDED);
+            }
+            return;
+        }
+        run.setStatus(requested);
 
         Instant now = Instant.now();
         String status = req.status();
