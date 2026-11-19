@@ -1,7 +1,7 @@
 # agent-images/choruskube-dev/Dockerfile
 # Extends the base Claude Code agent with Java 25 and Go 1.25 for choruskube development.
 # BASE_AGENT_IMAGE selects the base agent runtime to extend. Defaults to the public
-# agent image; CI overrides it (via --build-arg) to build from a freshly-built agent.
+# agent image; CI builds through docker-bake.hcl, which binds it to the claude-code target.
 ARG BASE_AGENT_IMAGE=registry.choruskube.com/claude-code:latest
 FROM ${BASE_AGENT_IMAGE}
 
@@ -56,7 +56,7 @@ RUN npm install -g @playwright/test@1.58.2 \
 #
 # Only build files are copied, never sources, so a dependency change invalidates this layer, not
 # every commit. api-server arrives as a named build context so the main context stays scoped to
-# this directory (see build-images.yml). Placed LAST: build files change more often than the
+# this directory (see docker-bake.hcl). Placed LAST: build files change more often than the
 # JDK/Go/Playwright layers, and a rebuilt layer invalidates every layer after it.
 #
 # Resolution goes straight to Maven Central. Do NOT thread a faster internal mirror through a
