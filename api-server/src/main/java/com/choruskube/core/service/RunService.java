@@ -30,6 +30,7 @@ import io.temporal.client.WorkflowNotFoundException;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import jakarta.annotation.Nullable;
+import java.time.Instant;
 import java.util.*;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -412,6 +413,9 @@ public class RunService {
         rejectIfTerminal(run, "cancel");
         signalWorkflow(run, "cancel");
         run.setStatus(WorkflowRunStatus.cancelled);
+        // The only end time a cancel gets: the workflow's own "cancelled" write that follows lands
+        // on a finished run and is ignored.
+        run.setCompletedAt(Instant.now());
         runRepo.save(run);
         gateRecheck.voidLiveForRun(id, GateRecheckService.RUN_ENDED);
         taskSettlement.closeIfSettledBy(run);
