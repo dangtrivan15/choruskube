@@ -408,7 +408,10 @@ public class RunService {
 
     @Transactional
     public void cancelRun(UUID id) {
-        WorkflowRun run = findRunOrThrow(id);
+        // Locked so rejectIfTerminal sees a finish the workflow committed first: an unlocked read
+        // would let this cancel overwrite a completed or failed run.
+        WorkflowRun run =
+                runRepo.findByIdForUpdate(id).orElseThrow(() -> new NotFoundException("Workflow run not found: " + id));
         authService.checkOrgAccess("workflow_run", id);
         rejectIfTerminal(run, "cancel");
         signalWorkflow(run, "cancel");

@@ -1,9 +1,11 @@
 package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -11,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.dto.InternalUpdateRunStatusRequest;
+import com.choruskube.core.exception.ValidationException;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
@@ -32,8 +35,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * The orchestrator's run-status write is the only path that can move a finished run back to an
- * active status: every user operation already refuses a finished run, so a late write must too.
+ * A finished run stays finished. The orchestrator's run-status write must refuse it as every user
+ * operation does, and a user's cancel must refuse a run the workflow has already finished.
  */
 @Transactional
 class InternalRunServiceFinishedRunTest extends SharedContextTest {
@@ -124,6 +127,20 @@ class InternalRunServiceFinishedRunTest extends SharedContextTest {
         WorkflowRun reloaded = reload(run);
         assertThat(reloaded.getStatus()).isEqualTo(WorkflowRunStatus.cancelled);
         assertThat(reloaded.getCompletedAt()).isNotNull();
+    }
+
+    @Test
+    void aRunTheWorkflowAlreadyCompleted_refusesALaterCancel() {
+        WorkflowRun run = liveRun();
+        internalRunService.updateRunStatus(run.getId(), new InternalUpdateRunStatusRequest("completed"));
+        Instant completedAt = reload(run).getCompletedAt();
+
+        assertThatThrownBy(() -> runService.cancelRun(run.getId())).isInstanceOf(ValidationException.class);
+
+        WorkflowRun reloaded = reload(run);
+        assertThat(reloaded.getStatus()).isEqualTo(WorkflowRunStatus.completed);
+        assertThat(reloaded.getCompletedAt()).isEqualTo(completedAt);
+        verify(workflowClientRegistry, never()).clientFor(any());
     }
 
     @ParameterizedTest
