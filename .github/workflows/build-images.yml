@@ -294,14 +294,11 @@ jobs:
           files: docker-bake.hcl
           targets: claude-code
           push: true
-          # A downstream build of this chain imports these cache refs, every layer of them (mode=max).
-          # This builder keeps its own cache, so renaming or dropping them changes nothing here but
-          # makes each downstream build of the chain start cold.
+          # No registry cache-to: the registry rejects the cache index this builder's BuildKit writes,
+          # failing the job after the image is already pushed. The persistent builder keeps its own cache.
           set: |
             claude-code.tags=${{ env.PUBLIC_REGISTRY }}/claude-code:latest
             claude-code.tags=${{ env.PUBLIC_REGISTRY }}/claude-code:${{ github.sha }}
-            claude-code.cache-from=type=registry,ref=${{ env.PUBLIC_REGISTRY }}/claude-code:buildcache
-            claude-code.cache-to=type=registry,ref=${{ env.PUBLIC_REGISTRY }}/claude-code:buildcache,mode=max
 
   build-choruskube-dev:
     needs: [detect-changes, build-claude-code]
@@ -347,15 +344,9 @@ jobs:
           files: docker-bake.hcl
           targets: choruskube-dev
           push: true
-          # Same downstream cache contract as build-claude-code. claude-code's ref is written here too:
-          # this job rebuilds that base whenever claude-code's own FROM tag has moved since that job ran.
           set: |
             choruskube-dev.tags=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:latest
             choruskube-dev.tags=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:${{ github.sha }}
-            choruskube-dev.cache-from=type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:buildcache
-            choruskube-dev.cache-to=type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:buildcache,mode=max
-            claude-code.cache-from=type=registry,ref=${{ env.PUBLIC_REGISTRY }}/claude-code:buildcache
-            claude-code.cache-to=type=registry,ref=${{ env.PUBLIC_REGISTRY }}/claude-code:buildcache,mode=max
 
   build-choruskube-dind:
     needs: detect-changes

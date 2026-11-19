@@ -1,6 +1,6 @@
 # The agent image chain, built from one source tree: choruskube-dev's base is the claude-code
-# target, never a published tag. A downstream build includes this file and imports the registry
-# cache build-images.yml exports; renaming a target or CORE_ROOT breaks that build or makes it cold.
+# target, never a published tag. A downstream build includes this file, so renaming a target or
+# CORE_ROOT breaks it.
 
 # Prefix every path below with it: a downstream runs bake from its own root, where an unprefixed
 # path such as api-server silently resolves to the downstream's directory instead of this one.
