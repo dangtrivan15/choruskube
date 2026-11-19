@@ -12,8 +12,8 @@ run-name: Build Images (${{ github.event_name }})
 # public-bound workflow carries no registry hostname. Tags are intentionally project-less:
 # the supplied registry already namespaces published images.
 #
-# choruskube-dev derives FROM the freshly published agent image, so its job depends on
-# build-claude-code and consumes PUBLIC_REGISTRY/claude-code:latest as BASE_AGENT_IMAGE.
+# claude-code and choruskube-dev build through docker-bake.hcl, which builds choruskube-dev
+# FROM the claude-code target at the same commit rather than from a published tag.
 on:
   workflow_dispatch:
   repository_dispatch:
@@ -25,6 +25,7 @@ on:
       - 'orchestrator/**'
       - 'worker/**'
       - 'agent-images/**'
+      - 'docker-bake.hcl'
       - '.github/workflows/build-images.yml'
 
 env:
@@ -61,8 +62,10 @@ jobs:
               - 'worker/**'
             claude-code:
               - 'agent-images/claude-code/**'
+              - 'docker-bake.hcl'
             choruskube-dev:
               - 'agent-images/choruskube-dev/**'
+              - 'docker-bake.hcl'
               # The image bakes a warmed Gradle module cache from these files, so they are
               # build inputs; a change here rebuilds the image to keep the cache fully warm.
               - 'api-server/build.gradle'
@@ -285,21 +288,26 @@ jobs:
           printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$PUBLIC_REGISTRY" "$AUTH" > "$HOME/.docker/config.json"
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/bake-action@v6
         with:
-          context: agent-images/claude-code
-          file: agent-images/claude-code/Dockerfile
-          platforms: linux/amd64
+          source: .
+          files: docker-bake.hcl
+          targets: claude-code
           push: true
-          tags: |
-            ${{ env.PUBLIC_REGISTRY }}/claude-code:latest
-            ${{ env.PUBLIC_REGISTRY }}/claude-code:${{ github.sha }}
+          # A downstream build of this chain imports these cache refs, every layer of them (mode=max).
+          # This builder keeps its own cache, so renaming or dropping them changes nothing here but
+          # makes each downstream build of the chain start cold.
+          set: |
+            claude-code.tags=${{ env.PUBLIC_REGISTRY }}/claude-code:latest
+            claude-code.tags=${{ env.PUBLIC_REGISTRY }}/claude-code:${{ github.sha }}
+            claude-code.cache-from=type=registry,ref=${{ env.PUBLIC_REGISTRY }}/claude-code:buildcache
+            claude-code.cache-to=type=registry,ref=${{ env.PUBLIC_REGISTRY }}/claude-code:buildcache,mode=max
 
   build-choruskube-dev:
     needs: [detect-changes, build-claude-code]
     runs-on: arc-runner-choruskube-build
-    # Run after claude-code (its base image). Tolerate a skipped claude-code build so a
-    # choruskube-dev-only change still rebuilds against the already-published :latest agent.
+    # Run after claude-code so the claude-code target bake builds below is a cache hit. Tolerate a
+    # skipped claude-code build: a choruskube-dev-only change must still publish.
     if: |
       always() &&
       (needs.build-claude-code.result == 'success' || needs.build-claude-code.result == 'skipped') &&
@@ -333,27 +341,21 @@ jobs:
           printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$PUBLIC_REGISTRY" "$AUTH" > "$HOME/.docker/config.json"
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/bake-action@v6
         with:
-          context: agent-images/choruskube-dev
-          file: agent-images/choruskube-dev/Dockerfile
-          # The Gradle warm-up layer needs api-server's build files. A named context keeps
-          # the main context scoped to agent-images/choruskube-dev — switching to a
-          # repo-root context would ship the whole working tree to BuildKit instead.
-          build-contexts: |
-            api-server=api-server
-            orchestrator=orchestrator
-            worker=worker
-            web-ui=web-ui
-          platforms: linux/amd64
+          source: .
+          files: docker-bake.hcl
+          targets: choruskube-dev
           push: true
-          # Pin the base to the public :latest agent — published by build-claude-code just
-          # above, or already present when claude-code is skipped.
-          build-args: |
-            BASE_AGENT_IMAGE=${{ env.PUBLIC_REGISTRY }}/claude-code:latest
-          tags: |
-            ${{ env.PUBLIC_REGISTRY }}/choruskube-dev:latest
-            ${{ env.PUBLIC_REGISTRY }}/choruskube-dev:${{ github.sha }}
+          # Same downstream cache contract as build-claude-code. claude-code's ref is written here too:
+          # this job rebuilds that base whenever claude-code's own FROM tag has moved since that job ran.
+          set: |
+            choruskube-dev.tags=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:latest
+            choruskube-dev.tags=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:${{ github.sha }}
+            choruskube-dev.cache-from=type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:buildcache
+            choruskube-dev.cache-to=type=registry,ref=${{ env.PUBLIC_REGISTRY }}/choruskube-dev:buildcache,mode=max
+            claude-code.cache-from=type=registry,ref=${{ env.PUBLIC_REGISTRY }}/claude-code:buildcache
+            claude-code.cache-to=type=registry,ref=${{ env.PUBLIC_REGISTRY }}/claude-code:buildcache,mode=max
 
   build-choruskube-dind:
     needs: detect-changes
