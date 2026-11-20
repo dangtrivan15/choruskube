@@ -285,6 +285,25 @@ class StorySpecLifecycleServiceConflictTest extends SharedContextTest {
         verify(storyDesignService, times(1)).startRevisionForConflicts(eq(storyId), any(), any());
     }
 
+    /** Every version this run touches is recorded through {@code recordApproved}, so each is captured immediately. */
+    @Test
+    void revision_startsOnAStoryWhoseVersionsAreAllCaptured() {
+        UUID storyId = makeStory("conflict-all-captured");
+        approveSpec(storyId, "# Spec v1");
+        Parked first = parkedTaskRun(storyId, 1);
+        lifecycle.processConflicts();
+        UUID firstRevisionId = specService.openDesignRun(storyId).orElseThrow().getId();
+        completeRevision(storyId, firstRevisionId, "# Spec v2");
+        Parked second = parkedTaskRun(storyId, 2);
+
+        assertThatCode(() -> lifecycle.processConflicts()).doesNotThrowAnyException();
+
+        UUID secondRevisionId = specService.openDesignRun(storyId).orElseThrow().getId();
+        assertThat(secondRevisionId).isNotEqualTo(firstRevisionId);
+        assertThat(conflict(second).getRevisionRunId()).isEqualTo(secondRevisionId);
+        assertThat(conflict(first).getReleasedAt()).isNotNull();
+    }
+
     @Test
     void awaitGateNotOpen_skipped() {
         UUID storyId = makeStory("conflict-gate-not-open");
@@ -739,7 +758,7 @@ class StorySpecLifecycleServiceConflictTest extends SharedContextTest {
 
     private void completeRevision(UUID storyId, UUID revisionId, String spec) {
         setStatus(revisionId, WorkflowRunStatus.completed);
-        specService.recordApproved(storyId, revisionId, spec);
+        specService.recordApproved(storyId, revisionId, spec, null);
     }
 
     private void setStatus(UUID runId, WorkflowRunStatus status) {

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.SharedContextTest;
+import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.TaskDeliveryGraph;
 import com.choruskube.core.dto.EpicRequest;
@@ -86,11 +87,11 @@ class StorySpecServiceTest extends SharedContextTest {
         StoryResponse other = makeStory("spec-numbering-other");
 
         StorySpecVersion v1 =
-                service.recordApproved(story.id(), designRun(story.id(), WorkflowRunStatus.completed), "one");
+                service.recordApproved(story.id(), designRun(story.id(), WorkflowRunStatus.completed), "one", null);
         StorySpecVersion v2 =
-                service.recordApproved(story.id(), designRun(story.id(), WorkflowRunStatus.completed), "two");
+                service.recordApproved(story.id(), designRun(story.id(), WorkflowRunStatus.completed), "two", null);
         StorySpecVersion otherV1 =
-                service.recordApproved(other.id(), designRun(other.id(), WorkflowRunStatus.completed), "x");
+                service.recordApproved(other.id(), designRun(other.id(), WorkflowRunStatus.completed), "x", null);
 
         assertThat(v1.getVersion()).isEqualTo(1);
         assertThat(v2.getVersion()).isEqualTo(2);
@@ -109,11 +110,63 @@ class StorySpecServiceTest extends SharedContextTest {
         StoryResponse story = makeStory("spec-idempotent");
         UUID runId = designRun(story.id(), WorkflowRunStatus.completed);
 
-        StorySpecVersion first = service.recordApproved(story.id(), runId, "content");
-        StorySpecVersion again = service.recordApproved(story.id(), runId, "content");
+        StorySpecVersion first = service.recordApproved(story.id(), runId, "content", "first review");
+        StorySpecVersion again = service.recordApproved(story.id(), runId, "content", "second review");
 
         assertThat(again.getId()).isEqualTo(first.getId());
+        assertThat(again.getFinalReview()).isEqualTo("first review");
         assertThat(service.versions(story.id())).hasSize(1);
+    }
+
+    @Test
+    void recordApproved_withReviewText_storesItAndStampsCapturedAt() {
+        StoryResponse story = makeStory("spec-review-text");
+        UUID runId = designRun(story.id(), WorkflowRunStatus.completed);
+
+        StorySpecVersion version = service.recordApproved(story.id(), runId, "content", "Looks good");
+
+        assertThat(version.getFinalReview()).isEqualTo("Looks good");
+        assertThat(version.getReviewCapturedAt()).isNotNull();
+    }
+
+    @Test
+    void recordApproved_withNullReview_storesNullTextButStillStampsCapturedAt() {
+        StoryResponse story = makeStory("spec-review-null");
+        UUID runId = designRun(story.id(), WorkflowRunStatus.completed);
+
+        StorySpecVersion version = service.recordApproved(story.id(), runId, "content", null);
+
+        assertThat(version.getFinalReview()).isNull();
+        assertThat(version.getReviewCapturedAt()).isNotNull();
+    }
+
+    @Test
+    void captureReview_writesOnceThenRefusesASecondWrite() {
+        StoryResponse story = makeStory("spec-capture-review");
+        UUID runId = designRun(story.id(), WorkflowRunStatus.completed);
+        StorySpecVersion version = StorySpecFixtures.insertUncaptured(jdbc, story.id(), runId);
+
+        boolean first = service.captureReview(version.getId(), "The reasoning behind v1");
+        boolean second = service.captureReview(version.getId(), "A different review");
+
+        assertThat(first).isTrue();
+        assertThat(second).isFalse();
+        StorySpecVersion reloaded = service.version(story.id(), version.getVersion());
+        assertThat(reloaded.getFinalReview()).isEqualTo("The reasoning behind v1");
+        assertThat(reloaded.getReviewCapturedAt()).isNotNull();
+    }
+
+    @Test
+    void uncapturedReviews_listsOnlyRowsWithNoCapturedAt() {
+        StoryResponse captured = makeStory("spec-uncaptured-captured");
+        service.recordApproved(captured.id(), designRun(captured.id(), WorkflowRunStatus.completed), "v1", null);
+        StoryResponse uncaptured = makeStory("spec-uncaptured-pending");
+        StorySpecVersion pending = StorySpecFixtures.insertUncaptured(
+                jdbc, uncaptured.id(), designRun(uncaptured.id(), WorkflowRunStatus.completed));
+
+        assertThat(service.uncapturedReviews())
+                .extracting(StorySpecVersion::getId)
+                .containsExactly(pending.getId());
     }
 
     @Test
@@ -128,7 +181,7 @@ class StorySpecServiceTest extends SharedContextTest {
         StoryResponse story = makeStory("spec-open-run");
         StoryResponse quiet = makeStory("spec-open-run-quiet");
         UUID recorded = designRun(story.id(), WorkflowRunStatus.completed);
-        service.recordApproved(story.id(), recorded, "v1");
+        service.recordApproved(story.id(), recorded, "v1", null);
         designRun(quiet.id(), WorkflowRunStatus.failed);
         designRun(quiet.id(), WorkflowRunStatus.cancelled);
         UUID open = designRun(story.id(), WorkflowRunStatus.awaiting_human);
@@ -154,7 +207,7 @@ class StorySpecServiceTest extends SharedContextTest {
         assertThat(pending.openDesignRunId()).isEqualTo(approved);
         assertThat(pending.underRevision()).isFalse();
 
-        service.recordApproved(story.id(), approved, "v1");
+        service.recordApproved(story.id(), approved, "v1", null);
 
         assertThat(service.openDesignRun(story.id())).isEmpty();
         assertThat(service.storiesWithOpenDesignRun(List.of(story.id()))).isEmpty();
@@ -168,7 +221,7 @@ class StorySpecServiceTest extends SharedContextTest {
     @Test
     void openDesignRun_completedUnrecordedRevision_isUnderRevision() {
         StoryResponse story = makeStory("spec-open-unrecorded-revision");
-        service.recordApproved(story.id(), designRun(story.id(), WorkflowRunStatus.completed), "v1");
+        service.recordApproved(story.id(), designRun(story.id(), WorkflowRunStatus.completed), "v1", null);
         UUID revision = designRun(story.id(), WorkflowRunStatus.completed);
 
         StorySpecService.DesignState state =
@@ -199,8 +252,8 @@ class StorySpecServiceTest extends SharedContextTest {
     void currentVersions_mapsOnlyStoriesWithASpec() {
         StoryResponse designed = makeStory("spec-current-designed");
         StoryResponse undesigned = makeStory("spec-current-undesigned");
-        service.recordApproved(designed.id(), designRun(designed.id(), WorkflowRunStatus.completed), "a");
-        service.recordApproved(designed.id(), designRun(designed.id(), WorkflowRunStatus.completed), "b");
+        service.recordApproved(designed.id(), designRun(designed.id(), WorkflowRunStatus.completed), "a", null);
+        service.recordApproved(designed.id(), designRun(designed.id(), WorkflowRunStatus.completed), "b", null);
 
         assertThat(service.currentVersions(List.of(designed.id(), undesigned.id())))
                 .containsExactlyEntriesOf(Map.of(designed.id(), 2));
@@ -236,7 +289,7 @@ class StorySpecServiceTest extends SharedContextTest {
     void openConflictsCarryRevisionRunStatus() {
         StoryResponse story = makeStory("spec-conflict-revision-status");
         TaskResponse task = taskService.create(story.id(), new TaskRequest("Wire the payment form", "D"));
-        service.recordApproved(story.id(), designRun(story.id(), WorkflowRunStatus.completed), "v1");
+        service.recordApproved(story.id(), designRun(story.id(), WorkflowRunStatus.completed), "v1", null);
         UUID cancelled = designRun(story.id(), WorkflowRunStatus.cancelled);
         UUID taskRun = taskRun(task.id());
         StoryConflict stranded = conflict(story.id(), taskRun, 1, cancelled);

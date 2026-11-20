@@ -35,6 +35,12 @@ public class StorySpecVersion {
     @Column(name = "approved_at", nullable = false)
     private Instant approvedAt;
 
+    @Column(name = "final_review", columnDefinition = "text")
+    private String finalReview;
+
+    @Column(name = "review_captured_at")
+    private Instant reviewCapturedAt;
+
     @PrePersist
     protected void onCreate() {
         if (approvedAt == null) {
@@ -88,5 +94,21 @@ public class StorySpecVersion {
 
     public void setApprovedAt(Instant approvedAt) {
         this.approvedAt = approvedAt == null ? null : approvedAt.truncatedTo(ChronoUnit.MICROS);
+    }
+
+    public String getFinalReview() {
+        return finalReview;
+    }
+
+    public void setFinalReview(String finalReview) {
+        this.finalReview = finalReview;
+    }
+
+    public Instant getReviewCapturedAt() {
+        return reviewCapturedAt;
+    }
+
+    public void setReviewCapturedAt(Instant reviewCapturedAt) {
+        this.reviewCapturedAt = reviewCapturedAt == null ? null : reviewCapturedAt.truncatedTo(ChronoUnit.MICROS);
     }
 }

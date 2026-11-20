@@ -12,7 +12,6 @@ import static org.mockito.Mockito.when;
 import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
-import com.choruskube.core.config.StoryDesignGraph;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.EpicRequest;
 import com.choruskube.core.dto.EpicResponse;
@@ -44,7 +43,6 @@ import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
-import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -62,14 +60,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
-import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
-import software.amazon.awssdk.http.AbortableInputStream;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
@@ -327,14 +322,18 @@ class StoryDesignServiceTest extends SharedContextTest {
         assertThat(designRunsOf(story.id())).extracting(WorkflowRun::getId).containsExactly(failed.id());
     }
 
+    /**
+     * The design run's tree is gone by the time a revision starts, which this proves by making every
+     * storage read fail: the review still stages, because it was captured into the version when the
+     * spec was recorded, not read from the run's tree now.
+     */
     @Test
-    void startRevision_stagesCurrentSpecAndPriorReviews() throws Exception {
+    void startRevision_stagesCurrentSpecAndPriorReviewsFromTheCapturedVersion() throws Exception {
         StoryResponse story = makeStory("story-revision-staging", "Widget backend");
         WorkflowRun designRun = completedDesignRun(story.id());
-        String reviewPrefix = "system/runs/" + designRun.getId() + "/outputs/review/";
-        reviewExecution(designRun, reviewPrefix);
-        specService.recordApproved(story.id(), designRun.getId(), "# Spec v1 body");
-        when(s3Client.getObject(any(GetObjectRequest.class))).thenReturn(objectBody("Reasoning for fixes v1"));
+        specService.recordApproved(story.id(), designRun.getId(), "# Spec v1 body", "Reasoning for fixes v1");
+        when(s3Client.getObject(any(GetObjectRequest.class)))
+                .thenThrow(NoSuchKeyException.builder().message("missing").build());
 
         RunResponse started = service.startRevision(story.id(), "Use a hard cutoff, no fallback");
 
@@ -348,9 +347,7 @@ class StoryDesignServiceTest extends SharedContextTest {
         assertThat(refs.get("story_spec.md").asText())
                 .isEqualTo("system/runs/" + run.getId() + "/inputs/story_spec.md");
 
-        ArgumentCaptor<GetObjectRequest> read = ArgumentCaptor.forClass(GetObjectRequest.class);
-        verify(s3Client).getObject(read.capture());
-        assertThat(read.getValue().key()).isEqualTo(reviewPrefix + "story_spec_review.md");
+        verify(s3Client, never()).getObject(any(GetObjectRequest.class));
         Map<String, String> staged = stagedTexts();
         assertThat(staged).containsEntry("story_spec.md", "# Spec v1 body");
         assertThat(staged).containsEntry("prior_review_v1.md", "Reasoning for fixes v1");
@@ -363,29 +360,29 @@ class StoryDesignServiceTest extends SharedContextTest {
     }
 
     @Test
-    void startRevision_priorReviewObjectMissing_stagesOnlyTheSpec() throws Exception {
-        StoryResponse story = makeStory("story-revision-review-missing", "Story");
+    void startRevision_versionCapturedAsNone_stagesOnlyTheSpec() throws Exception {
+        StoryResponse story = makeStory("story-revision-review-none", "Story");
         WorkflowRun designRun = completedDesignRun(story.id());
-        reviewExecution(designRun, "system/runs/" + designRun.getId() + "/outputs/review/");
-        specService.recordApproved(story.id(), designRun.getId(), "# Spec v1 body");
-        when(s3Client.getObject(any(GetObjectRequest.class)))
-                .thenThrow(NoSuchKeyException.builder().message("missing").build());
+        specService.recordApproved(story.id(), designRun.getId(), "# Spec v1 body", null);
 
         RunResponse started = service.startRevision(story.id(), "Tighten the API");
 
         assertThat(stagedInputNames(started.id())).containsExactly("story_spec.md");
         assertThat(stagedTexts()).containsEntry("story_spec.md", "# Spec v1 body");
+        verify(s3Client, never()).getObject(any(GetObjectRequest.class));
     }
 
     @Test
-    void startRevision_designRunWithoutAReviewExecution_stagesOnlyTheSpec() throws Exception {
-        StoryResponse story = makeStory("story-revision-no-review", "Story");
+    void startRevision_versionWithRunIdStillUncaptured_conflictsAndStartsNothing() throws Exception {
+        StoryResponse story = makeStory("story-revision-uncaptured", "Story");
         WorkflowRun designRun = completedDesignRun(story.id());
-        specService.recordApproved(story.id(), designRun.getId(), "# Spec v1 body");
+        StorySpecFixtures.insertUncaptured(jdbc, story.id(), designRun.getId());
 
-        RunResponse started = service.startRevision(story.id(), "Tighten the API");
-
-        assertThat(stagedInputNames(started.id())).containsExactly("story_spec.md");
+        assertThatThrownBy(() -> service.startRevision(story.id(), "Tighten the API"))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining(designRun.getId().toString())
+                .hasMessageContaining("has not captured its final review yet");
+        assertThat(designRunsOf(story.id())).extracting(WorkflowRun::getId).containsExactly(designRun.getId());
         verify(s3Client, never()).getObject(any(GetObjectRequest.class));
     }
 
@@ -716,31 +713,9 @@ class StoryDesignServiceTest extends SharedContextTest {
         return byName;
     }
 
-    private static ResponseInputStream<GetObjectResponse> objectBody(String text) {
-        return new ResponseInputStream<>(
-                GetObjectResponse.builder().build(),
-                AbortableInputStream.create(new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8))));
-    }
-
     private WorkflowRun completedDesignRun(UUID storyId) {
         RunResponse started = service.startDesign(storyId);
         return setStatus(started.id(), WorkflowRunStatus.completed);
-    }
-
-    private void reviewExecution(WorkflowRun run, String outputPrefix) {
-        TemplateNode reviewNode = templateNodeRepo.findByGraphTemplateId(run.getGraphTemplateId()).stream()
-                .filter(n -> StoryDesignGraph.REVIEW.equals(n.getLabel()))
-                .findFirst()
-                .orElseThrow();
-        NodeExecution exec = new NodeExecution();
-        exec.setWorkflowRunId(run.getId());
-        exec.setTemplateNodeId(reviewNode.getId());
-        exec.setLabel(StoryDesignGraph.REVIEW);
-        exec.setStatus(NodeExecutionStatus.completed);
-        exec.setIteration(2);
-        exec.setCompletedAt(Instant.now());
-        exec.setArtifactRefs("{\"output\":\"" + outputPrefix + "\"}");
-        execRepo.saveAndFlush(exec);
     }
 
     private WorkflowRun taskRun(UUID taskId) {

@@ -18,6 +18,7 @@ import com.choruskube.core.repository.StorySpecVersionRepository;
 import com.choruskube.core.repository.StoryVersionView;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -90,9 +91,14 @@ public class StorySpecService {
                 .orElseThrow(() -> new NotFoundException("Story " + storyId + " has no spec version " + v));
     }
 
-    /** Idempotent on {@code runId}: a repeated call returns the row the first one wrote. */
+    /**
+     * Idempotent on {@code runId}: a repeated call returns the row the first one wrote, review
+     * included. {@code finalReviewOrNull} is the run's final review text, or null when it had none;
+     * either way the row is captured immediately, so it never needs the backfill that an earlier,
+     * pre-capture version still does.
+     */
     @Transactional
-    public StorySpecVersion recordApproved(UUID storyId, UUID runId, String content) {
+    public StorySpecVersion recordApproved(UUID storyId, UUID runId, String content, String finalReviewOrNull) {
         Optional<StorySpecVersion> recorded = versionRepo.findByRunId(runId);
         if (recorded.isPresent()) {
             return recorded.get();
@@ -108,7 +114,24 @@ public class StorySpecService {
         row.setVersion(current(storyId).map(v -> v.getVersion() + 1).orElse(1));
         row.setContent(content);
         row.setRunId(runId);
+        row.setFinalReview(finalReviewOrNull);
+        row.setReviewCapturedAt(Instant.now());
         return versionRepo.save(row);
+    }
+
+    /**
+     * Writes {@code finalReviewOrNull} only while the version is still uncaptured. Returns whether
+     * it wrote: false means a concurrent pass (or an earlier call) already captured this version.
+     */
+    @Transactional
+    public boolean captureReview(UUID versionId, String finalReviewOrNull) {
+        return versionRepo.captureReview(versionId, finalReviewOrNull, Instant.now()) > 0;
+    }
+
+    /** Versions recorded before review capture existed, oldest first so the backfill order is stable. */
+    @Transactional(readOnly = true)
+    public List<StorySpecVersion> uncapturedReviews() {
+        return versionRepo.findByReviewCapturedAtIsNullOrderByApprovedAtAsc();
     }
 
     @Transactional(readOnly = true)

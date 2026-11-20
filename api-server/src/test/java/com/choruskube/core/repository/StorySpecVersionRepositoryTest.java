@@ -194,6 +194,56 @@ class StorySpecVersionRepositoryTest extends SharedContextTest {
     }
 
     @Test
+    void captureReview_conditionalUpdate_affectsOneRowOnUncapturedVersionAndZeroOnCaptured() {
+        Story story = newStory("capture-review");
+        StorySpecVersion uncaptured = versionRepo.saveAndFlush(version(story.getId(), 1));
+        StorySpecVersion captured = version(story.getId(), 2);
+        captured.setFinalReview("Already captured");
+        captured.setReviewCapturedAt(Instant.now());
+        captured = versionRepo.saveAndFlush(captured);
+
+        int onUncaptured = versionRepo.captureReview(uncaptured.getId(), "New review", Instant.now());
+        int onCaptured = versionRepo.captureReview(captured.getId(), "Overwrite attempt", Instant.now());
+
+        assertThat(onUncaptured).isEqualTo(1);
+        assertThat(onCaptured).isEqualTo(0);
+        // Read back through plain SQL: the conditional update bypassed the persistence context, which
+        // would otherwise still answer from its stale, pre-update copy of these two entities.
+        assertThat(jdbc.queryForObject(
+                        "SELECT final_review FROM story_spec_version WHERE id = ?", String.class, uncaptured.getId()))
+                .isEqualTo("New review");
+        assertThat(jdbc.queryForObject(
+                        "SELECT final_review FROM story_spec_version WHERE id = ?", String.class, captured.getId()))
+                .isEqualTo("Already captured");
+    }
+
+    @Test
+    void reviewCapturedCheck_rejectsFinalReviewSetWhileCapturedAtIsNull() {
+        Story story = newStory("review-check");
+
+        assertThatThrownBy(() -> jdbc.update(
+                        "INSERT INTO story_spec_version (story_id, version, content, final_review) "
+                                + "VALUES (?, 1, 'c', 'has text')",
+                        story.getId()))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void uncapturedReviews_listsOnlyRowsWithNoCapturedAt() {
+        Story captured = newStory("uncaptured-captured");
+        StorySpecVersion capturedVersion = version(captured.getId(), 1);
+        capturedVersion.setFinalReview("Reviewed");
+        capturedVersion.setReviewCapturedAt(Instant.now());
+        versionRepo.saveAndFlush(capturedVersion);
+        Story pending = newStory("uncaptured-pending");
+        StorySpecVersion pendingVersion = versionRepo.saveAndFlush(version(pending.getId(), 1));
+
+        assertThat(versionRepo.findByReviewCapturedAtIsNullOrderByApprovedAtAsc())
+                .extracting(StorySpecVersion::getId)
+                .containsExactly(pendingVersion.getId());
+    }
+
+    @Test
     void deletingStory_cascadesVersionsAndConflicts_andNullsRunStoryId() {
         Story story = newStory("cascade");
         WorkflowRun designRun = newRun(story.getId(), WorkflowRunStatus.completed);
