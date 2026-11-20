@@ -14,7 +14,9 @@ import com.choruskube.core.model.enums.WorkflowRunStatusGroups;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.StoryConflictRepository;
 import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.StorySpecVersionMetaView;
 import com.choruskube.core.repository.StorySpecVersionRepository;
+import com.choruskube.core.repository.StorySpecVersionReviewView;
 import com.choruskube.core.repository.StoryVersionView;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
@@ -79,9 +81,16 @@ public class StorySpecService {
                 .collect(Collectors.toMap(StoryVersionView::getStoryId, StoryVersionView::getVersion));
     }
 
+    /** Oldest first, without the spec and review text that loading the entity would read. */
     @Transactional(readOnly = true)
-    public List<StorySpecVersion> versions(UUID storyId) {
-        return versionRepo.findByStoryIdOrderByVersionAsc(storyId);
+    public List<StorySpecVersionMetaView> versions(UUID storyId) {
+        return versionRepo.findMetaByStoryIdOrderByVersionAsc(storyId);
+    }
+
+    /** Each version's final review, oldest first, without its spec text. */
+    @Transactional(readOnly = true)
+    public List<StorySpecVersionReviewView> reviews(UUID storyId) {
+        return versionRepo.findReviewsByStoryIdOrderByVersionAsc(storyId);
     }
 
     @Transactional(readOnly = true)
@@ -111,7 +120,7 @@ public class StorySpecService {
         }
         StorySpecVersion row = new StorySpecVersion();
         row.setStoryId(storyId);
-        row.setVersion(current(storyId).map(v -> v.getVersion() + 1).orElse(1));
+        row.setVersion(currentVersions(List.of(storyId)).getOrDefault(storyId, 0) + 1);
         row.setContent(content);
         row.setRunId(runId);
         row.setFinalReview(finalReviewOrNull);
@@ -130,8 +139,8 @@ public class StorySpecService {
 
     /** Versions recorded before review capture existed, oldest first so the backfill order is stable. */
     @Transactional(readOnly = true)
-    public List<StorySpecVersion> uncapturedReviews() {
-        return versionRepo.findByReviewCapturedAtIsNullOrderByApprovedAtAsc();
+    public List<StorySpecVersionMetaView> uncapturedReviews() {
+        return versionRepo.findMetaByReviewCapturedAtIsNullOrderByApprovedAtAsc();
     }
 
     @Transactional(readOnly = true)

@@ -18,6 +18,7 @@ import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.StoryConflictRepository;
 import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.StorySpecVersionReviewView;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import jakarta.persistence.EntityManager;
@@ -407,7 +408,7 @@ public class StoryDesignService {
     private Map<String, String> revisionInputs(StorySpecVersion current) {
         Map<String, String> files = new LinkedHashMap<>();
         files.put(SPEC_INPUT, current.getContent());
-        for (StorySpecVersion version : specService.versions(current.getStoryId())) {
+        for (StorySpecVersionReviewView version : specService.reviews(current.getStoryId())) {
             if (version.getRunId() == null) {
                 continue;
             }

@@ -30,6 +30,7 @@ import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
+import com.choruskube.core.repository.StorySpecVersionMetaView;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
@@ -240,7 +241,7 @@ class StorySpecLifecycleServiceTest extends SharedContextTest {
         StorySpecVersion reloadedGood = specService.version(good.id(), goodVersion.getVersion());
         assertThat(reloadedGood.getFinalReview()).isEqualTo("Reachable review");
         assertThat(specService.uncapturedReviews())
-                .extracting(StorySpecVersion::getId)
+                .extracting(StorySpecVersionMetaView::getId)
                 .containsExactly(failingVersion.getId());
         assertThat(events)
                 .filteredOn(e -> e.getLevel() == Level.WARN)
@@ -299,10 +300,12 @@ class StorySpecLifecycleServiceTest extends SharedContextTest {
         lifecycle.recordCompletedDesigns();
 
         assertThat(specService.versions(story.id()))
-                .extracting(StorySpecVersion::getVersion, StorySpecVersion::getContent, StorySpecVersion::getRunId)
+                .extracting(StorySpecVersionMetaView::getVersion, StorySpecVersionMetaView::getRunId)
                 .containsExactly(
-                        org.assertj.core.groups.Tuple.tuple(1, "# Spec v1", first.getId()),
-                        org.assertj.core.groups.Tuple.tuple(2, "# Spec v2", revision.getId()));
+                        org.assertj.core.groups.Tuple.tuple(1, first.getId()),
+                        org.assertj.core.groups.Tuple.tuple(2, revision.getId()));
+        assertThat(specService.version(story.id(), 1).getContent()).isEqualTo("# Spec v1");
+        assertThat(specService.version(story.id(), 2).getContent()).isEqualTo("# Spec v2");
     }
 
     @Test

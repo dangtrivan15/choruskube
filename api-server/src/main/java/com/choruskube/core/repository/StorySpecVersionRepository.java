@@ -16,11 +16,13 @@ public interface StorySpecVersionRepository extends JpaRepository<StorySpecVersi
 
     Optional<StorySpecVersion> findByStoryIdAndVersion(UUID storyId, int version);
 
-    List<StorySpecVersion> findByStoryIdOrderByVersionAsc(UUID storyId);
+    List<StorySpecVersionMetaView> findMetaByStoryIdOrderByVersionAsc(UUID storyId);
+
+    List<StorySpecVersionReviewView> findReviewsByStoryIdOrderByVersionAsc(UUID storyId);
 
     Optional<StorySpecVersion> findByRunId(UUID runId);
 
-    List<StorySpecVersion> findByReviewCapturedAtIsNullOrderByApprovedAtAsc();
+    List<StorySpecVersionMetaView> findMetaByReviewCapturedAtIsNullOrderByApprovedAtAsc();
 
     @Query("select v.storyId as storyId, max(v.version) as version "
             + "from StorySpecVersion v where v.storyId in :storyIds group by v.storyId")

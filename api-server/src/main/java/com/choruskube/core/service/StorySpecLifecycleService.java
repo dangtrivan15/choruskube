@@ -15,6 +15,7 @@ import com.choruskube.core.model.enums.WorkflowRunStatusGroups;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.StoryConflictRepository;
 import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.StorySpecVersionMetaView;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -173,7 +174,7 @@ public class StorySpecLifecycleService {
      */
     public int backfillReviews() {
         int captured = 0;
-        for (StorySpecVersion version : specService.uncapturedReviews()) {
+        for (StorySpecVersionMetaView version : specService.uncapturedReviews()) {
             UUID versionId = version.getId();
             UUID runId = version.getRunId();
             try {
@@ -229,10 +230,10 @@ public class StorySpecLifecycleService {
     }
 
     private int processStory(UUID storyId) {
-        Optional<StorySpecVersion> current = specService.current(storyId);
+        Integer currentVersion = specService.currentVersions(List.of(storyId)).get(storyId);
         // No version: the Story was deleted, conflicts and all. An open design run holds every conflict,
         // so one raised during a revision is released against the version it records, never joined to it.
-        if (current.isEmpty() || specService.openDesignRun(storyId).isPresent()) {
+        if (currentVersion == null || specService.openDesignRun(storyId).isPresent()) {
             return 0;
         }
         int processed = 0;
@@ -248,8 +249,8 @@ public class StorySpecLifecycleService {
                 if (!stillWaitedOn(conflict, taskRun.get(), execs)) {
                     close(conflict, taskRun.get());
                     processed++;
-                } else if (current.get().getVersion() > conflict.getRaisedAgainstVersion()) {
-                    if (release(conflict, current.get(), execs)) {
+                } else if (currentVersion > conflict.getRaisedAgainstVersion()) {
+                    if (release(conflict, execs)) {
                         processed++;
                     }
                 } else if (conflict.getRevisionRunId() == null) {
@@ -308,13 +309,14 @@ public class StorySpecLifecycleService {
      * Ordered so a retry after any failure repeats it harmlessly: every write before the decision is
      * idempotent, and the conflict is marked released only once its run has been resumed.
      */
-    private boolean release(StoryConflict conflict, StorySpecVersion current, List<NodeExecution> execs) {
+    private boolean release(StoryConflict conflict, List<NodeExecution> execs) {
         // The orchestrator opens the gate only after Analyze completes; a later pass finds it.
         Optional<NodeExecution> gate =
                 latest(execs, TaskDeliveryGraph.AWAIT_STORY_REVISION, NodeExecutionStatus.awaiting_human);
         if (gate.isEmpty()) {
             return false;
         }
+        StorySpecVersion current = specService.current(conflict.getStoryId()).orElseThrow();
         UUID runId = conflict.getTaskRunId();
         UUID gateId = gate.get().getId();
         int from = conflict.getRaisedAgainstVersion();

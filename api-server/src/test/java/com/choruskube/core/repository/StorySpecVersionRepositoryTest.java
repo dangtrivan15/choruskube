@@ -174,8 +174,8 @@ class StorySpecVersionRepositoryTest extends SharedContextTest {
                 .get()
                 .extracting(StorySpecVersion::getContent)
                 .isEqualTo("# spec v1");
-        assertThat(versionRepo.findByStoryIdOrderByVersionAsc(story.getId()))
-                .extracting(StorySpecVersion::getVersion)
+        assertThat(versionRepo.findMetaByStoryIdOrderByVersionAsc(story.getId()))
+                .extracting(StorySpecVersionMetaView::getVersion)
                 .containsExactly(1, 2);
         assertThat(versionRepo.findByRunId(runId))
                 .get()
@@ -227,6 +227,29 @@ class StorySpecVersionRepositoryTest extends SharedContextTest {
     }
 
     @Test
+    void findReviews_returnsEachVersionsCapturedReviewOldestFirst() {
+        Story story = newStory("reviews-projection");
+        UUID runId = newRun(story.getId(), WorkflowRunStatus.completed).getId();
+        Instant capturedAt = Instant.now();
+        StorySpecVersion v1 = version(story.getId(), 1);
+        v1.setRunId(runId);
+        v1.setFinalReview("Review behind v1");
+        v1.setReviewCapturedAt(capturedAt);
+        versionRepo.saveAndFlush(v1);
+        versionRepo.saveAndFlush(version(story.getId(), 2));
+
+        assertThat(versionRepo.findReviewsByStoryIdOrderByVersionAsc(story.getId()))
+                .extracting(
+                        StorySpecVersionReviewView::getVersion,
+                        StorySpecVersionReviewView::getRunId,
+                        StorySpecVersionReviewView::getFinalReview,
+                        v -> v.getReviewCapturedAt() != null)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple(1, runId, "Review behind v1", true),
+                        org.assertj.core.groups.Tuple.tuple(2, null, null, false));
+    }
+
+    @Test
     void uncapturedReviews_listsOnlyRowsWithNoCapturedAt() {
         Story captured = newStory("uncaptured-captured");
         StorySpecVersion capturedVersion = version(captured.getId(), 1);
@@ -236,8 +259,8 @@ class StorySpecVersionRepositoryTest extends SharedContextTest {
         Story pending = newStory("uncaptured-pending");
         StorySpecVersion pendingVersion = versionRepo.saveAndFlush(version(pending.getId(), 1));
 
-        assertThat(versionRepo.findByReviewCapturedAtIsNullOrderByApprovedAtAsc())
-                .extracting(StorySpecVersion::getId)
+        assertThat(versionRepo.findMetaByReviewCapturedAtIsNullOrderByApprovedAtAsc())
+                .extracting(StorySpecVersionMetaView::getId)
                 .containsExactly(pendingVersion.getId());
     }
 

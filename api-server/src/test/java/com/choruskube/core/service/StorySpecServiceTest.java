@@ -26,6 +26,7 @@ import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.StoryConflictRepository;
+import com.choruskube.core.repository.StorySpecVersionMetaView;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
@@ -100,7 +101,7 @@ class StorySpecServiceTest extends SharedContextTest {
                 .map(StorySpecVersion::getContent)
                 .contains("two");
         assertThat(service.versions(story.id()))
-                .extracting(StorySpecVersion::getVersion)
+                .extracting(StorySpecVersionMetaView::getVersion)
                 .containsExactly(1, 2);
         assertThat(service.version(story.id(), 1).getContent()).isEqualTo("one");
     }
@@ -165,7 +166,7 @@ class StorySpecServiceTest extends SharedContextTest {
                 jdbc, uncaptured.id(), designRun(uncaptured.id(), WorkflowRunStatus.completed));
 
         assertThat(service.uncapturedReviews())
-                .extracting(StorySpecVersion::getId)
+                .extracting(StorySpecVersionMetaView::getId)
                 .containsExactly(pending.getId());
     }
 
