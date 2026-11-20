@@ -207,8 +207,6 @@ class StorySpecVersionRepositoryTest extends SharedContextTest {
 
         assertThat(onUncaptured).isEqualTo(1);
         assertThat(onCaptured).isEqualTo(0);
-        // Read back through plain SQL: the conditional update bypassed the persistence context, which
-        // would otherwise still answer from its stale, pre-update copy of these two entities.
         assertThat(jdbc.queryForObject(
                         "SELECT final_review FROM story_spec_version WHERE id = ?", String.class, uncaptured.getId()))
                 .isEqualTo("New review");

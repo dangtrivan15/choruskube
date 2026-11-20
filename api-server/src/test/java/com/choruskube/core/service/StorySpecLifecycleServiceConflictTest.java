@@ -285,7 +285,7 @@ class StorySpecLifecycleServiceConflictTest extends SharedContextTest {
         verify(storyDesignService, times(1)).startRevisionForConflicts(eq(storyId), any(), any());
     }
 
-    /** Every version this run touches is recorded through {@code recordApproved}, so each is captured immediately. */
+    /** v1 has no design run and {@code recordApproved} captures v2's review on insert: nothing to wait for. */
     @Test
     void revision_startsOnAStoryWhoseVersionsAreAllCaptured() {
         UUID storyId = makeStory("conflict-all-captured");
@@ -302,6 +302,33 @@ class StorySpecLifecycleServiceConflictTest extends SharedContextTest {
         assertThat(secondRevisionId).isNotEqualTo(firstRevisionId);
         assertThat(conflict(second).getRevisionRunId()).isEqualTo(secondRevisionId);
         assertThat(conflict(first).getReleasedAt()).isNotNull();
+    }
+
+    @Test
+    void revision_refusedWhileAVersionIsUncaptured_startsOnceTheBackfillCapturesIt() {
+        UUID storyId = makeStory("conflict-uncaptured-review");
+        approveSpec(storyId, "# Spec v1");
+        UUID designRunId = designRun(storyId, WorkflowRunStatus.completed).getId();
+        StorySpecFixtures.insertUncaptured(jdbc, storyId, designRunId);
+        Parked parked = parkedTaskRun(storyId, 2);
+
+        List<ILoggingEvent> warnings = captureWarnings(() -> lifecycle.processConflicts());
+
+        assertThat(conflict(parked).getRevisionRunId()).isNull();
+        assertThat(specService.openDesignRun(storyId)).isEmpty();
+        assertThat(warnings)
+                .filteredOn(e -> e.getFormattedMessage().contains("has not captured its final review yet"))
+                .singleElement()
+                .satisfies(e -> {
+                    assertThat(e.getFormattedMessage()).contains(storyId.toString(), designRunId.toString());
+                    assertThat(e.getThrowableProxy()).isNull();
+                });
+
+        lifecycle.backfillReviews();
+        lifecycle.processConflicts();
+
+        UUID revisionId = specService.openDesignRun(storyId).orElseThrow().getId();
+        assertThat(conflict(parked).getRevisionRunId()).isEqualTo(revisionId);
     }
 
     @Test

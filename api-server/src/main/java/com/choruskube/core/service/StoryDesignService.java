@@ -413,7 +413,7 @@ public class StoryDesignService {
             }
             if (version.getReviewCapturedAt() == null) {
                 throw new ConflictException("Story spec v" + version.getVersion() + " (run " + version.getRunId()
-                        + ") has not captured its final review yet; it will be retried once the backfill runs");
+                        + ") has not captured its final review yet; try again once it has");
             }
             if (isNotBlank(version.getFinalReview())) {
                 files.put("prior_review_v" + version.getVersion() + ".md", version.getFinalReview());

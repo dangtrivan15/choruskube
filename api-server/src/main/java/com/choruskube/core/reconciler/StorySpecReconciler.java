@@ -27,8 +27,7 @@ public class StorySpecReconciler {
 
     /**
      * Records first, so a revision that just completed releases its conflicts in the same pass.
-     * Backfills next, before conflicts, so a conflict-driven revision never starts against a version
-     * whose review retention would otherwise need to keep that run's tree around for.
+     * Backfills before conflicts, as a revision refuses to start while any version's review is uncaptured.
      */
     @Scheduled(fixedDelayString = "${choruskube.story-spec.interval:PT10S}")
     public void reconcile() {

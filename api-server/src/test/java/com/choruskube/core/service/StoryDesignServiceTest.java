@@ -377,6 +377,7 @@ class StoryDesignServiceTest extends SharedContextTest {
         StoryResponse story = makeStory("story-revision-uncaptured", "Story");
         WorkflowRun designRun = completedDesignRun(story.id());
         StorySpecFixtures.insertUncaptured(jdbc, story.id(), designRun.getId());
+        clearInvocations(s3Client);
 
         assertThatThrownBy(() -> service.startRevision(story.id(), "Tighten the API"))
                 .isInstanceOf(ConflictException.class)
@@ -384,6 +385,7 @@ class StoryDesignServiceTest extends SharedContextTest {
                 .hasMessageContaining("has not captured its final review yet");
         assertThat(designRunsOf(story.id())).extracting(WorkflowRun::getId).containsExactly(designRun.getId());
         verify(s3Client, never()).getObject(any(GetObjectRequest.class));
+        verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 
     @Test

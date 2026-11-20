@@ -27,10 +27,8 @@ public interface StorySpecVersionRepository extends JpaRepository<StorySpecVersi
     List<StoryVersionView> findCurrentVersions(@Param("storyIds") Collection<UUID> storyIds);
 
     /**
-     * Writes only while still uncaptured, so a concurrent pass's capture is never overwritten.
-     * Clears the persistence context: this bulk update bypasses the ORM, so a version already
-     * loaded in the same transaction (the backfill loads every uncaptured one before capturing any)
-     * would otherwise keep answering with its pre-capture, in-memory copy.
+     * Writes only while still uncaptured, so a concurrent pass's capture is never overwritten. Clears
+     * the persistence context, or a version loaded earlier in the caller's transaction keeps its stale copy.
      */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("update StorySpecVersion v set v.finalReview = :finalReview, v.reviewCapturedAt = :capturedAt "
