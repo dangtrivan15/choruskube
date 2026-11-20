@@ -61,7 +61,8 @@ public class RunStorageScope {
         }
     }
 
-    private String treeOf(UUID runId) {
+    /** The key prefix, ending in {@code /}, under which every object of {@code runId} lives. */
+    public String treeOf(UUID runId) {
         return storagePrefixResolver.storagePrefixForRun(runId) + "/runs/" + runId + "/";
     }
 

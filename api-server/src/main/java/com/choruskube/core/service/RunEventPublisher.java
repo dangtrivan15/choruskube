@@ -43,6 +43,12 @@ public class RunEventPublisher {
         });
     }
 
+    /** After commit, so a page refetching on it already reads the run's recorded expiry. */
+    public void publishRunArtifactsExpired(UUID runId) {
+        publishAfterCommit(() -> messagingTemplate.convertAndSend(
+                "/topic/runs/" + runId, new RunEvent("run_artifacts_expired", runId, null, null)));
+    }
+
     /**
      * Publishes a roadmap-item change for an Epic, Story, or Task. {@code itemType} is one of
      * "epic"/"story"/"task" and doubles as the resource-type key the feed is scoped

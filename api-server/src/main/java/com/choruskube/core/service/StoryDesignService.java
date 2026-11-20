@@ -443,7 +443,8 @@ public class StoryDesignService {
                 r.task(),
                 autopilotId,
                 r.softwareProject(),
-                r.storySpecVersion());
+                r.storySpecVersion(),
+                r.artifactsExpiredAt());
     }
 
     private static List<UUID> idsOf(List<StoryConflict> conflicts) {

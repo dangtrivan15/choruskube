@@ -1303,7 +1303,8 @@ public class RunService {
                 taskSummary,
                 run.getAutopilotId(),
                 softwareProjectRef,
-                run.getStorySpecVersion());
+                run.getStorySpecVersion(),
+                run.getArtifactsExpiredAt());
     }
 
     private @Nullable String extractPromptText(@Nullable GraphTemplate template, @Nullable String inputsJson) {

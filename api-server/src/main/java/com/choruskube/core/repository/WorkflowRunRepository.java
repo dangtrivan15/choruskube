@@ -19,6 +19,41 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, UUID>, JpaSpecificationExecutor<WorkflowRun> {
+
+    /**
+     * Closed runs whose tree retention may delete: not yet expired, and with no reader still due to
+     * read the tree — a design run whose version has not captured its review, or a completed design
+     * run not yet recorded as a version. Both expirable queries share it, so the skips cannot diverge.
+     */
+    String EXPIRABLE = """
+            select r.id from WorkflowRun r
+            where r.status in :terminal
+              and r.completedAt is not null
+              and r.artifactsExpiredAt is null
+              and not exists (select 1 from StorySpecVersion v where v.runId = r.id and v.reviewCapturedAt is null)
+              and not (r.storyId is not null
+                       and r.status = :#{T(com.choruskube.core.model.enums.WorkflowRunStatus).completed}
+                       and not exists (select 1 from StorySpecVersion v where v.runId = r.id))
+            """;
+
+    @Query(EXPIRABLE + " and r.completedAt < :cutoff order by r.completedAt")
+    List<UUID> findExpirable(
+            @Param("terminal") Collection<WorkflowRunStatus> terminal,
+            @Param("cutoff") Instant cutoff,
+            Pageable pageable);
+
+    @Query(EXPIRABLE + " and r.id = :id")
+    Optional<UUID> findExpirableById(@Param("terminal") Collection<WorkflowRunStatus> terminal, @Param("id") UUID id);
+
+    /** Records the expiry once: a second pass or replica finds it set and writes nothing. */
+    @Transactional
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(
+            value =
+                    "UPDATE workflow_run SET artifacts_expired_at = :at WHERE id = :id AND artifacts_expired_at IS NULL",
+            nativeQuery = true)
+    int markArtifactsExpired(@Param("id") UUID id, @Param("at") Instant at);
+
     List<WorkflowRun> findByStatus(WorkflowRunStatus status);
 
     /**

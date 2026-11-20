@@ -2,11 +2,12 @@ import { useQuery, useQueries } from "@tanstack/react-query";
 import { api, encodeArtifactPath } from "@/lib/api";
 import type { ArtifactEntry, ResolvedArtifactGroup } from "@/lib/types";
 
-export function useArtifacts(runId: string, execId: string) {
+export function useArtifacts(runId: string, execId: string, enabled = true) {
   return useQuery({
     queryKey: ["runs", runId, "node-executions", execId, "artifacts"],
     queryFn: () =>
       api.get<ArtifactEntry[]>(`/runs/${runId}/node-executions/${execId}/artifacts`),
+    enabled,
   });
 }
 

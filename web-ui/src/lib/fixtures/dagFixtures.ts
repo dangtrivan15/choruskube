@@ -97,6 +97,7 @@ function snapshotRun(
     task: null,
     autopilotId: null,
     storySpecVersion: null,
+    artifactsExpiredAt: null,
     softwareProject: null,
   };
 }

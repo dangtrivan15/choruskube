@@ -168,3 +168,37 @@ describe("TestApiClient Story spec helpers", () => {
     await expect(client.approveDesignRun("run-1", 5_000, 0)).rejects.toThrow(/cloneableProject/);
   });
 });
+
+describe("TestApiClient.expireRunArtifacts", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubExpire(response: () => Response) {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes("/openid-connect/token") ? new Response("", { status: 401 }) : response(),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("posts to the e2e retention route and resolves on 204", async () => {
+    const fetchMock = stubExpire(() => new Response(null, { status: 204 }));
+
+    const client = new TestApiClient("http://api.test", "http://auth.test");
+    await expect(client.expireRunArtifacts("run-1")).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://api.test/api/v1/e2e/runs/run-1/expire-artifacts",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("throws when retention refuses the run, so the spec fails loudly", async () => {
+    stubExpire(() => new Response("run is still open", { status: 409 }));
+
+    const client = new TestApiClient("http://api.test", "http://auth.test");
+
+    await expect(client.expireRunArtifacts("run-1")).rejects.toThrow(/409: run is still open/);
+  });
+});

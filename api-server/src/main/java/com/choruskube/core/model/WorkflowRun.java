@@ -84,6 +84,11 @@ public class WorkflowRun {
     @Column(name = "completed_at")
     private Instant completedAt;
 
+    // Written only by WorkflowRunRepository#markArtifactsExpired: a whole-entity save of a run loaded
+    // before retention ran would otherwise write the stale null back and re-list deleted artifacts.
+    @Column(name = "artifacts_expired_at", insertable = false, updatable = false)
+    private Instant artifactsExpiredAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -221,6 +226,10 @@ public class WorkflowRun {
 
     public void setCompletedAt(Instant completedAt) {
         this.completedAt = completedAt;
+    }
+
+    public Instant getArtifactsExpiredAt() {
+        return artifactsExpiredAt;
     }
 
     public Instant getCreatedAt() {
