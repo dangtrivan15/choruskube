@@ -1,6 +1,7 @@
 package com.choruskube.core.credential;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 
 import ch.qos.logback.classic.Level;
@@ -24,6 +25,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
@@ -267,36 +269,145 @@ class TemporalBearerTokenHolderTest {
     }
 
     @Test
+    void eachCallerGetsItsOwnFuture_oneCallersTimeoutNeverReadsAsNoneForAnother() throws Exception {
+        TemporalBearerToken token = token("tok-a", Duration.ofMinutes(10));
+        supplier.set(() -> Optional.of(token));
+
+        CompletableFuture<Optional<TemporalBearerToken>> impatient = holder.lookup("ns");
+        CompletableFuture<Optional<TemporalBearerToken>> patient = holder.lookup("ns");
+        assertThat(impatient).isNotSameAs(patient);
+        impatient.complete(Optional.empty()); // what completeOnTimeout(Optional.empty(), ...) does
+
+        executor.runOne();
+        assertThat(supplier.callCount()).isEqualTo(1);
+        assertThat(patient.join()).contains(token);
+        assertThat(holder.lookup("ns").join()).contains(token);
+    }
+
+    @Test
+    void rejectedBackgroundRefresh_stillServesTheCachedToken() throws Exception {
+        TemporalBearerToken token = token("tok-a", Duration.ofMinutes(10));
+        supplier.set(() -> Optional.of(token));
+        CompletableFuture<Optional<TemporalBearerToken>> initial = holder.lookup("ns");
+        executor.runOne();
+        initial.join();
+
+        clock.advance(Duration.ofMinutes(5)); // at the renew point
+        executor.rejecting = true;
+        assertThat(holder.authorizationHeader("ns")).contains("Bearer tok-a");
+    }
+
+    @Test
+    void rejectedFirstFetch_isUnavailable() {
+        executor.rejecting = true;
+
+        assertThatThrownBy(() -> holder.authorizationHeader("ns"))
+                .isInstanceOf(TemporalTokenUnavailableException.class)
+                .hasCauseInstanceOf(RejectedExecutionException.class);
+    }
+
+    @Test
+    void supplierThrowingAnError_isUnavailable_andTheNextLookupAsksAgain() throws Exception {
+        supplier.set(() -> {
+            throw new NoClassDefFoundError("missing issuer client");
+        });
+        CompletableFuture<Optional<TemporalBearerToken>> first = holder.lookup("ns");
+        executor.runOne();
+        assertThat(first).isCompletedExceptionally();
+        assertThat(catchThrowable(first::join)).hasCauseInstanceOf(TemporalTokenUnavailableException.class);
+
+        TemporalBearerToken token = token("tok-a", Duration.ofMinutes(10));
+        supplier.set(() -> Optional.of(token));
+        CompletableFuture<Optional<TemporalBearerToken>> second = holder.lookup("ns");
+        executor.runOne();
+        assertThat(second.join()).contains(token);
+    }
+
+    @Test
+    void refreshReturningEmpty_dropsTheCachedToken() throws Exception {
+        TemporalBearerToken token = token("tok-a", Duration.ofMinutes(10));
+        supplier.set(() -> Optional.of(token));
+        CompletableFuture<Optional<TemporalBearerToken>> initial = holder.lookup("ns");
+        executor.runOne();
+        initial.join();
+
+        clock.advance(Duration.ofMinutes(5)); // at the renew point
+        supplier.set(Optional::empty);
+        assertThat(holder.lookup("ns").join()).contains(token);
+        executor.runOne(); // the background refresh answers "none"
+
+        CompletableFuture<Optional<TemporalBearerToken>> after = holder.lookup("ns");
+        executor.runOne();
+        assertThat(after.join()).isEmpty();
+    }
+
+    @Test
+    void afterExpiry_aFailedFetchReportsNoneHeld_andToStringDropsTheExpiredToken() throws Exception {
+        TemporalBearerToken token = token("tok-a", Duration.ofSeconds(10));
+        supplier.set(() -> Optional.of(token));
+        CompletableFuture<Optional<TemporalBearerToken>> initial = holder.lookup("ns");
+        executor.runOne();
+        initial.join();
+
+        clock.advance(Duration.ofSeconds(20)); // past expiry
+        supplier.set(() -> {
+            throw new IOException("boom");
+        });
+        List<ILoggingEvent> events = captureLogs(() -> {
+            CompletableFuture<Optional<TemporalBearerToken>> f = holder.lookup("ns");
+            executor.runOne();
+            assertThat(f).isCompletedExceptionally();
+        });
+
+        assertThat(events).singleElement().satisfies(e -> {
+            assertThat(e.getLevel()).isEqualTo(Level.WARN);
+            assertThat(e.getFormattedMessage()).contains("none held");
+        });
+        assertThat(holder.toString()).doesNotContain(token.expiresAt().toString());
+    }
+
+    @Test
+    void constructorRejectsNullCollaborators() {
+        assertThatThrownBy(() -> new TemporalBearerTokenHolder(null, clock, executor))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new TemporalBearerTokenHolder(supplier, null, executor))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new TemporalBearerTokenHolder(supplier, clock, null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
     void logs_oneInfoForFirstToken_warnPerFailedAttempt_noTokenInAnyLine() throws Exception {
-        Logger logger = (Logger) LoggerFactory.getLogger(TemporalBearerTokenHolder.class);
-        ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
-        try {
-            TemporalBearerToken token = token("tok-a", Duration.ofMinutes(10));
+        TemporalBearerToken token = token("tok-a", Duration.ofMinutes(10));
+        List<ILoggingEvent> events = captureLogs(() -> {
             supplier.set(() -> Optional.of(token));
             CompletableFuture<Optional<TemporalBearerToken>> f = holder.lookup("ns");
             executor.runOne();
             f.join();
 
+            // A supplier's own message may carry a token; no log line may repeat it.
             supplier.set(() -> {
-                throw new IOException("boom");
+                throw new IOException("issuer answered tok-a");
             });
             clock.advance(Duration.ofMinutes(5)); // at the renew point
             holder.lookup("ns").join(); // non-blocking; also queues a background refresh
             executor.runOne();
-        } finally {
-            logger.detachAppender(appender);
-        }
+        });
 
         List<ILoggingEvent> infos =
-                appender.list.stream().filter(e -> e.getLevel() == Level.INFO).toList();
+                events.stream().filter(e -> e.getLevel() == Level.INFO).toList();
         List<ILoggingEvent> warns =
-                appender.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
-        assertThat(infos).hasSize(1);
-        assertThat(warns).hasSize(1);
-        for (ILoggingEvent e : appender.list) {
+                events.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+        // The rollout check reads the first-token line by namespace, so it carries the namespace.
+        assertThat(infos).singleElement().satisfies(e -> assertThat(e.getFormattedMessage())
+                .contains("'ns'")
+                .contains(token.expiresAt().toString()));
+        assertThat(warns).singleElement().satisfies(e -> assertThat(e.getFormattedMessage())
+                .contains("'ns'")
+                .contains(token.expiresAt().toString()));
+        for (ILoggingEvent e : events) {
             assertThat(e.getFormattedMessage()).doesNotContain("tok-a");
+            assertThat(e.getThrowableProxy()).isNull();
         }
     }
 
@@ -311,6 +422,24 @@ class TemporalBearerTokenHolderTest {
         String rendered = holder.toString();
         assertThat(rendered).doesNotContain("tok-a");
         assertThat(rendered).contains("ns");
+    }
+
+    private static List<ILoggingEvent> captureLogs(ThrowingRunnable body) throws Exception {
+        Logger logger = (Logger) LoggerFactory.getLogger(TemporalBearerTokenHolder.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            body.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        return appender.list;
+    }
+
+    @FunctionalInterface
+    private interface ThrowingRunnable {
+        void run() throws Exception;
     }
 
     private TemporalBearerToken token(String value, Duration lifetime) {
@@ -352,9 +481,13 @@ class TemporalBearerTokenHolderTest {
     private static final class ManualExecutor implements Executor {
         private final BlockingQueue<Runnable> queued = new LinkedBlockingQueue<>();
         private final AtomicInteger submitted = new AtomicInteger();
+        volatile boolean rejecting;
 
         @Override
         public void execute(Runnable command) {
+            if (rejecting) {
+                throw new RejectedExecutionException("executor saturated");
+            }
             submitted.incrementAndGet();
             queued.add(command);
         }

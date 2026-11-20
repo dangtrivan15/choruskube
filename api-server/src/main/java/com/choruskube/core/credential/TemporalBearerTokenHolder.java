@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -35,9 +36,9 @@ public class TemporalBearerTokenHolder {
     private final Map<String, NamespaceState> namespaces = new ConcurrentHashMap<>();
 
     public TemporalBearerTokenHolder(TemporalTokenSupplier supplier, Clock clock, Executor executor) {
-        this.supplier = supplier;
-        this.clock = clock;
-        this.executor = executor;
+        this.supplier = Objects.requireNonNull(supplier, "supplier");
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.executor = Objects.requireNonNull(executor, "executor");
     }
 
     /**
@@ -50,6 +51,9 @@ public class TemporalBearerTokenHolder {
      *   <li>no valid cached token starts or joins the namespace's single in-flight supplier call,
      *       and the returned future completes once it resolves.
      * </ul>
+     *
+     * <p>Every call returns its own future, so a caller may time it out or complete it without
+     * affecting any other caller.
      */
     public CompletableFuture<Optional<TemporalBearerToken>> lookup(String namespace) {
         NamespaceState state = namespaces.computeIfAbsent(namespace, ns -> new NamespaceState());
@@ -64,7 +68,7 @@ public class TemporalBearerTokenHolder {
             return CompletableFuture.completedFuture(Optional.of(cached.token()));
         }
 
-        return startOrJoin(namespace, state);
+        return startOrJoin(namespace, state, cached);
     }
 
     /**
@@ -116,20 +120,28 @@ public class TemporalBearerTokenHolder {
         }
     }
 
-    private CompletableFuture<Optional<TemporalBearerToken>> startOrJoin(String namespace, NamespaceState state) {
+    private CompletableFuture<Optional<TemporalBearerToken>> startOrJoin(
+            String namespace, NamespaceState state, Cached expired) {
         synchronized (state) {
-            if (state.inFlight != null && !state.inFlight.isDone()) {
-                return state.inFlight;
+            if (expired != null && state.cached == expired) {
+                state.cached = null;
             }
-            CompletableFuture<Optional<TemporalBearerToken>> future = supplyAsync(namespace, state);
-            state.inFlight = future;
-            return future;
+            if (state.inFlight == null || state.inFlight.isDone()) {
+                state.inFlight = supplyAsync(namespace, state);
+            }
+            // Joiners share inFlight: handing it out directly would let one caller's timeout or
+            // complete(empty) answer every other caller, reading "unavailable" as "none".
+            return state.inFlight.copy();
         }
     }
 
     private CompletableFuture<Optional<TemporalBearerToken>> supplyAsync(String namespace, NamespaceState state) {
         CompletableFuture<Optional<TemporalBearerToken>> future = new CompletableFuture<>();
-        executor.execute(() -> runSupplier(namespace, state, future));
+        try {
+            executor.execute(() -> runSupplier(namespace, state, future));
+        } catch (RuntimeException rejected) { // thrown on, it would fail a caller still holding a valid token
+            fail(namespace, state, future, rejected);
+        }
         return future;
     }
 
@@ -138,35 +150,47 @@ public class TemporalBearerTokenHolder {
         Optional<TemporalBearerToken> result;
         try {
             result = supplier.supply(namespace);
-        } catch (Exception e) {
-            onFailure(namespace, state);
-            future.completeExceptionally(new TemporalTokenUnavailableException(namespace, e));
+        } catch (Throwable e) { // an uncaught Error would leave this namespace's in-flight call pending forever
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            fail(namespace, state, future, e);
             return;
         }
         if (result == null) {
-            onFailure(namespace, state);
-            future.completeExceptionally(new TemporalTokenUnavailableException(namespace, null));
+            fail(namespace, state, future, null);
             return;
         }
         if (result.isEmpty()) {
+            synchronized (state) {
+                state.cached = null;
+                state.lastFailureAt = null;
+            }
             future.complete(Optional.empty());
             return;
         }
         TemporalBearerToken token = result.get();
         Instant now = clock.instant();
         if (!token.expiresAt().isAfter(now)) {
-            onFailure(namespace, state);
-            future.completeExceptionally(new TemporalTokenUnavailableException(namespace, null));
+            fail(namespace, state, future, null);
             return;
         }
         onSuccess(namespace, state, token, now);
         future.complete(Optional.of(token));
     }
 
-    private void onFailure(String namespace, NamespaceState state) {
-        state.lastFailureAt = clock.instant();
-        Cached cached = state.cached;
-        if (cached != null) {
+    private void fail(
+            String namespace,
+            NamespaceState state,
+            CompletableFuture<Optional<TemporalBearerToken>> future,
+            Throwable cause) {
+        Instant now = clock.instant();
+        Cached cached;
+        synchronized (state) {
+            state.lastFailureAt = now;
+            cached = state.cached;
+        }
+        if (cached != null && cached.token().expiresAt().isAfter(now)) {
             log.warn(
                     "Temporal token refresh failed for namespace '{}'; held token expires {}",
                     namespace,
@@ -174,26 +198,36 @@ public class TemporalBearerTokenHolder {
         } else {
             log.warn("Temporal token refresh failed for namespace '{}'; none held", namespace);
         }
+        future.completeExceptionally(new TemporalTokenUnavailableException(namespace, cause));
     }
 
     private void onSuccess(String namespace, NamespaceState state, TemporalBearerToken token, Instant now) {
-        Cached previous = state.cached;
-        boolean wasValid = previous != null && previous.token().expiresAt().isAfter(now);
-        Duration halfLife = Duration.between(now, token.expiresAt()).dividedBy(2);
-        state.cached = new Cached(token, now, now.plus(halfLife));
-        state.lastFailureAt = null;
+        boolean wasValid;
+        synchronized (state) {
+            Cached previous = state.cached;
+            wasValid = previous != null && previous.token().expiresAt().isAfter(now);
+            state.cached = new Cached(token, now);
+            state.lastFailureAt = null;
+        }
         if (!wasValid) {
             log.info("Temporal token obtained for namespace '{}'; expires {}", namespace, token.expiresAt());
         }
     }
 
-    /** obtainedAt pairs with token so the renew point can be recomputed from its own lifetime. */
-    private record Cached(TemporalBearerToken token, Instant obtainedAt, Instant renewAt) {}
+    private record Cached(TemporalBearerToken token, Instant obtainedAt) {
+        Instant renewAt() {
+            return obtainedAt.plus(
+                    Duration.between(obtainedAt, token.expiresAt()).dividedBy(2));
+        }
+    }
 
-    /** cached and lastFailureAt are read without the lock for lookup's fast path; inFlight is CAS'd under it. */
+    /**
+     * cached alone is read without the lock, on lookup's fast path. Every write holds the lock, or
+     * startOrJoin's drop of an expired token could discard a fresh one written beside it.
+     */
     private static final class NamespaceState {
         private volatile Cached cached;
-        private volatile Instant lastFailureAt;
+        private Instant lastFailureAt;
         private CompletableFuture<Optional<TemporalBearerToken>> inFlight;
     }
 }

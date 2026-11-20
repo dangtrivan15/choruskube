@@ -8,7 +8,7 @@ import java.util.Optional;
  * whichever deployment has one to offer.
  *
  * <p>Contract: an empty {@link Optional} means this deployment presents no credential for the
- * namespace at all — callers must treat that as "none", never retry it. A thrown exception means
+ * namespace at all — callers must send no credential and not treat it as a failure. A thrown exception means
  * the supplier could not obtain a token for the namespace right now — callers must treat that as
  * "unavailable", never as "none".
  */
