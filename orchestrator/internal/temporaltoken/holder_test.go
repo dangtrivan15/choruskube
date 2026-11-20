@@ -3,11 +3,15 @@ package temporaltoken
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // clock is an injected, mutable "now" for deterministic tests.
@@ -50,12 +54,8 @@ func captureLog(t *testing.T, fn func()) string {
 func TestCredential_NeverPushedNamespace_YieldsNoCredential(t *testing.T) {
 	h := NewHolder(nil)
 	val, err := h.Credential("ns")(context.Background())
-	if err != nil {
-		t.Fatalf("err = %v, want nil", err)
-	}
-	if val != "" {
-		t.Fatalf("value = %q, want empty", val)
-	}
+	require.NoError(t, err)
+	assert.Empty(t, val)
 }
 
 func TestCredential_Bearer_YieldsPushedToken(t *testing.T) {
@@ -65,22 +65,14 @@ func TestCredential_Bearer_YieldsPushedToken(t *testing.T) {
 
 	cred := h.Credential("ns")
 	val, err := cred(context.Background())
-	if err != nil {
-		t.Fatalf("err = %v, want nil", err)
-	}
-	if val != "tok-a" {
-		t.Fatalf("value = %q, want tok-a", val)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "tok-a", val)
 
 	// A second push is served by the next call on the same callback, without re-obtaining it.
 	h.Update("ns", Bearer(NewToken("tok-b", time.Unix(3000, 0))))
 	val, err = cred(context.Background())
-	if err != nil {
-		t.Fatalf("err = %v, want nil", err)
-	}
-	if val != "tok-b" {
-		t.Fatalf("value = %q, want tok-b", val)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "tok-b", val)
 }
 
 func TestCredential_TwoNamespaces_YieldTheirOwnTokens(t *testing.T) {
@@ -90,51 +82,38 @@ func TestCredential_TwoNamespaces_YieldTheirOwnTokens(t *testing.T) {
 	h.Update("ns-b", Bearer(NewToken("tok-b", time.Unix(2000, 0))))
 
 	valA, err := h.Credential("ns-a")(context.Background())
-	if err != nil || valA != "tok-a" {
-		t.Fatalf("ns-a: value=%q err=%v, want tok-a/nil", valA, err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "tok-a", valA)
 	valB, err := h.Credential("ns-b")(context.Background())
-	if err != nil || valB != "tok-b" {
-		t.Fatalf("ns-b: value=%q err=%v, want tok-b/nil", valB, err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "tok-b", valB)
 }
 
 func TestCredential_UnavailableAfterBearer_KeepsServingUntilExpiry(t *testing.T) {
 	c := newClock(time.Unix(1000, 0))
 	h := NewHolder(c.Now)
-	h.Update("ns", Bearer(NewToken("tok-a", time.Unix(1100, 0))))
-	h.Update("ns", Unavailable())
+	h.Update("ns-prod", Bearer(NewToken("tok-a", time.Unix(1100, 0))))
+	h.Update("ns-prod", Unavailable())
 
-	val, err := h.Credential("ns")(context.Background())
-	if err != nil || val != "tok-a" {
-		t.Fatalf("value=%q err=%v, want tok-a/nil while still valid", val, err)
-	}
+	val, err := h.Credential("ns-prod")(context.Background())
+	require.NoError(t, err, "the held token is still valid")
+	assert.Equal(t, "tok-a", val)
 
 	c.advance(200 * time.Second) // now 1200, past the 1100 expiry
-	_, err = h.Credential("ns")(context.Background())
-	if err == nil {
-		t.Fatalf("err = nil, want an error once the held token has expired")
-	}
-	if !strings.Contains(err.Error(), "ns") {
-		t.Fatalf("error %q does not name the namespace", err.Error())
-	}
-	if strings.Contains(err.Error(), "tok-a") {
-		t.Fatalf("error %q leaks the token", err.Error())
-	}
+	_, err = h.Credential("ns-prod")(context.Background())
+	require.Error(t, err, "the held token has expired")
+	assert.Contains(t, err.Error(), "ns-prod")
+	assert.NotContains(t, err.Error(), "tok-a")
 }
 
 func TestCredential_UnavailableWithNothingHeld_Errors(t *testing.T) {
 	c := newClock(time.Unix(1000, 0))
 	h := NewHolder(c.Now)
-	h.Update("ns", Unavailable())
+	h.Update("ns-prod", Unavailable())
 
-	_, err := h.Credential("ns")(context.Background())
-	if err == nil {
-		t.Fatalf("err = nil, want an error for unavailable with nothing held")
-	}
-	if !strings.Contains(err.Error(), "ns") {
-		t.Fatalf("error %q does not name the namespace", err.Error())
-	}
+	_, err := h.Credential("ns-prod")(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ns-prod")
 }
 
 func TestCredential_ExpiredBearerPush_IsTreatedAsUnavailable(t *testing.T) {
@@ -143,9 +122,36 @@ func TestCredential_ExpiredBearerPush_IsTreatedAsUnavailable(t *testing.T) {
 	h.Update("ns", Bearer(NewToken("tok-a", time.Unix(500, 0)))) // already expired
 
 	_, err := h.Credential("ns")(context.Background())
-	if err == nil {
-		t.Fatalf("err = nil, want an error: an already-expired Bearer push holds nothing valid")
+	require.Error(t, err, "an already-expired Bearer push holds nothing valid")
+}
+
+func TestCredential_BearerWithoutValue_IsTreatedAsUnavailable(t *testing.T) {
+	c := newClock(time.Unix(1000, 0))
+	future := time.Unix(2000, 0)
+	for name, tok := range map[string]Token{
+		"empty value": NewToken("", future),
+		"zero Token":  {ExpiresAt: future},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := NewHolder(c.Now)
+			h.Update("ns", Bearer(tok))
+
+			// "", nil would make the SDK send the call with no header at all.
+			_, err := h.Credential("ns")(context.Background())
+			require.Error(t, err, "a Bearer push with no value holds nothing valid")
+		})
 	}
+}
+
+func TestCredential_BearerWithoutValue_KeepsHeldToken(t *testing.T) {
+	c := newClock(time.Unix(1000, 0))
+	h := NewHolder(c.Now)
+	h.Update("ns", Bearer(NewToken("tok-a", time.Unix(2000, 0))))
+	h.Update("ns", Bearer(NewToken("", time.Unix(3000, 0))))
+
+	val, err := h.Credential("ns")(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "tok-a", val, "an empty push must not replace a valid token")
 }
 
 func TestCredential_NoneAfterBearer_YieldsNoCredential(t *testing.T) {
@@ -155,12 +161,8 @@ func TestCredential_NoneAfterBearer_YieldsNoCredential(t *testing.T) {
 	h.Update("ns", None())
 
 	val, err := h.Credential("ns")(context.Background())
-	if err != nil {
-		t.Fatalf("err = %v, want nil after None", err)
-	}
-	if val != "" {
-		t.Fatalf("value = %q, want empty after None", val)
-	}
+	require.NoError(t, err)
+	assert.Empty(t, val)
 }
 
 func TestLogging_OneLineForFirstTokenNoneForRenewalOnePerUnavailableAndRegain(t *testing.T) {
@@ -177,12 +179,13 @@ func TestLogging_OneLineForFirstTokenNoneForRenewalOnePerUnavailableAndRegain(t 
 	})
 
 	lines := nonEmptyLines(out)
-	if len(lines) != 4 {
-		t.Fatalf("got %d log lines, want 4:\n%s", len(lines), out)
-	}
+	require.Len(t, lines, 4, out)
+	// The rollout check greps for a namespace holding a token, so the line carries both.
+	assert.Contains(t, lines[0], `"ns"`)
+	assert.Contains(t, lines[0], formatExpiry(time.Unix(1100, 0)))
 	for _, l := range lines {
-		if strings.Contains(l, "tok-a") || strings.Contains(l, "tok-b") || strings.Contains(l, "tok-c") {
-			t.Fatalf("log line leaked a token: %q", l)
+		for _, tok := range []string{"tok-a", "tok-b", "tok-c"} {
+			assert.NotContains(t, l, tok, "log line leaked a token")
 		}
 	}
 }
@@ -204,12 +207,9 @@ func TestHolderString_IsTokenFree(t *testing.T) {
 	h.Update("ns-b", Unavailable())
 
 	s := h.String()
-	if strings.Contains(s, "tok-a") {
-		t.Fatalf("Holder.String() leaked a token: %q", s)
-	}
-	if !strings.Contains(s, "ns-a") || !strings.Contains(s, "ns-b") {
-		t.Fatalf("Holder.String() = %q, want both namespaces listed", s)
-	}
+	assert.NotContains(t, s, "tok-a")
+	assert.Contains(t, s, "ns-a")
+	assert.Contains(t, s, "ns-b")
 }
 
 func TestConcurrentUpdateAndCredential(t *testing.T) {
@@ -220,7 +220,7 @@ func TestConcurrentUpdateAndCredential(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := 0; i < namespaces; i++ {
-		ns := nsName(i)
+		ns := fmt.Sprintf("ns-%d", i)
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
@@ -238,8 +238,4 @@ func TestConcurrentUpdateAndCredential(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-}
-
-func nsName(i int) string {
-	return "ns-" + string(rune('a'+i))
 }

@@ -32,6 +32,12 @@ func (t Token) GoString() string {
 	return t.String()
 }
 
+// usableAt reports whether t can be presented at now. The SDK sends no header at all for an empty
+// value, so a token without one would put a credential-less call on the wire.
+func (t Token) usableAt(now time.Time) bool {
+	return t.value != nil && *t.value != "" && t.ExpiresAt.After(now)
+}
+
 // stateKind distinguishes State's three outcomes.
 type stateKind int
 

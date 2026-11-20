@@ -40,8 +40,8 @@ func NewHolder(now func() time.Time) *Holder {
 
 // Update pushes namespace's current credential state.
 //
-//   - Bearer with an expiry after now replaces the held token.
-//   - Bearer already expired is treated as Unavailable.
+//   - Bearer with a non-empty value and an expiry after now replaces the held token.
+//   - Bearer already expired, or with an empty value, is treated as Unavailable.
 //   - None clears any held token and marks the namespace credential-free.
 //   - Unavailable keeps any held token.
 func (h *Holder) Update(namespace string, s State) {
@@ -51,7 +51,7 @@ func (h *Holder) Update(namespace string, s State) {
 	now := h.now()
 	e := h.entries[namespace]
 
-	if s.kind == stateBearer && s.token.ExpiresAt.After(now) {
+	if s.kind == stateBearer && s.token.usableAt(now) {
 		wasValid := e.held != nil && e.held.ExpiresAt.After(now)
 		tok := s.token
 		e.held = &tok
@@ -68,7 +68,7 @@ func (h *Holder) Update(namespace string, s State) {
 		return
 	}
 
-	// Unavailable, and an already-expired Bearer push, land here: keep any held token.
+	// Unavailable, and a Bearer push that is not usable, land here: keep any held token.
 	if e.held != nil {
 		log.Printf("temporaltoken: namespace %q pushed unavailable, held token expires %s", namespace, formatExpiry(e.held.ExpiresAt))
 	} else {

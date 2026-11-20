@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"google.golang.org/grpc"
@@ -19,8 +21,8 @@ import (
 type recordingServer struct {
 	workflowservice.UnimplementedWorkflowServiceServer
 
-	mu    sync.Mutex
-	auths []string
+	mu       sync.Mutex
+	recorded []string
 }
 
 func (s *recordingServer) GetSystemInfo(
@@ -44,17 +46,16 @@ func (s *recordingServer) record(ctx context.Context) {
 		auth = vs[0]
 	}
 	s.mu.Lock()
-	s.auths = append(s.auths, auth)
+	s.recorded = append(s.recorded, auth)
 	s.mu.Unlock()
 }
 
-func (s *recordingServer) lastAuth() string {
+// auths returns the authorization header of every call recorded so far, "" for a call that
+// carried none.
+func (s *recordingServer) auths() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.auths) == 0 {
-		return ""
-	}
-	return s.auths[len(s.auths)-1]
+	return append([]string(nil), s.recorded...)
 }
 
 func startRecordingServer(t *testing.T) (*recordingServer, string) {
@@ -83,11 +84,15 @@ func dial(t *testing.T, addr, namespace string, cred func(context.Context) (stri
 		},
 		Credentials: client.NewAPIKeyDynamicCredentials(cred),
 	})
-	if err != nil {
-		t.Fatalf("client.Dial: %v", err)
-	}
+	require.NoError(t, err, "client.Dial")
 	t.Cleanup(c.Close)
 	return c
+}
+
+func describe(c client.Client) error {
+	req := &workflowservice.DescribeNamespaceRequest{Namespace: "ns"}
+	_, err := c.WorkflowService().DescribeNamespace(context.Background(), req)
+	return err
 }
 
 func TestSDKBoundary_PushedTokenGoesOutAsBearer(t *testing.T) {
@@ -97,19 +102,17 @@ func TestSDKBoundary_PushedTokenGoesOutAsBearer(t *testing.T) {
 
 	c := dial(t, addr, "ns", h.Credential("ns"))
 	// client.Dial already made a GetSystemInfo call; it must have carried the pushed token.
-	if got := srv.lastAuth(); got != "Bearer secret-token-1" {
-		t.Fatalf("authorization on dial = %q, want %q", got, "Bearer secret-token-1")
+	onDial := srv.auths()
+	require.NotEmpty(t, onDial)
+	for _, auth := range onDial {
+		assert.Equal(t, "Bearer secret-token-1", auth)
 	}
 
 	// A new push applies to the next call on the same client, without redialling.
 	h.Update("ns", Bearer(NewToken("secret-token-2", time.Now().Add(time.Hour))))
-	req := &workflowservice.DescribeNamespaceRequest{Namespace: "ns"}
-	if _, err := c.WorkflowService().DescribeNamespace(context.Background(), req); err != nil {
-		t.Fatalf("DescribeNamespace: %v", err)
-	}
-	if got := srv.lastAuth(); got != "Bearer secret-token-2" {
-		t.Fatalf("authorization after repush = %q, want %q", got, "Bearer secret-token-2")
-	}
+	require.NoError(t, describe(c))
+	got := srv.auths()
+	assert.Equal(t, "Bearer secret-token-2", got[len(got)-1])
 }
 
 func TestSDKBoundary_NoneSendsNoAuthorizationHeader(t *testing.T) {
@@ -117,8 +120,25 @@ func TestSDKBoundary_NoneSendsNoAuthorizationHeader(t *testing.T) {
 	h := NewHolder(nil)
 	h.Update("ns", None())
 
-	dial(t, addr, "ns", h.Credential("ns"))
-	if got := srv.lastAuth(); got != "" {
-		t.Fatalf("authorization with None() = %q, want empty", got)
+	c := dial(t, addr, "ns", h.Credential("ns"))
+	require.NoError(t, describe(c))
+	// The dial's GetSystemInfo and DescribeNamespace both reached the server, bare.
+	got := srv.auths()
+	require.GreaterOrEqual(t, len(got), 2)
+	for _, auth := range got {
+		assert.Empty(t, auth)
 	}
+}
+
+func TestSDKBoundary_ExpiredTokenFailsTheCallInsteadOfSendingIt(t *testing.T) {
+	srv, addr := startRecordingServer(t)
+	clk := newClock(time.Now())
+	h := NewHolder(clk.Now)
+	h.Update("ns", Bearer(NewToken("secret-token-1", clk.Now().Add(time.Minute))))
+	c := dial(t, addr, "ns", h.Credential("ns"))
+	sent := srv.auths()
+
+	clk.advance(2 * time.Minute)
+	require.Error(t, describe(c), "a call on an expired token must fail")
+	assert.Equal(t, sent, srv.auths(), "the call must not reach the server without a credential")
 }
