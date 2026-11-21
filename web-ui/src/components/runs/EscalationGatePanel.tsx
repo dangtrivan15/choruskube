@@ -13,7 +13,7 @@ import ArtifactBrowser from "./ArtifactBrowser";
 import ArtifactList from "./ArtifactList";
 import ReviewHistory from "./ReviewHistory";
 import TriggerBanner from "./TriggerBanner";
-import { parseEscalationCategory } from "@/lib/decisions";
+import { parseEscalationCategory, MAX_GATE_FEEDBACK_LENGTH } from "@/lib/decisions";
 import type { EscalationContext, ResolvedArtifactGroup } from "@/lib/types";
 
 export interface EscalationGatePanelProps {
@@ -119,6 +119,7 @@ export default function EscalationGatePanel({
               value={guidance}
               onChange={(e) => onGuidanceChange(e.target.value)}
               disabled={isPending}
+              maxLength={MAX_GATE_FEEDBACK_LENGTH}
             />
           </div>
 

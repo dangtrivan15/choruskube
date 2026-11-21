@@ -3,6 +3,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import EscalationGatePanel from "../EscalationGatePanel";
+import { MAX_GATE_FEEDBACK_LENGTH } from "@/lib/decisions";
 import type { EscalationContext } from "@/lib/types";
 
 vi.mock("@/hooks/useRuns", () => ({
@@ -322,6 +323,25 @@ describe("EscalationGatePanel", () => {
     const textarea = screen.getByTestId("escalation-guidance-input");
     await user.type(textarea, "x");
     expect(onGuidanceChange).toHaveBeenCalled();
+  });
+
+  it("caps the guidance textarea at MAX_GATE_FEEDBACK_LENGTH, matching the signal endpoint's cap", () => {
+    renderWithProviders(
+      <EscalationGatePanel
+        runId="run-1"
+        escalation={fullEscalation}
+        decisionOptions={routeOptions}
+        guidance=""
+        onGuidanceChange={noop}
+        onConfirm={noop}
+        isPending={false}
+      />
+    );
+
+    expect(screen.getByTestId("escalation-guidance-input")).toHaveAttribute(
+      "maxLength",
+      String(MAX_GATE_FEEDBACK_LENGTH)
+    );
   });
 
   it("hides guidance, picker, and confirm when readOnly, but keeps the informational content", () => {

@@ -1,3 +1,6 @@
+/** Matches the server's `SignalRequest#feedback` `@Size(max = 20000)`. */
+export const MAX_GATE_FEEDBACK_LENGTH = 20000;
+
 export type GateTrigger =
   | { kind: "approved" }
   | { kind: "review_conflict" }

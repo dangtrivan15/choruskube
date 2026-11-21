@@ -4,11 +4,31 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/objectstore"
 )
+
+// maxRunLogFieldBytes bounds Result, ErrorMessage and ArtifactRefs so a Worker outside our
+// network, or a runaway agent result, cannot grow a run log entry past a fixed size: every later
+// agent reads the whole log as its input. 20000 characters of capped reviewer feedback are at
+// most 60000 bytes even in 3-byte UTF-8, leaving headroom for the text the server adds around it.
+const maxRunLogFieldBytes = 64 << 10
+
+// capRunLogField cuts s to maxRunLogFieldBytes, never inside a UTF-8 rune, and appends a marker
+// reporting what was kept. A value at or under the cap is returned unchanged.
+func capRunLogField(s string) string {
+	if len(s) <= maxRunLogFieldBytes {
+		return s
+	}
+	cut := maxRunLogFieldBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s\n… [truncated by the run log: %d of %d bytes kept]", s[:cut], cut, len(s))
+}
 
 // --- Activity: InitRunLog ---
 
@@ -49,6 +69,8 @@ type AppendRunLogParams struct {
 // and writes it back. This is safe because the DAG executor processes
 // completions sequentially — no concurrent appends occur.
 // Temporal retries produce the same append (deterministic from params).
+// Result, ErrorMessage and ArtifactRefs are each capped to maxRunLogFieldBytes before
+// formatting, so a Worker or agent cannot grow one entry past a fixed size.
 func (a *Activities) AppendRunLog(ctx context.Context, params AppendRunLogParams) error {
 	if err := guardRun(ctx, params.RunID); err != nil {
 		return err
@@ -78,16 +100,17 @@ func buildRunLogEntry(p AppendRunLogParams) string {
 	fmt.Fprintf(&sb, "\n## %s (%s%s, iteration %d)\n", p.NodeLabel, p.Status, routing, p.Iteration)
 
 	// Result — always present
-	fmt.Fprintf(&sb, "**Result:** %s\n", p.Result)
+	fmt.Fprintf(&sb, "**Result:** %s\n", capRunLogField(p.Result))
 
-	// Error — omit if empty
+	// Error — omit if empty. Emptiness is checked on the raw value: the cap never turns a
+	// non-empty field into one that looks absent.
 	if p.ErrorMessage != "" {
-		fmt.Fprintf(&sb, "**Error:** %s\n", p.ErrorMessage)
+		fmt.Fprintf(&sb, "**Error:** %s\n", capRunLogField(p.ErrorMessage))
 	}
 
-	// Artifacts — omit if empty or bare "{}"
+	// Artifacts — omit if empty or bare "{}", checked on the raw value for the same reason.
 	if p.ArtifactRefs != "" && p.ArtifactRefs != "{}" {
-		fmt.Fprintf(&sb, "**Artifacts:** %s\n", p.ArtifactRefs)
+		fmt.Fprintf(&sb, "**Artifacts:** %s\n", capRunLogField(p.ArtifactRefs))
 	}
 
 	return sb.String()

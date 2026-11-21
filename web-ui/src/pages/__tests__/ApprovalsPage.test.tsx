@@ -3,6 +3,7 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import ApprovalsPage from "@/pages/ApprovalsPage";
+import { MAX_GATE_FEEDBACK_LENGTH } from "@/lib/decisions";
 
 vi.mock("@/hooks/usePendingGates", () => ({
   usePendingGates: vi.fn(),
@@ -771,6 +772,19 @@ describe("ApprovalsPage", () => {
         }),
         expect.any(Object)
       );
+    });
+
+    it("caps the gate card's feedback box at MAX_GATE_FEEDBACK_LENGTH", async () => {
+      renderWithV23Gate();
+
+      const textarea = screen.getByTestId("gate-card-feedback") as HTMLTextAreaElement;
+      expect(textarea).toHaveAttribute("maxLength", String(MAX_GATE_FEEDBACK_LENGTH));
+
+      const user = userEvent.setup();
+      // Paste one character past the cap rather than typing 20001 keystrokes.
+      await user.click(textarea);
+      await user.paste("a".repeat(MAX_GATE_FEEDBACK_LENGTH + 1));
+      expect(textarea.value).toHaveLength(MAX_GATE_FEEDBACK_LENGTH);
     });
   });
 });

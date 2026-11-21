@@ -20,7 +20,7 @@ import TriggerBanner from "./TriggerBanner";
 import MergeOnApprovalNotice from "./MergeOnApprovalNotice";
 import HeldApprovalNotice from "./HeldApprovalNotice";
 import AwaitStoryRevisionNotice from "./AwaitStoryRevisionNotice";
-import { parseGateTrigger, isEscalationGate } from "@/lib/decisions";
+import { parseGateTrigger, isEscalationGate, MAX_GATE_FEEDBACK_LENGTH } from "@/lib/decisions";
 import { latestStampFor } from "@/lib/gateStamps";
 import type {
   ResolvedArtifactGroup,
@@ -307,6 +307,7 @@ export default function HumanGatePanel({
                   value={feedback}
                   onChange={(e) => setFeedback(e.target.value)}
                   disabled={signalMutation.isPending}
+                  maxLength={MAX_GATE_FEEDBACK_LENGTH}
                 />
               </div>
 
