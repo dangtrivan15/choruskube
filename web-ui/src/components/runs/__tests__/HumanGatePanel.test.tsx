@@ -3,6 +3,7 @@ import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "@/__tests__/test-utils";
 import HumanGatePanel from "../HumanGatePanel";
+import { MAX_GATE_FEEDBACK_LENGTH } from "@/lib/decisions";
 import type { GateStampResponse } from "@/lib/types";
 
 const mockMutate = vi.fn();
@@ -345,6 +346,32 @@ describe("HumanGatePanel", () => {
     it("disables Redraft until feedback is typed", async () => {
       renderWithProviders(<HumanGatePanel {...approveSpecProps} />);
       expect(screen.getByTestId("gate-redraft-button")).toBeDisabled();
+    });
+
+    it("caps the feedback box at MAX_GATE_FEEDBACK_LENGTH and submits a human_guidance.md within the cap", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<HumanGatePanel {...approveSpecProps} />);
+
+      const textarea = screen.getByTestId("gate-feedback-input") as HTMLTextAreaElement;
+      expect(textarea).toHaveAttribute("maxLength", String(MAX_GATE_FEEDBACK_LENGTH));
+
+      // Paste one character past the cap rather than typing 20001 keystrokes.
+      await user.click(textarea);
+      await user.paste("a".repeat(MAX_GATE_FEEDBACK_LENGTH + 1));
+      expect(textarea.value).toHaveLength(MAX_GATE_FEEDBACK_LENGTH);
+
+      await user.click(screen.getByText("Re-review"));
+
+      expect(mockMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          decision: "rereview",
+          feedback: "a".repeat(MAX_GATE_FEEDBACK_LENGTH),
+          files: expect.arrayContaining([
+            expect.objectContaining({ name: "human_guidance.md" }),
+          ]),
+        }),
+        expect.any(Object),
+      );
     });
 
     it("relabels buttons under alternative_proposal trigger", () => {

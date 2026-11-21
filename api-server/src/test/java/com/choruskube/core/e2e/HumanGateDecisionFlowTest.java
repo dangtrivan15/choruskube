@@ -6,12 +6,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.config.GraphIds;
+import com.choruskube.core.dto.SignalRequest;
 import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.enums.NodeExecutionStatus;
+import com.choruskube.core.repository.GateStampRepository;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
+import com.choruskube.core.service.RunScopeBinder;
+import com.choruskube.core.service.RunService;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -49,6 +53,15 @@ public class HumanGateDecisionFlowTest extends SharedContextTest {
 
     @Autowired
     private GitRepoRepository gitRepoRepo;
+
+    @Autowired
+    private GateStampRepository gateStampRepo;
+
+    @Autowired
+    private RunService runService;
+
+    @Autowired
+    private RunScopeBinder runScopeBinder;
 
     private WorkflowStub mockStub;
 
@@ -111,6 +124,109 @@ public class HumanGateDecisionFlowTest extends SharedContextTest {
                 .isNotNull();
 
         return new RunWithHumanNode(runId, humanNodeId);
+    }
+
+    private UUID createAwaitingHumanExec(RunWithHumanNode run) {
+        return createAwaitingHumanExec(run, 1);
+    }
+
+    private UUID createAwaitingHumanExec(RunWithHumanNode run, int iteration) {
+        NodeExecution exec = new NodeExecution();
+        exec.setWorkflowRunId(run.runId());
+        exec.setTemplateNodeId(run.humanTemplateNodeId());
+        exec.setGraphVersion(1);
+        exec.setIteration(iteration);
+        exec.setStatus(NodeExecutionStatus.awaiting_human);
+        exec.setArtifactRefs("{}");
+        exec.setFinalizeMode("async");
+        return execRepo.save(exec).getId();
+    }
+
+    @Test
+    void signal_feedbackOverCap_rejectedWith400AndGateLeftOpen() throws Exception {
+        var run = createRunWithHumanGate();
+        UUID execId = createAwaitingHumanExec(run);
+
+        Map<String, String> signalBody = Map.of("decision", "approved", "feedback", "a".repeat(20001));
+
+        mockMvc.perform(post("/api/v1/runs/" + run.runId() + "/nodes/" + execId + "/signal")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(signalBody)))
+                .andExpect(status().isBadRequest());
+
+        // Refused by request-body validation before the handler runs: the gate is left exactly
+        // as it was, with no claim, no gate stamp and no signal.
+        NodeExecution reloaded = execRepo.findById(execId).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(NodeExecutionStatus.awaiting_human);
+        assertThat(reloaded.getDecision()).isNull();
+        assertThat(gateStampRepo.findByWorkflowRunIdOrderByCreatedAtAsc(run.runId()))
+                .isEmpty();
+        Mockito.verify(mockStub, Mockito.never()).signal(ArgumentMatchers.anyString(), ArgumentMatchers.any());
+    }
+
+    @Test
+    void signal_feedbackAtCapNullOrEmpty_accepted() throws Exception {
+        var run = createRunWithHumanGate();
+
+        String feedback20000 = "b".repeat(20000);
+        UUID execAtCap = createAwaitingHumanExec(run);
+        mockMvc.perform(post("/api/v1/runs/" + run.runId() + "/nodes/" + execAtCap + "/signal")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                Map.of("decision", "approved", "feedback", feedback20000))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("finalizing"));
+        ArgumentCaptor<Object> captorAtCap = ArgumentCaptor.forClass(Object.class);
+        Mockito.verify(mockStub).signal(ArgumentMatchers.eq("human-decision-" + execAtCap), captorAtCap.capture());
+        assertThat(objectMapper
+                        .valueToTree(captorAtCap.getValue())
+                        .get("feedback")
+                        .asText())
+                .isEqualTo(feedback20000);
+
+        Map<String, String> nullFeedbackBody = new HashMap<>();
+        nullFeedbackBody.put("decision", "approved");
+        nullFeedbackBody.put("feedback", null);
+        UUID execNull = createAwaitingHumanExec(run, 2);
+        mockMvc.perform(post("/api/v1/runs/" + run.runId() + "/nodes/" + execNull + "/signal")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(nullFeedbackBody)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("finalizing"));
+
+        UUID execEmpty = createAwaitingHumanExec(run, 3);
+        mockMvc.perform(post("/api/v1/runs/" + run.runId() + "/nodes/" + execEmpty + "/signal")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of("decision", "approved", "feedback", ""))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("finalizing"));
+    }
+
+    @Test
+    void decideGateAsSystem_signalsOversizedFeedbackWhole() throws Exception {
+        var run = createRunWithHumanGate();
+        UUID execId = createAwaitingHumanExec(run);
+
+        // Built in the same shape RunService#recheckStoryVersion builds its guidance: a fixed
+        // guidance line, then the re-check's reviewer-note header, then 20000 characters of
+        // reviewer feedback — storyVersionGuidance itself is package-private to
+        // com.choruskube.core.service and cannot be called from this package.
+        String fixedGuidanceLine = "The Story spec moved from v1 to v2 since this Task planned. Read the Revisions"
+                + " entries for v2 through v2 in /workspace/in/run_input/story_spec.md and check this change"
+                + " against them.";
+        String reviewerNoteHeader = "\n\n## Reviewer's note with the approval\n\n";
+        String oversizedFeedback = fixedGuidanceLine + reviewerNoteHeader + "x".repeat(20000);
+        assertThat(oversizedFeedback.length()).isGreaterThan(20000);
+
+        SignalRequest request = new SignalRequest("redraft", oversizedFeedback, null, null);
+        runScopeBinder.runInScopeOf(run.runId(), () -> runService.decideGateAsSystem(run.runId(), execId, request));
+
+        // A request the system builds for itself never passes through @Valid, so the whole,
+        // over-cap text reaches the Temporal signal unmodified.
+        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+        Mockito.verify(mockStub).signal(ArgumentMatchers.eq("human-decision-" + execId), captor.capture());
+        assertThat(objectMapper.valueToTree(captor.getValue()).get("feedback").asText())
+                .isEqualTo(oversizedFeedback);
     }
 
     @Test

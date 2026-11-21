@@ -32,7 +32,7 @@ import RoadmapCandidateReview from "@/components/runs/RoadmapCandidateReview";
 import EscalationGatePanel from "@/components/runs/EscalationGatePanel";
 import PageHeader from "@/components/layout/PageHeader";
 import PageShell from "@/components/layout/PageShell";
-import { isEscalationGate } from "@/lib/decisions";
+import { isEscalationGate, MAX_GATE_FEEDBACK_LENGTH } from "@/lib/decisions";
 import type { PendingGateResponse, SortParam, PaginationParams, RoadmapCandidatesDocument } from "@/lib/types";
 
 const SORT_OPTIONS = [
@@ -277,6 +277,7 @@ function GateCard({ gate }: { gate: PendingGateResponse }) {
             onChange={(e) => setFeedback(e.target.value)}
             disabled={signalMutation.isPending}
             className="min-h-[60px]"
+            maxLength={MAX_GATE_FEEDBACK_LENGTH}
           />
           <FileUploadZone onFilesChange={setAttachmentFiles} disabled={signalMutation.isPending} />
           <DecisionButtons

@@ -209,4 +209,62 @@ test.describe("Human Gates", () => {
       await api.cancelRun(run.id).catch(() => {});
     }
   });
+
+  test("run page feedback box stops at 20000 characters", async ({ runMonitorPage, parkedGateRun }) => {
+    await runMonitorPage.goto(parkedGateRun.id);
+    await runMonitorPage.selectNode("review_gate");
+
+    await expect(runMonitorPage.gateFeedbackInput).toHaveAttribute("maxlength", "20000");
+
+    // Nothing is submitted here: parkedGateRun's gate is shared across this whole spec file.
+    await runMonitorPage.gateFeedbackInput.fill("a".repeat(20000));
+    await runMonitorPage.gateFeedbackInput.press("End");
+    await runMonitorPage.gateFeedbackInput.press("b");
+    await expect(runMonitorPage.gateFeedbackInput).toHaveValue("a".repeat(20000));
+  });
+
+  test("approvals page feedback box stops at 20000 characters", async ({
+    approvalsPage,
+    parkedGateRun,
+  }) => {
+    // Found by the run's name, since other workers' parked gates share the "review_gate" label.
+    const card = await gateCard(approvalsPage, parkedGateRun.name!);
+    const feedback = card.getByTestId("gate-card-feedback");
+
+    await expect(feedback).toHaveAttribute("maxlength", "20000");
+
+    await feedback.fill("a".repeat(20000));
+    await feedback.press("End");
+    await feedback.press("b");
+    await expect(feedback).toHaveValue("a".repeat(20000));
+  });
+
+  test("signal endpoint rejects feedback over 20000 characters", async ({ runMonitorPage, api }) => {
+    // A run of its own: a regression here must never be able to decide the gate every
+    // other spec in this file reads.
+    const template = await api.getTemplateByName("e2e-human-gate");
+    const runName = uniqueName("over-cap");
+    const run = await api.startRun({
+      graphTemplateId: template.id,
+      name: runName,
+    });
+
+    try {
+      const exec = await api.waitForNodeStatus(run.id, "review_gate", ["awaiting_human"], 60_000);
+
+      await expect(
+        api.signalNode(run.id, exec.id, { decision: "approved", feedback: "a".repeat(20001) }),
+      ).rejects.toThrow(/→ 400:/);
+
+      const reloaded = await api.getRun(run.id);
+      const reloadedExec = reloaded.nodeExecutions.find((ne) => ne.id === exec.id);
+      expect(reloadedExec?.status).toBe("awaiting_human");
+
+      await runMonitorPage.goto(run.id);
+      await runMonitorPage.selectNode("review_gate");
+      await expect(runMonitorPage.gateApproveButton).toBeVisible();
+    } finally {
+      await api.cancelRun(run.id).catch(() => {});
+    }
+  });
 });
