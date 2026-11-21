@@ -1,9 +1,11 @@
 package com.choruskube.core.service;
 
+import java.time.Instant;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CommonPrefix;
 import software.amazon.awssdk.services.s3.model.DeleteObjectsResponse;
 import software.amazon.awssdk.services.s3.model.ObjectIdentifier;
 import software.amazon.awssdk.services.s3.model.S3Error;
@@ -29,6 +31,43 @@ public class ObjectTreeDeleter {
                 s3Client.listObjectsV2Paginator(b -> b.bucket(bucket).prefix(prefix)).contents().stream()
                         .map(o -> ObjectIdentifier.builder().key(o.key()).build())
                         .toList();
+        deleteKeys(keys, prefix);
+    }
+
+    public boolean isEmpty(String prefix) {
+        requireTree(prefix);
+        return s3Client.listObjectsV2(b -> b.bucket(bucket).prefix(prefix).maxKeys(1))
+                .contents()
+                .isEmpty();
+    }
+
+    /**
+     * The bucket's top-level common prefixes (one per organization's storage prefix), each ending
+     * in {@code /}. Reaches an organization whose rows are already gone, unlike a lookup keyed on a
+     * run or an organization row.
+     */
+    public List<String> storagePrefixes() {
+        return s3Client.listObjectsV2Paginator(b -> b.bucket(bucket).delimiter("/")).commonPrefixes().stream()
+                .map(CommonPrefix::prefix)
+                .toList();
+    }
+
+    /**
+     * Deletes every object under {@code prefix} last modified before {@code cutoff}. Throws if the
+     * store refuses any key, as {@link #deleteAll} does. Returns how many objects it deleted.
+     */
+    public int deleteModifiedBefore(String prefix, Instant cutoff) {
+        requireTree(prefix);
+        List<ObjectIdentifier> keys =
+                s3Client.listObjectsV2Paginator(b -> b.bucket(bucket).prefix(prefix)).contents().stream()
+                        .filter(o -> o.lastModified().isBefore(cutoff))
+                        .map(o -> ObjectIdentifier.builder().key(o.key()).build())
+                        .toList();
+        deleteKeys(keys, prefix);
+        return keys.size();
+    }
+
+    private void deleteKeys(List<ObjectIdentifier> keys, String prefix) {
         for (int from = 0; from < keys.size(); from += DELETE_BATCH) {
             List<ObjectIdentifier> batch = keys.subList(from, Math.min(from + DELETE_BATCH, keys.size()));
             DeleteObjectsResponse response = s3Client.deleteObjects(
@@ -39,13 +78,6 @@ public class ObjectTreeDeleter {
                         + prefix + " were not deleted; first: " + first.code() + " " + first.message());
             }
         }
-    }
-
-    public boolean isEmpty(String prefix) {
-        requireTree(prefix);
-        return s3Client.listObjectsV2(b -> b.bucket(bucket).prefix(prefix).maxKeys(1))
-                .contents()
-                .isEmpty();
     }
 
     // A blank prefix names the whole bucket, and one without its trailing slash also names its siblings.
