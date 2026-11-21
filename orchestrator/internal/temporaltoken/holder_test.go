@@ -212,6 +212,58 @@ func TestHolderString_IsTokenFree(t *testing.T) {
 	assert.Contains(t, s, "ns-b")
 }
 
+func TestHolds_UsableUnexpiredToken_IsTrue(t *testing.T) {
+	c := newClock(time.Unix(1000, 0))
+	h := NewHolder(c.Now)
+	h.Update("ns", Bearer(NewToken("tok-a", time.Unix(2000, 0))))
+
+	assert.True(t, h.Holds("ns"))
+}
+
+func TestHolds_NeverPushedNamespace_IsFalse(t *testing.T) {
+	h := NewHolder(nil)
+	assert.False(t, h.Holds("ns"))
+}
+
+func TestHolds_AfterNone_IsFalse(t *testing.T) {
+	c := newClock(time.Unix(1000, 0))
+	h := NewHolder(c.Now)
+	h.Update("ns", Bearer(NewToken("tok-a", time.Unix(2000, 0))))
+	h.Update("ns", None())
+
+	assert.False(t, h.Holds("ns"))
+}
+
+func TestHolds_AfterExpiry_IsFalse(t *testing.T) {
+	c := newClock(time.Unix(1000, 0))
+	h := NewHolder(c.Now)
+	h.Update("ns", Bearer(NewToken("tok-a", time.Unix(1100, 0))))
+	require.True(t, h.Holds("ns"))
+
+	c.advance(200 * time.Second) // now 1200, past the 1100 expiry
+	assert.False(t, h.Holds("ns"))
+}
+
+func TestHolds_UnavailableWithNothingHeld_IsFalse(t *testing.T) {
+	c := newClock(time.Unix(1000, 0))
+	h := NewHolder(c.Now)
+	h.Update("ns", Unavailable())
+
+	assert.False(t, h.Holds("ns"))
+}
+
+func TestHolds_UnavailableAfterBearer_StaysTrueUntilExpiry(t *testing.T) {
+	c := newClock(time.Unix(1000, 0))
+	h := NewHolder(c.Now)
+	h.Update("ns", Bearer(NewToken("tok-a", time.Unix(1100, 0))))
+	h.Update("ns", Unavailable())
+
+	assert.True(t, h.Holds("ns"))
+
+	c.advance(200 * time.Second) // now 1200, past the 1100 expiry
+	assert.False(t, h.Holds("ns"))
+}
+
 func TestConcurrentUpdateAndCredential(t *testing.T) {
 	c := newClock(time.Unix(1000, 0))
 	h := NewHolder(c.Now)

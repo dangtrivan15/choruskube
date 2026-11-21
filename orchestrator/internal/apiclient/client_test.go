@@ -350,7 +350,9 @@ func TestGetRunNamespace(t *testing.T) {
 	assert.Equal(t, "tenant-ns", result.Namespace)
 }
 
-func TestListNamespaces(t *testing.T) {
+// An api-server that predates the credentials field: the roster's namespace list is intact and
+// Credentials is nil, which the orchestrator must treat as "none" for every namespace.
+func TestListNamespaces_OldResponseWithoutCredentials(t *testing.T) {
 	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/internal/placements", r.URL.Path)
@@ -363,7 +365,64 @@ func TestListNamespaces(t *testing.T) {
 
 	result, err := client.ListNamespaces(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, []string{"choruskube", "tenant-ns"}, result)
+	assert.Equal(t, []string{"choruskube", "tenant-ns"}, result.Namespaces)
+	assert.Nil(t, result.Credentials)
+}
+
+func TestListNamespaces_NewResponseWithBearerNoneAndUnavailableEntries(t *testing.T) {
+	expiresAt := time.Date(2026, 11, 21, 15, 4, 5, 0, time.UTC)
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{
+			"namespaces": ["bearer-ns", "none-ns", "unavailable-ns"],
+			"credentials": {
+				"bearer-ns": {"state": "bearer", "token": "tok-a", "expiresAt": "2026-11-21T15:04:05Z"},
+				"none-ns": {"state": "none"},
+				"unavailable-ns": {"state": "unavailable"}
+			}
+		}`))
+	})
+
+	result, err := client.ListNamespaces(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bearer-ns", "none-ns", "unavailable-ns"}, result.Namespaces)
+	require.Len(t, result.Credentials, 3)
+
+	bearer := result.Credentials["bearer-ns"]
+	assert.Equal(t, "bearer", bearer.State)
+	assert.Equal(t, "tok-a", bearer.Token)
+	assert.True(t, bearer.ExpiresAt.Equal(expiresAt))
+
+	none := result.Credentials["none-ns"]
+	assert.Equal(t, "none", none.State)
+	assert.Empty(t, none.Token)
+
+	unavailable := result.Credentials["unavailable-ns"]
+	assert.Equal(t, "unavailable", unavailable.State)
+	assert.Empty(t, unavailable.Token)
+}
+
+func TestNamespaceCredential_StringAndGoString_NeverPrintTheToken(t *testing.T) {
+	bearer := NamespaceCredential{State: "bearer", Token: "super-secret-token", ExpiresAt: time.Unix(2000, 0)}
+	assert.NotContains(t, bearer.String(), "super-secret-token")
+	assert.NotContains(t, fmt.Sprintf("%#v", bearer), "super-secret-token")
+	assert.Contains(t, bearer.String(), "bearer")
+
+	none := NamespaceCredential{State: "none"}
+	assert.NotContains(t, none.String(), "token")
+}
+
+func TestListNamespaces_MalformedBody_ErrorDoesNotContainTheBody(t *testing.T) {
+	distinctiveBody := "not json, but it does carry a bearer-token-xyz-123 inside it"
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(distinctiveBody))
+	})
+
+	_, err := client.ListNamespaces(context.Background())
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), distinctiveBody)
+	assert.NotContains(t, err.Error(), "bearer-token-xyz-123")
 }
 
 func TestAuthenticatedClient_SendsBearerToken(t *testing.T) {

@@ -455,6 +455,61 @@ sequenceDiagram
   H-->>U: 400, the gate stays as it was
 ```
 
+## Control-plane Temporal authentication
+
+The api-server and orchestrator call Temporal on one shared connection per process, with no
+per-namespace credential by default — the open-source behaviour, unchanged. A deployment whose
+Temporal checks per-namespace tokens supplies a **control-plane token source**: a Spring bean the
+api-server looks up at construction time. For a namespace it answers one of three things — a
+bearer token with its expiry, "this deployment presents no credential," or a failure. A failure
+is always reported "unavailable," never "none": collapsing the two would let a transient failure
+of the source look exactly like a deployment that never meant to present a credential, and a
+caller would then send a call with no credential where one was actually required. With no source
+configured, every namespace is "none."
+
+- **The api-server attaches each call's token by the namespace the request itself names**, on the
+  one connection every namespace already shares. A gRPC client interceptor reads the outgoing
+  request's `namespace` field once the message is known and either attaches that namespace's
+  token or — when the deployment issues tokens and this namespace's is unavailable — fails the
+  call before it ever reaches the transport. A request naming no namespace carries no header.
+- **With a token source configured, the api-server refuses to boot** unless `InternalAuthFilter`
+  is enforcing with an orchestrator secret configured. Tokens travel to the orchestrator on the
+  namespace-roster route below, and only that combination keeps that route the orchestrator's
+  alone.
+- **The orchestrator's namespace roster carries each namespace's token state** alongside the
+  namespace list it already returns, bounded below the orchestrator's own timeout for the roster
+  call: a namespace the source cannot answer within that bound is reported "unavailable" rather
+  than stalling every other namespace in the same response. The orchestrator holds the most
+  recent state per namespace and reads it fresh on every call, so a renewed token applies without
+  reconnecting, and an "unavailable" push keeps whatever token is already held until it expires.
+- **The orchestrator always dials Temporal in plaintext explicitly**, so presenting a token never
+  flips a live connection's transport. It attempts its configured namespace immediately at
+  startup and retries every namespace the roster lists — the configured one included — on every
+  roster tick, rather than waiting for a first roster before serving anything. It exits only when
+  Temporal refuses a namespace it already holds a token for, when it refuses one the roster marked
+  "none," or when Temporal cannot be reached at all for the configured namespace at startup —
+  every other outcome, including a refusal the token source simply hasn't caught up to yet, is
+  logged and retried on the next tick.
+
+```mermaid
+sequenceDiagram
+  participant AS as api-server
+  participant TS as token source
+  participant OR as orchestrator
+  participant FE as Temporal
+
+  Note over AS,TS: only when a deployment supplies a token source
+  AS->>TS: request a token for namespace N
+  TS-->>AS: token for N, expiry
+  loop every roster tick
+    OR->>AS: fetch namespace roster (orchestrator secret)
+    AS-->>OR: each namespace with its current token state
+  end
+  OR->>FE: poll N, plaintext, N's current token
+  AS->>FE: start/signal/terminate in N, N's current token
+  Note over AS,OR: with no token source the roster says "none" and no call carries a credential
+```
+
 ## Components
 
 | Component | Stack | Responsibility |

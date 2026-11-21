@@ -9,14 +9,13 @@ import (
 	"os/signal"
 	"syscall"
 
-	"go.temporal.io/sdk/client"
-
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/activity"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/apiclient"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/config"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/namespaces"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/objectstore"
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/prompt"
+	"github.com/dangtrivan15/choruskube/orchestrator/internal/temporaltoken"
 )
 
 func main() {
@@ -35,17 +34,6 @@ func main() {
 		log.Printf("API client configured (no auth): %s", cfg.APIServerURL)
 	}
 
-	// --- Temporal ---
-	temporalClient, err := client.Dial(client.Options{
-		HostPort:  cfg.Temporal.Address,
-		Namespace: cfg.Temporal.Namespace,
-	})
-	if err != nil {
-		log.Fatalf("Failed to connect to Temporal: %v", err)
-	}
-	defer temporalClient.Close()
-	log.Println("Connected to Temporal")
-
 	// --- Object storage client (for run log) ---
 	objectStoreClient, err := objectstore.NewClient(
 		cfg.ObjectStore.Endpoint, cfg.ObjectStore.Bucket,
@@ -61,16 +49,21 @@ func main() {
 	activities := activity.NewActivities(apiClient, resolver, objectStoreClient)
 
 	// --- Temporal workflow workers, one per namespace ---
-	sup := namespaces.NewSupervisor(cfg.Temporal.Address, activities)
+	holder := temporaltoken.NewHolder(nil)
+	sup := namespaces.NewSupervisor(cfg.Temporal.Address, activities, holder)
 	defer sup.StopAll()
 
 	// The configured namespace is served before the roster is ever fetched. Making it
 	// contingent on an api-server round trip would let a slow or unreachable api-server stop
-	// this process serving the namespace every deployment always has.
-	if err := sup.Serve(cfg.Temporal.Namespace); err != nil {
+	// this process serving the namespace every deployment always has. ServeConfigured only exits
+	// on an unreachable Temporal — a refusal here means no token has arrived yet, not misconfiguration.
+	if err := sup.ServeConfigured(cfg.Temporal.Namespace); err != nil {
 		log.Fatalf("Failed to serve the configured namespace: %v", err)
 	}
-	go namespaces.Run(ctx, sup, apiClient, namespaces.RefreshInterval)
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- namespaces.Run(ctx, sup, apiClient, cfg.Temporal.Namespace, namespaces.RefreshInterval)
+	}()
 	log.Println("Temporal workflow workers started")
 
 	// --- Health HTTP Server ---
@@ -93,8 +86,16 @@ func main() {
 	}()
 
 	fmt.Println("Orchestrator ready")
-	<-ctx.Done()
+	var fatalErr error
+	select {
+	case <-ctx.Done():
+	case fatalErr = <-runErr:
+		cancel() // unblocks every other goroutine selecting on ctx, same as a shutdown signal would
+	}
 
 	log.Println("Shutting down")
 	server.Shutdown(context.Background())
+	if fatalErr != nil {
+		log.Fatalf("namespace supervisor exited: %v", fatalErr)
+	}
 }

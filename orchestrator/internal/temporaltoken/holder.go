@@ -78,6 +78,16 @@ func (h *Holder) Update(namespace string, s State) {
 	}
 }
 
+// Holds reports whether namespace currently holds a usable, unexpired token. False for a
+// namespace marked None, Unavailable with nothing held, or never pushed at all.
+func (h *Holder) Holds(namespace string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	e, ok := h.entries[namespace]
+	return ok && e.held != nil && e.held.ExpiresAt.After(h.now())
+}
+
 // Credential returns the per-call credential callback for namespace. It reads the current state
 // on every call:
 //
