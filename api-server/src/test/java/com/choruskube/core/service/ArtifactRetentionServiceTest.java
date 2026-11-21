@@ -2,13 +2,17 @@ package com.choruskube.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.byLessThan;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.choruskube.core.SharedContextTest;
@@ -28,9 +32,12 @@ import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -100,6 +107,56 @@ class ArtifactRetentionServiceTest extends SharedContextTest {
         closedRun(WorkflowRunStatus.completed, daysAgo(400));
 
         assertThat(wiredRetention.expireDue()).isZero();
+    }
+
+    @Test
+    void deleteAbandonedStaging_doesNothingWhileThePeriodIsUnset() {
+        assertThat(retention(null).deleteAbandonedStaging()).isZero();
+        verifyNoInteractions(deleter);
+    }
+
+    @Test
+    void deleteAbandonedStaging_sweepsEachStoragePrefixesStagingSegment() {
+        when(deleter.storagePrefixes()).thenReturn(List.of("acme/", "other/"));
+        when(deleter.deleteModifiedBefore(eq("acme/" + UploadService.STAGING_SEGMENT), any()))
+                .thenReturn(2);
+        when(deleter.deleteModifiedBefore(eq("other/" + UploadService.STAGING_SEGMENT), any()))
+                .thenReturn(3);
+
+        int deleted = retention(PERIOD).deleteAbandonedStaging();
+
+        assertThat(deleted).isEqualTo(5);
+        verify(deleter).storagePrefixes();
+        verify(deleter).deleteModifiedBefore(eq("acme/" + UploadService.STAGING_SEGMENT), any());
+        verify(deleter).deleteModifiedBefore(eq("other/" + UploadService.STAGING_SEGMENT), any());
+        // Nothing else — no deleteAll, and no prefix outside staging, so no run's tree is ever named.
+        verifyNoMoreInteractions(deleter);
+    }
+
+    @Test
+    void deleteAbandonedStaging_usesACutoffAboutADayAgo() {
+        when(deleter.storagePrefixes()).thenReturn(List.of("acme/"));
+        ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
+
+        retention(PERIOD).deleteAbandonedStaging();
+
+        verify(deleter).deleteModifiedBefore(anyString(), cutoffCaptor.capture());
+        Instant expected = Instant.now().minus(Duration.ofDays(1));
+        assertThat(cutoffCaptor.getValue()).isCloseTo(expected, byLessThan(10, ChronoUnit.SECONDS));
+    }
+
+    @Test
+    void deleteAbandonedStaging_aFailureOnOnePrefixStillSweepsTheOthers() {
+        when(deleter.storagePrefixes()).thenReturn(List.of("broken/", "healthy/"));
+        doThrow(new IllegalStateException("store refused"))
+                .when(deleter)
+                .deleteModifiedBefore(eq("broken/" + UploadService.STAGING_SEGMENT), any());
+        when(deleter.deleteModifiedBefore(eq("healthy/" + UploadService.STAGING_SEGMENT), any()))
+                .thenReturn(4);
+
+        int deleted = retention(PERIOD).deleteAbandonedStaging();
+
+        assertThat(deleted).isEqualTo(4);
     }
 
     @Test
