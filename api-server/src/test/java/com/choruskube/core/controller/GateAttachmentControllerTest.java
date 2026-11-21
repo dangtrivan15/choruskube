@@ -24,10 +24,12 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 /**
@@ -71,10 +73,6 @@ class GateAttachmentControllerTest {
         return WorkflowRunStatusGroups.TERMINAL.stream();
     }
 
-    private WorkflowRun buildRun() {
-        return buildRun(WorkflowRunStatus.running);
-    }
-
     private WorkflowRun buildRun(WorkflowRunStatus status) {
         WorkflowRun run = new WorkflowRun();
         run.setStatus(status);
@@ -96,6 +94,16 @@ class GateAttachmentControllerTest {
         return new MockMultipartFile("files", "doc.pdf", "application/pdf", "content".getBytes());
     }
 
+    private ResultActions postAttachment() throws Exception {
+        return mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
+                .file(sampleFile()));
+    }
+
+    private void verifyNothingWritten() throws Exception {
+        verify(storagePrefixResolver, never()).storagePrefixForRun(any());
+        verify(uploadService, never()).uploadGateFiles(any(), any(), any(), anyList());
+    }
+
     @ParameterizedTest
     @MethodSource("activeRunStatuses")
     void uploadGateAttachments_happyPath_returnsAttachmentRefs(WorkflowRunStatus runStatus) throws Exception {
@@ -104,8 +112,7 @@ class GateAttachmentControllerTest {
         when(uploadService.uploadGateFiles(eq("acme"), eq(RUN_ID), eq(NODE_EXEC_ID), anyList()))
                 .thenReturn("{\"doc.pdf\":\"acme/runs/" + RUN_ID + "/gate-attachments/" + NODE_EXEC_ID + "/doc.pdf\"}");
 
-        mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(sampleFile()))
+        postAttachment()
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.attachmentRefs").exists());
 
@@ -118,12 +125,9 @@ class GateAttachmentControllerTest {
         when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(WorkflowRunStatus.running)));
         when(nodeExecRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(buildNodeExec(RUN_ID, execStatus)));
 
-        mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(sampleFile()))
-                .andExpect(status().isConflict());
+        postAttachment().andExpect(status().isConflict());
 
-        verify(storagePrefixResolver, never()).storagePrefixForRun(any());
-        verify(uploadService, never()).uploadGateFiles(any(), any(), any(), anyList());
+        verifyNothingWritten();
     }
 
     @ParameterizedTest
@@ -133,12 +137,9 @@ class GateAttachmentControllerTest {
         when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(runStatus)));
         when(nodeExecRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(buildNodeExec(RUN_ID)));
 
-        mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(sampleFile()))
-                .andExpect(status().isConflict());
+        postAttachment().andExpect(status().isConflict());
 
-        verify(storagePrefixResolver, never()).storagePrefixForRun(any());
-        verify(uploadService, never()).uploadGateFiles(any(), any(), any(), anyList());
+        verifyNothingWritten();
     }
 
     @Test
@@ -147,22 +148,21 @@ class GateAttachmentControllerTest {
         when(nodeExecRepo.findById(NODE_EXEC_ID))
                 .thenReturn(Optional.of(buildNodeExec(RUN_ID, NodeExecutionStatus.skipped)));
 
-        mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(sampleFile()))
-                .andExpect(status().isConflict());
+        postAttachment().andExpect(status().isConflict());
 
-        verify(storagePrefixResolver, never()).storagePrefixForRun(any());
-        verify(uploadService, never()).uploadGateFiles(any(), any(), any(), anyList());
+        verifyNothingWritten();
     }
 
-    @Test
-    void uploadGateAttachments_conflictBody_namesCauseAndCarriesNoObjectPath() throws Exception {
-        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(WorkflowRunStatus.completed)));
-        when(nodeExecRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(buildNodeExec(RUN_ID)));
+    @ParameterizedTest
+    @CsvSource({"completed, awaiting_human, run has closed", "running, running, not awaiting a human decision"})
+    void uploadGateAttachments_conflictBody_namesCauseAndCarriesNoObjectPath(
+            WorkflowRunStatus runStatus, NodeExecutionStatus execStatus, String cause) throws Exception {
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(runStatus)));
+        when(nodeExecRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(buildNodeExec(RUN_ID, execStatus)));
 
-        mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(sampleFile()))
+        postAttachment()
                 .andExpect(status().isConflict())
+                .andExpect(content().string(containsString(cause)))
                 .andExpect(content().string(not(containsString("gate-attachments/"))))
                 .andExpect(content().string(not(containsString("runs/" + RUN_ID))));
     }
@@ -171,42 +171,48 @@ class GateAttachmentControllerTest {
     void uploadGateAttachments_runNotFound_returns404() throws Exception {
         when(runRepo.findById(any())).thenReturn(Optional.empty());
 
-        mockMvc.perform(multipart("/api/v1/runs/" + UUID.randomUUID() + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(sampleFile()))
-                .andExpect(status().isNotFound());
+        postAttachment().andExpect(status().isNotFound());
+
+        verifyNothingWritten();
     }
+
+    // The refusals below use a closed run and a decided gate, so moving the admission check above
+    // any of them turns its answer into a 409.
 
     @Test
     void uploadGateAttachments_wrongOrg_returns403() throws Exception {
-        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun()));
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(WorkflowRunStatus.completed)));
+        when(nodeExecRepo.findById(NODE_EXEC_ID))
+                .thenReturn(Optional.of(buildNodeExec(RUN_ID, NodeExecutionStatus.completed)));
         doThrow(new com.choruskube.core.exception.ForbiddenException("Access denied"))
                 .when(authService)
                 .checkOrgAccess(anyString(), eq(RUN_ID));
 
-        mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(sampleFile()))
-                .andExpect(status().isForbidden());
+        postAttachment().andExpect(status().isForbidden());
+
+        verifyNothingWritten();
     }
 
     @Test
     void uploadGateAttachments_nodeExecNotFound_returns404() throws Exception {
-        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun()));
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(WorkflowRunStatus.completed)));
         when(nodeExecRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.empty());
 
-        mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(sampleFile()))
-                .andExpect(status().isNotFound());
+        postAttachment().andExpect(status().isNotFound());
+
+        verifyNothingWritten();
     }
 
     @Test
     void uploadGateAttachments_nodeExecBelongsToDifferentRun_returns404() throws Exception {
         UUID otherRunId = UUID.randomUUID();
-        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun()));
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(WorkflowRunStatus.completed)));
         // nodeExec belongs to a different run
-        when(nodeExecRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(buildNodeExec(otherRunId)));
+        when(nodeExecRepo.findById(NODE_EXEC_ID))
+                .thenReturn(Optional.of(buildNodeExec(otherRunId, NodeExecutionStatus.completed)));
 
-        mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(sampleFile()))
-                .andExpect(status().isNotFound());
+        postAttachment().andExpect(status().isNotFound());
+
+        verifyNothingWritten();
     }
 }

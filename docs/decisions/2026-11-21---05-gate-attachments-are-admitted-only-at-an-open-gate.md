@@ -20,7 +20,7 @@ is not in `WorkflowRunStatusGroups.TERMINAL`; anything else gets a 409 before an
 written.** The check runs after the existing run lookup, organization access check and
 node-execution run-membership check, and before the storage prefix is resolved or anything is
 uploaded. It reuses the plain-text `ConflictException` the gate signal already answers with when
-its own claim (`compareAndSetStatus(... awaiting_human -> running)`) loses, so the web UI's
+its own claim out of `awaiting_human` (`compareAndSetStatus`) loses, so the web UI's
 decision-failure toast renders it with no change on that side. The awaiting condition is exactly
 the signal's own claim precondition, so the two are one rule stated twice and must change
 together — a gate status the claim later accepts needs the same addition here.

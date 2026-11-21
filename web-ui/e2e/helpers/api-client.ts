@@ -453,13 +453,7 @@ export class TestApiClient {
     return this.post(`/api/v1/runs/${runId}/nodes/${nodeExecId}/signal`, body);
   }
 
-  /**
-   * Posts files to a gate's attachment endpoint, mirroring the web UI's own upload-before-signal
-   * order (`useSignalNode`/`usePendingGates`): the caller passes the returned `attachmentRefs`
-   * to `signalNode`. Builds its own `FormData`/`fetch` call rather than using `post` above,
-   * since the server expects multipart here, not JSON, and the boundary-bearing `Content-Type`
-   * must come from `fetch` itself, not be set by hand.
-   */
+  /** Posts files to a gate as multipart, as the web UI does before it signals with the refs. */
   async uploadGateAttachments(
     runId: string,
     nodeExecId: string,

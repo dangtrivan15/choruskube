@@ -56,10 +56,9 @@ public class GateAttachmentController {
                 .orElseThrow(() -> new NotFoundException("Node execution not found: " + nodeExecId));
         NodeExecutionUtil.requireInRun(nodeExec, runId);
 
-        // Admits only what a decision could still carry: an awaiting gate on a run that has not
-        // closed, the same precondition the signal's own claim enforces. No lock, so a losing race
-        // against a claim or close still writes; see
-        // docs/decisions/2026-11-21---04-gate-attachments-are-admitted-only-at-an-open-gate.md.
+        // Below the org check, so a foreign caller never learns the run's status. A closed run's tree
+        // may already be expired and is never revisited, so a write there is never deleted; see
+        // docs/decisions/2026-11-21---05-gate-attachments-are-admitted-only-at-an-open-gate.md.
         if (WorkflowRunStatusGroups.TERMINAL.contains(run.getStatus())) {
             throw new ConflictException("Cannot upload gate attachments: run has closed (" + run.getStatus() + ")");
         }
