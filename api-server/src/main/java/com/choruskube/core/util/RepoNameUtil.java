@@ -118,6 +118,42 @@ public final class RepoNameUtil {
         return Optional.empty();
     }
 
+    /** A {@code github.com} pull request: {@code owner/name} as written, and its number. */
+    public record GitHubPullRequest(String ownerRepo, int number) {
+        public String url() {
+            return "https://github.com/" + ownerRepo + "/pull/" + number;
+        }
+    }
+
+    private static final Pattern GITHUB_PULL_REQUEST = Pattern.compile(
+            "^https://github\\.com/([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/([A-Za-z0-9._-]{1,100})/pull/([1-9][0-9]{0,8})"
+                    + "(?:/(?:files|commits|checks))?/?$",
+            Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Parses a {@code github.com} pull request page URL, ignoring any query or fragment and the
+     * files, commits or checks tab. Anything else, including a GitHub Enterprise Server host, is
+     * empty, the same refusal {@link #githubOwnerRepo} gives.
+     */
+    public static Optional<GitHubPullRequest> githubPullRequest(String url) {
+        if (url == null || url.isBlank()) return Optional.empty();
+        String trimmed = url.trim();
+        int cut = indexOfAny(trimmed, '?', '#');
+        Matcher matcher = GITHUB_PULL_REQUEST.matcher(cut < 0 ? trimmed : trimmed.substring(0, cut));
+        if (!matcher.matches()) return Optional.empty();
+        String name = stripDotGit(matcher.group(2));
+        if (name.isEmpty() || name.equals(".") || name.equals("..")) return Optional.empty();
+        return Optional.of(new GitHubPullRequest(matcher.group(1) + "/" + name, Integer.parseInt(matcher.group(3))));
+    }
+
+    private static int indexOfAny(String text, char a, char b) {
+        int ia = text.indexOf(a);
+        int ib = text.indexOf(b);
+        if (ia < 0) return ib;
+        if (ib < 0) return ia;
+        return Math.min(ia, ib);
+    }
+
     private static String stripDotGit(String segment) {
         return segment.endsWith(".git") ? segment.substring(0, segment.length() - 4) : segment;
     }

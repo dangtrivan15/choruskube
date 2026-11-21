@@ -808,11 +808,15 @@ public class RunService {
         stub.signal("human-decision-" + nodeExecId.toString(), payload);
     }
 
-    /** Whether approving this gate leaves work to finish after the click: merging, a roadmap write or a re-check. */
+    /**
+     * Whether approving this gate leaves work to finish after the click: merging or verifying pull
+     * requests, a roadmap write or a re-check.
+     */
     boolean needsFinalizing(JsonNode snapshot, UUID templateNodeId) {
         JsonNode config = decisionOptionsResolver.findNodeConfigOverrides(snapshot.get("nodes"), templateNodeId);
         return config != null
                 && (config.has(PullRequestMergeMethod.CONFIG_KEY)
+                        || PullRequestVerificationConfig.verifiesMerged(config)
                         || config.has(RoadmapMaterializeMode.CONFIG_KEY)
                         || config.has(DriftRecheckConfig.CONFIG_KEY));
     }

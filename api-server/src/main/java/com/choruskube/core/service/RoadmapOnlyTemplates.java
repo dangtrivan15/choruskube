@@ -13,7 +13,8 @@ import org.springframework.stereotype.Component;
 /**
  * Templates whose runs only a Story or a Task may start. A Story Design run is recorded as a spec
  * version only through the Story stamped on it, and Task Delivery's Analyze escalates without the
- * Story spec a Task start stages, so a run started from the Runs page has neither and is wasted.
+ * Story spec a Task start stages, so a run started from the Runs page has neither and is wasted. A
+ * Delivery Check verifies the pull requests a Task's close names, and has none without one.
  * The same sentence refuses such a start and tells the Start Run dialog why it lists them disabled.
  */
 @Component
@@ -21,13 +22,16 @@ public class RoadmapOnlyTemplates {
 
     private static final String STORY_DESIGN_REASON = "Starts from a Story: use Design Story on the Story's page.";
     private static final String TASK_DELIVERY_REASON = "Starts from a Task: use Start on the Task's page.";
+    private static final String DELIVERY_CHECK_REASON =
+            "Starts from a Task: use Close as delivered on the Task's page.";
 
     // The e2e copies are listed too: the mock graphs need the same Story or Task the real ones do.
     private static final Map<String, String> REASON_BY_GRAPH_ID = Map.of(
             GraphIds.STORY_DESIGN, STORY_DESIGN_REASON,
             E2eTemplateGraphIdResolver.STORY_DESIGN_COPY, STORY_DESIGN_REASON,
             GraphIds.TASK_DELIVERY, TASK_DELIVERY_REASON,
-            E2eTemplateGraphIdResolver.TASK_DELIVERY_COPY, TASK_DELIVERY_REASON);
+            E2eTemplateGraphIdResolver.TASK_DELIVERY_COPY, TASK_DELIVERY_REASON,
+            GraphIds.DELIVERY_CHECK, DELIVERY_CHECK_REASON);
 
     private final GraphTemplateRepository templateRepo;
 

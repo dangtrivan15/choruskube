@@ -452,6 +452,104 @@ class GraphValidationServiceTest {
     }
 
     @Test
+    void aSingleGateThatVerifiesAndApprovesOnArrivalIsValid() {
+        UUID gate = UUID.randomUUID();
+        var gateNode = makeNode(gate, "gate", true);
+        gateNode.setConfigOverrides(
+                "{\"terminal_decisions\":[\"approved\"],\"verify_pull_requests_merged\":true,\"approve_on_arrival\":true}");
+
+        var result = service.validate(List.of(gateNode), List.of());
+        assertThat(result.errors()).isEmpty();
+        assertThat(result.valid()).isTrue();
+    }
+
+    @Test
+    void verifyPullRequestsMergedMustBeTrue() {
+        UUID gate = UUID.randomUUID();
+        var gateNode = makeNode(gate, "gate", true);
+        gateNode.setConfigOverrides("{\"terminal_decisions\":[\"approved\"],\"verify_pull_requests_merged\":\"yes\"}");
+
+        var result = service.validate(List.of(gateNode), List.of());
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors())
+                .anyMatch(e ->
+                        e.contains("gate") && e.contains("verify_pull_requests_merged to something other than true"));
+    }
+
+    @Test
+    void aGateThatBothMergesAndVerifiesIsRejected() {
+        UUID gate = UUID.randomUUID();
+        var gateNode = makeNode(gate, "gate", true);
+        gateNode.setConfigOverrides(
+                "{\"terminal_decisions\":[\"approved\"],\"merge_pull_requests\":\"squash\",\"verify_pull_requests_merged\":true}");
+
+        var result = service.validate(List.of(gateNode), List.of());
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("gate") && e.contains("either merges or verifies"));
+    }
+
+    @Test
+    void aVerifyingGateWithoutApprovedDecisionIsRejected() {
+        UUID gate = UUID.randomUUID();
+        var gateNode = makeNode(gate, "gate", true);
+        gateNode.setConfigOverrides("{\"terminal_decisions\":[\"rejected\"],\"verify_pull_requests_merged\":true}");
+
+        var result = service.validate(List.of(gateNode), List.of());
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("gate") && e.contains("no 'approved' decision"));
+    }
+
+    @Test
+    void approveOnArrivalWithoutVerificationIsRejected() {
+        UUID gate = UUID.randomUUID();
+        var gateNode = makeNode(gate, "gate", true);
+        gateNode.setConfigOverrides("{\"terminal_decisions\":[\"approved\"],\"approve_on_arrival\":true}");
+
+        var result = service.validate(List.of(gateNode), List.of());
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors())
+                .anyMatch(e ->
+                        e.contains("gate") && e.contains("approve_on_arrival without verify_pull_requests_merged"));
+    }
+
+    @Test
+    void approveOnArrivalMustBeTrue() {
+        UUID gate = UUID.randomUUID();
+        var gateNode = makeNode(gate, "gate", true);
+        gateNode.setConfigOverrides(
+                "{\"terminal_decisions\":[\"approved\"],\"verify_pull_requests_merged\":true,\"approve_on_arrival\":1}");
+
+        var result = service.validate(List.of(gateNode), List.of());
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors())
+                .anyMatch(e -> e.contains("gate") && e.contains("approve_on_arrival to something other than true"));
+    }
+
+    @Test
+    void approveOnArrivalBesideAMergeIsRejected() {
+        UUID gate = UUID.randomUUID();
+        var gateNode = makeNode(gate, "gate", true);
+        gateNode.setConfigOverrides(
+                "{\"terminal_decisions\":[\"approved\"],\"verify_pull_requests_merged\":true,\"approve_on_arrival\":true,\"merge_pull_requests\":\"squash\"}");
+
+        var result = service.validate(List.of(gateNode), List.of());
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("gate") && e.contains("may only verify"));
+    }
+
+    @Test
+    void approveOnArrivalBesideARoadmapWriteIsRejected() {
+        UUID gate = UUID.randomUUID();
+        var gateNode = makeNode(gate, "gate", true);
+        gateNode.setConfigOverrides(
+                "{\"terminal_decisions\":[\"approved\"],\"verify_pull_requests_merged\":true,\"approve_on_arrival\":true,\"materialize\":\"roadmap_extension\"}");
+
+        var result = service.validate(List.of(gateNode), List.of());
+        assertThat(result.valid()).isFalse();
+        assertThat(result.errors()).anyMatch(e -> e.contains("gate") && e.contains("may only verify"));
+    }
+
+    @Test
     void unknownMergePullRequestsMethodIsRejected() {
         UUID entry = UUID.randomUUID();
         UUID gate = UUID.randomUUID();

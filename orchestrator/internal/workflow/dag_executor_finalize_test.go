@@ -110,6 +110,7 @@ func (s *DAGExecutorTestSuite) expectGitHubSteps(g gateRun, plan activity.GatePl
 	s.env.OnActivity("RunGateGitHubSteps", mock.Anything, mock.MatchedBy(func(p activity.GateGitHubParams) bool {
 		return reflect.DeepEqual(p, activity.GateGitHubParams{
 			RunID: g.runID, NodeExecutionID: g.exec, Compares: plan.Compares, PRs: plan.PRs, MergeMethod: plan.MergeMethod,
+			VerifyOnly: plan.VerifyOnly,
 		})
 	})).Return(result, nil).Once()
 }
@@ -394,6 +395,45 @@ func (s *DAGExecutorTestSuite) TestHumanGateHeldApprovalClaimedOnOpen() {
 
 	s.assertCompleted()
 	s.Equal([]activity.GateRef{{RunID: g.runID, NodeExecutionID: g.exec}}, s.claimedRefs())
+}
+
+// TestHumanGateFinalizeVerifyOnlyPlanReachesTheWorker: a gate that approves itself on arrival
+// hands the Worker its verify-only plan unchanged, with no merge method, and the pull requests
+// found merged complete the gate.
+func (s *DAGExecutorTestSuite) TestHumanGateFinalizeVerifyOnlyPlanReachesTheWorker() {
+	g := s.newGateRun(3600)
+	row := uuid.New()
+	plan := activity.GatePlan{
+		Outcome:  activity.GatePlanProceed,
+		Compares: []activity.GateCompare{},
+		PRs: []activity.GatePR{{
+			RowID: row, OwnerRepo: "acme/app", Number: 7, Label: "app", PRURL: "https://github.com/acme/app/pull/7",
+			DefaultBranch: "main",
+		}},
+		VerifyOnly: true,
+	}
+	at := time.Date(2026, 10, 11, 9, 30, 0, 0, time.UTC)
+	found := activity.GatePRResult{RowID: row, Kind: "ALREADY_MERGED", MergedAt: &at}
+	s.heldApproval = "s1"
+
+	s.expectGateOpened(g)
+	s.expectGateCompleted(g, "delivered", "{}")
+	s.anyOtherStatusWrite()
+	s.expectPlan(g, "s1", plan)
+	s.env.OnActivity("RunGateGitHubSteps", mock.Anything, mock.MatchedBy(func(p activity.GateGitHubParams) bool {
+		return reflect.DeepEqual(p, activity.GateGitHubParams{
+			RunID: g.runID, NodeExecutionID: g.exec, Compares: plan.Compares, PRs: plan.PRs, VerifyOnly: true,
+		})
+	})).Return(activity.GateGitHubResult{Merges: []activity.GatePRResult{found}}, nil).Once()
+	s.expectComplete(g, "s1", []activity.GatePRResult{found}, activity.GateStepResult{
+		Outcome: activity.GateStepCompleted, Result: "delivered", AttachmentRefs: "{}",
+	})
+	s.decisionReads(g, "approved")
+
+	s.runGate(g)
+
+	s.assertCompleted()
+	s.env.AssertActivityNotCalled(s.T(), "RefuseGateApproval", mock.Anything, mock.Anything)
 }
 
 // TestHumanGateFinalizeWorkerFailureRefuses: a GitHub step that exhausts its retries refuses the

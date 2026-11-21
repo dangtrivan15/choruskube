@@ -2,6 +2,7 @@ package com.choruskube.core.service;
 
 import com.choruskube.core.dto.ValidationResponse;
 import com.choruskube.core.model.DriftRecheckConfig;
+import com.choruskube.core.model.PullRequestVerificationConfig;
 import com.choruskube.core.model.StoryVersionRecheckConfig;
 import com.choruskube.core.model.TemplateEdge;
 import com.choruskube.core.model.TemplateNode;
@@ -161,6 +162,10 @@ public class GraphValidationService {
                 errors.add("Node '" + node.getLabel() + "' declares merge_pull_requests but has no 'approved' "
                         + "decision");
             }
+        }
+
+        for (TemplateNode node : nodes) {
+            validatePullRequestVerification(node, edges, errors);
         }
 
         // A stale approval is held by firing `route`; a route the gate cannot fire would leave the
@@ -331,6 +336,40 @@ public class GraphValidationService {
         return edges.stream()
                 .anyMatch(
                         e -> e.getSourceNodeId().equals(node.getId()) && condition.equalsIgnoreCase(e.getCondition()));
+    }
+
+    /**
+     * A self-approving gate is safe only because it can do nothing but confirm merges that already
+     * happened, so {@code approve_on_arrival} is refused beside anything that merges, writes a
+     * roadmap, or re-checks a branch.
+     */
+    private void validatePullRequestVerification(TemplateNode node, List<TemplateEdge> edges, List<String> errors) {
+        JsonNode verify = readConfigNode(node, PullRequestVerificationConfig.VERIFY_KEY);
+        JsonNode onArrival = readConfigNode(node, PullRequestVerificationConfig.APPROVE_ON_ARRIVAL_KEY);
+        String label = "Node '" + node.getLabel() + "'";
+        if (verify != null) {
+            if (!verify.isBoolean() || !verify.booleanValue()) {
+                errors.add(label + " sets verify_pull_requests_merged to something other than true");
+            } else if (readConfigNode(node, PullRequestMergeMethod.CONFIG_KEY) != null) {
+                errors.add(label + " declares both merge_pull_requests and verify_pull_requests_merged;"
+                        + " a gate either merges or verifies");
+            } else if (!declaresApprovedDecision(node, edges)) {
+                errors.add(label + " declares verify_pull_requests_merged but has no 'approved' decision");
+            }
+        }
+        if (onArrival == null) {
+            return;
+        }
+        if (!onArrival.isBoolean() || !onArrival.booleanValue()) {
+            errors.add(label + " sets approve_on_arrival to something other than true");
+        } else if (verify == null) {
+            errors.add(label + " declares approve_on_arrival without verify_pull_requests_merged");
+        } else if (readConfigNode(node, PullRequestMergeMethod.CONFIG_KEY) != null
+                || readConfigNode(node, RoadmapMaterializeMode.CONFIG_KEY) != null
+                || readConfigNode(node, DriftRecheckConfig.CONFIG_KEY) != null) {
+            errors.add(label + " declares approve_on_arrival beside merge_pull_requests, materialize or"
+                    + " drift_recheck; a gate that approves itself may only verify");
+        }
     }
 
     /**

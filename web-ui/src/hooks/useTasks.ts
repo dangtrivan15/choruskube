@@ -6,6 +6,7 @@ import type {
   TaskResponse,
   TaskRequest,
   TaskStatusUpdateRequest,
+  TaskDeliveryCheckRequest,
   PageResponse,
   PaginationParams,
 } from "@/lib/types";
@@ -157,6 +158,36 @@ export function useCompleteTask() {
     },
     onError: () => {
       addEntry(showMutationToast("Failed to complete task", "error"));
+    },
+  });
+}
+
+/**
+ * Close a Task as delivered elsewhere: starts its Delivery check run, which marks the Task done
+ * once every listed pull request is verified merged. Invalidates the same keys as
+ * `useStartTask`, since the response is a Task with a new latest run.
+ */
+export function useCloseTaskAsDelivered() {
+  const queryClient = useQueryClient();
+  const { addEntry } = useActivityFeed();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: TaskDeliveryCheckRequest }) =>
+      api.post<TaskResponse>(`/tasks/${id}/delivery-check`, body),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["tasks", data.id] });
+      queryClient.invalidateQueries({ queryKey: ["tasks", data.id, "runs"] });
+      queryClient.invalidateQueries({ queryKey: ["stories"] });
+      queryClient.invalidateQueries({ queryKey: ["epics"] });
+      addEntry(
+        showMutationToast(
+          "Delivery check started",
+          "success",
+          data.latestRunId ? `/runs/${data.latestRunId}` : undefined
+        )
+      );
+    },
+    onError: () => {
+      addEntry(showMutationToast("Failed to start delivery check", "error"));
     },
   });
 }

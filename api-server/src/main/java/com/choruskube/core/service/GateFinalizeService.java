@@ -23,6 +23,7 @@ import com.choruskube.core.model.DriftRecheckConfig;
 import com.choruskube.core.model.DriftRecheckConfig.StampMode;
 import com.choruskube.core.model.GateStamp;
 import com.choruskube.core.model.NodeExecution;
+import com.choruskube.core.model.PullRequestVerificationConfig;
 import com.choruskube.core.model.TaskGithubIssue;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.GateStampStatus;
@@ -213,15 +214,20 @@ public class GateFinalizeService {
         Optional<GateStamp> finalizing = gateRecheck.findFinalizingFor(runId, gate.getTemplateNodeId());
         if (finalizing.isPresent()) {
             // A reviewer's approval is stamped at this execution and reaches the workflow by signal;
-            // one stamped elsewhere is the held approval this step already claimed.
+            // one stamped elsewhere is the held approval this step already claimed. A gate that
+            // approves itself is told its own approval again, since no signal is coming for it.
             GateStamp live = finalizing.get();
-            boolean claimedHere = gate.getStatus() == NodeExecutionStatus.finalizing
-                    && !gateExecId.equals(live.getStampedNodeExecutionId());
+            boolean finalizingHere = gate.getStatus() == NodeExecutionStatus.finalizing;
+            boolean claimedHere = finalizingHere
+                    && (!gateExecId.equals(live.getStampedNodeExecutionId()) || approvesOnArrival(runId, gate));
             return new HeldClaim(claimedHere ? live.getId() : null);
         }
         Optional<GateStamp> held = gateRecheck.findHeldFor(runId, gate.getTemplateNodeId());
         if (held.isEmpty()) {
-            return new HeldClaim(null);
+            JsonNode snapshot = runService.readSnapshot(run(runId));
+            return PullRequestVerificationConfig.approvesOnArrival(nodeConfig(snapshot, gate))
+                    ? approveOnArrival(runId, gate, snapshot)
+                    : new HeldClaim(null);
         }
         WorkflowRun run = run(runId);
         JsonNode snapshot = runService.readSnapshot(run);
@@ -258,6 +264,34 @@ public class GateFinalizeService {
         return new HeldClaim(claimed);
     }
 
+    private boolean approvesOnArrival(UUID runId, NodeExecution gate) {
+        return PullRequestVerificationConfig.approvesOnArrival(nodeConfig(runService.readSnapshot(run(runId)), gate));
+    }
+
+    /**
+     * Claims and stamps the approval of a gate that approves itself as it opens. It may only verify
+     * pull requests already merged, so nothing a person would have been asked about is decided here.
+     */
+    private HeldClaim approveOnArrival(UUID runId, NodeExecution gate, JsonNode snapshot) {
+        String label = RunService.nodeLabel(snapshot, gate.getTemplateNodeId());
+        GateStamp stamp = tx.execute(status -> {
+            if (claims.compareAndSetStatus(
+                            gate.getId(), NodeExecutionStatus.awaiting_human, NodeExecutionStatus.finalizing)
+                    == 0) {
+                return null;
+            }
+            gateRecheck.voidLeftBehind(runId, gate.getTemplateNodeId(), gate.getId());
+            // Hibernate flushes inserts before updates, and only one live approval per gate may exist.
+            stampRepo.flush();
+            return gateRecheck.begin(runId, gate, label, StampMode.always, null, null, null);
+        });
+        if (stamp == null) {
+            return new HeldClaim(null);
+        }
+        publish(runId, gate.getId(), NodeExecutionStatus.finalizing);
+        return new HeldClaim(stamp.getId());
+    }
+
     /** What the Worker must check and merge, or why the approval holds or is refused without it. */
     public PlanResponse plan(UUID runId, UUID gateExecId, UUID approvalId) {
         NodeExecution gate = requireGate(runId, gateExecId);
@@ -291,7 +325,7 @@ public class GateFinalizeService {
         if (DriftRecheckConfig.fromConfigOverrides(config).isPresent()) {
             DriftInputs inputs = drift.gather(runId, gate.getTemplateNodeId(), snapshot);
             if (!inputs.known().isEmpty()) {
-                return new PlanResponse(HOLD, null, List.of(), List.of(), null, false);
+                return new PlanResponse(HOLD, null, List.of(), List.of(), null, false, false);
             }
             compares = inputs.toCompare().stream()
                     .map(c -> new CompareItem(c.gitRepoId(), c.ownerRepo(), c.branch(), c.baseSha()))
@@ -300,22 +334,37 @@ public class GateFinalizeService {
 
         List<PrItem> prs = List.of();
         String mergeMethod = null;
+        boolean verifyOnly = PullRequestVerificationConfig.verifiesMerged(config);
         Optional<PullRequestMergeMethod> method = PullRequestMergeMethod.fromConfigOverrides(config);
-        if (method.isPresent()) {
+        if (verifyOnly) {
+            MergePlan verification = merge.planVerification(runId);
+            if (verification.alreadyMerged().isEmpty()
+                    && verification.toInspect().isEmpty()
+                    && verification.blockers().isEmpty()) {
+                return refusedPlan("Approval needs at least one registered pull request to verify; this run has none.");
+            }
+            if (!verification.blockers().isEmpty()) {
+                return refusedPlan("Approval needs every pull request verified as merged. "
+                        + String.join("; ", verification.blockers()) + ".");
+            }
+            prs = verification.toInspect().stream()
+                    .map(p -> new PrItem(p.rowId(), p.ownerRepo(), p.number(), p.label(), p.prUrl(), p.defaultBranch()))
+                    .toList();
+        } else if (method.isPresent()) {
             MergePlan mergePlan = merge.planMerge(runId, method.get());
             if (!mergePlan.blockers().isEmpty()) {
                 return refusedPlan("Approval needs every pull request to be mergeable; nothing was merged. "
                         + String.join("; ", mergePlan.blockers()) + ".");
             }
             prs = mergePlan.toInspect().stream()
-                    .map(p -> new PrItem(p.rowId(), p.ownerRepo(), p.number(), p.label(), p.prUrl()))
+                    .map(p -> new PrItem(p.rowId(), p.ownerRepo(), p.number(), p.label(), p.prUrl(), null))
                     .toList();
             mergeMethod = method.get().name();
         }
         // Sends the orchestrator down the split write-then-file protocol. It must be true whenever
         // complete would refuse a one-step completion, or the approval can never finish.
         boolean writesRoadmap = mode.isPresent() && materializationPlan.runnable();
-        return new PlanResponse(PROCEED, null, compares, prs, mergeMethod, writesRoadmap);
+        return new PlanResponse(PROCEED, null, compares, prs, mergeMethod, writesRoadmap, verifyOnly);
     }
 
     /**
@@ -817,13 +866,15 @@ public class GateFinalizeService {
 
     private MergeOutcome recordMerges(UUID runId, JsonNode config, List<WorkerPrResult> results, UUID approvalId) {
         Optional<PullRequestMergeMethod> method = PullRequestMergeMethod.fromConfigOverrides(config);
-        if (method.isEmpty()) {
+        boolean verifyOnly = PullRequestVerificationConfig.verifiesMerged(config);
+        if (method.isEmpty() && !verifyOnly) {
             if (!results.isEmpty()) {
                 log.warn("Run {}: ignoring {} merge results for a gate that merges nothing", runId, results.size());
             }
             return null;
         }
-        MergeOutcome outcome = merge.outcomeOf(runId, merge.planMerge(runId, method.get()), results, approvalId);
+        MergePlan plan = verifyOnly ? merge.planVerification(runId) : merge.planMerge(runId, method.get());
+        MergeOutcome outcome = merge.outcomeOf(runId, plan, results, approvalId);
         merge.recordOutcome(runId, outcome);
         return outcome;
     }
@@ -880,7 +931,7 @@ public class GateFinalizeService {
     }
 
     private static PlanResponse refusedPlan(String reason) {
-        return new PlanResponse(REFUSED, reason, List.of(), List.of(), null, false);
+        return new PlanResponse(REFUSED, reason, List.of(), List.of(), null, false, false);
     }
 
     private static StepResult refusedStep(String reason) {

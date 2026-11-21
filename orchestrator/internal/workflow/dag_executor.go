@@ -1833,7 +1833,7 @@ func (f *gateFinalizer) finalize(approvalID string) (nodeCompletion, finalizeOut
 	if len(plan.Compares) > 0 || len(plan.PRs) > 0 {
 		if err := workflow.ExecuteActivity(f.gitHubCtx, f.acts.RunGateGitHubSteps, activity.GateGitHubParams{
 			RunID: f.runID, NodeExecutionID: f.execID, Compares: plan.Compares, PRs: plan.PRs,
-			MergeMethod: plan.MergeMethod,
+			MergeMethod: plan.MergeMethod, VerifyOnly: plan.VerifyOnly,
 		}).Get(f.ctx, &gh); err != nil {
 			if f.ctx.Err() != nil {
 				return nodeCompletion{}, finalizeAbandoned

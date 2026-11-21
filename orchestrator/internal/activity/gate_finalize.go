@@ -32,22 +32,26 @@ type GateCompare struct {
 	BaseSha   string    `json:"baseSha"`
 }
 
-// GatePR is one registered pull request, in the order it must merge.
+// GatePR is one registered pull request, in the order it must merge. DefaultBranch is its
+// repository's default branch, which a verify-only gate requires it to have merged into.
 type GatePR struct {
-	RowID     uuid.UUID `json:"rowId"`
-	OwnerRepo string    `json:"ownerRepo"`
-	Number    int       `json:"number"`
-	Label     string    `json:"label"`
-	PRURL     string    `json:"prUrl"`
+	RowID         uuid.UUID `json:"rowId"`
+	OwnerRepo     string    `json:"ownerRepo"`
+	Number        int       `json:"number"`
+	Label         string    `json:"label"`
+	PRURL         string    `json:"prUrl"`
+	DefaultBranch string    `json:"defaultBranch"`
 }
 
-// GateGitHubParams.NodeExecutionID is the gate's execution, read before every merge.
+// GateGitHubParams.NodeExecutionID is the gate's execution, read before every merge. VerifyOnly
+// only reads the pull requests, to confirm each already merged; it never compares or merges.
 type GateGitHubParams struct {
 	RunID           uuid.UUID     `json:"runId"`
 	NodeExecutionID uuid.UUID     `json:"nodeExecutionId"`
 	Compares        []GateCompare `json:"compares"`
 	PRs             []GatePR      `json:"prs"`
 	MergeMethod     string        `json:"mergeMethod"`
+	VerifyOnly      bool          `json:"verifyOnly"`
 }
 
 type GateCompareResult struct {
@@ -98,15 +102,17 @@ type GateApprovalRef struct {
 	ApprovalID      string    `json:"approvalId"`
 }
 
-// GatePlan.Outcome is GatePlanProceed, GatePlanHold or GatePlanRefused. Compares, PRs and
-// MergeMethod are the work to hand the Worker, and only a proceed carries any. WritesRoadmap
-// picks the split path; the client refuses a plan that omits it rather than reading it as false.
+// GatePlan.Outcome is GatePlanProceed, GatePlanHold or GatePlanRefused. Compares, PRs,
+// MergeMethod and VerifyOnly are the work to hand the Worker, and only a proceed carries any.
+// WritesRoadmap picks the split path; the client refuses a plan that omits it rather than reading
+// it as false.
 type GatePlan struct {
 	Outcome       string        `json:"outcome"`
 	Reason        string        `json:"reason"`
 	Compares      []GateCompare `json:"compares"`
 	PRs           []GatePR      `json:"prs"`
 	MergeMethod   string        `json:"mergeMethod"`
+	VerifyOnly    bool          `json:"verifyOnly"`
 	WritesRoadmap bool          `json:"writesRoadmap"`
 }
 
@@ -224,6 +230,7 @@ func (a *Activities) PlanGateFinalize(ctx context.Context, p GateApprovalRef) (G
 		Compares:      make([]GateCompare, len(resp.Compares)),
 		PRs:           make([]GatePR, len(resp.PRs)),
 		MergeMethod:   resp.MergeMethod,
+		VerifyOnly:    resp.VerifyOnly,
 		WritesRoadmap: *resp.WritesRoadmap,
 	}
 	for i, c := range resp.Compares {

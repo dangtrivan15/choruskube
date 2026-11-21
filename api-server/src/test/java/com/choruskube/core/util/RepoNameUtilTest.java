@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class RepoNameUtilTest {
 
@@ -212,5 +215,46 @@ class RepoNameUtilTest {
     void githubOwnerRepo_blankOrNull_isEmpty() {
         assertThat(RepoNameUtil.githubOwnerRepo(null)).isEmpty();
         assertThat(RepoNameUtil.githubOwnerRepo("   ")).isEmpty();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "https://github.com/acme/app/pull/7, acme/app, 7",
+        "https://github.com/acme/app/pull/7/, acme/app, 7",
+        "https://github.com/acme/app/pull/7/files, acme/app, 7",
+        "https://github.com/acme/app/pull/7/commits?w=1, acme/app, 7",
+        "https://github.com/acme/app/pull/7#issuecomment-1, acme/app, 7",
+        "  https://GitHub.com/Acme/App.js/pull/42  , Acme/App.js, 42",
+    })
+    void githubPullRequest_parsesAPullRequestPage(String url, String ownerRepo, int number) {
+        assertThat(RepoNameUtil.githubPullRequest(url)).hasValueSatisfying(pr -> {
+            assertThat(pr.ownerRepo()).isEqualTo(ownerRepo);
+            assertThat(pr.number()).isEqualTo(number);
+            assertThat(pr.url()).isEqualTo("https://github.com/" + ownerRepo + "/pull/" + number);
+        });
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "",
+                " ",
+                "http://github.com/acme/app/pull/7",
+                "https://github.example.com/acme/app/pull/7",
+                "https://github.com/acme/app/issues/7",
+                "https://github.com/acme/app/pull/0",
+                "https://github.com/acme/app/pull/7x",
+                "https://github.com/acme/app/pull/7/merge",
+                "https://github.com/acme/pull/7",
+                "https://github.com/acme/../pull/7",
+                "git@github.com:acme/app.git",
+            })
+    void githubPullRequest_refusesAnythingElse(String url) {
+        assertThat(RepoNameUtil.githubPullRequest(url)).isEmpty();
+    }
+
+    @Test
+    void githubPullRequest_refusesNull() {
+        assertThat(RepoNameUtil.githubPullRequest(null)).isEmpty();
     }
 }
