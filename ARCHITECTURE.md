@@ -457,8 +457,9 @@ sequenceDiagram
 
 ## Control-plane Temporal authentication
 
-The api-server and orchestrator call Temporal on one shared connection per process, with no
-per-namespace credential by default — the open-source behaviour, unchanged. A deployment whose
+The api-server calls Temporal on one connection shared by every namespace, and the orchestrator
+on one connection per namespace it serves; by default neither presents a credential — the
+open-source behaviour, unchanged. A deployment whose
 Temporal checks per-namespace tokens supplies a **control-plane token source**: a Spring bean the
 api-server looks up at construction time. For a namespace it answers one of three things — a
 bearer token with its expiry, "this deployment presents no credential," or a failure. A failure
@@ -484,8 +485,9 @@ configured, every namespace is "none."
   reconnecting, and an "unavailable" push keeps whatever token is already held until it expires.
 - **The orchestrator always dials Temporal in plaintext explicitly**, so presenting a token never
   flips a live connection's transport. It attempts its configured namespace immediately at
-  startup and retries every namespace the roster lists — the configured one included — on every
-  roster tick, rather than waiting for a first roster before serving anything. It exits only when
+  startup and retries every unserved namespace on every roster tick — the configured one
+  included, even when the roster cannot be fetched — rather than waiting for a first roster
+  before serving anything. It exits only when
   Temporal refuses a namespace it already holds a token for, when it refuses one the roster marked
   "none," or when Temporal cannot be reached at all for the configured namespace at startup —
   every other outcome, including a refusal the token source simply hasn't caught up to yet, is

@@ -14,15 +14,15 @@ import java.time.Instant;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record NamespaceCredentialResponse(String state, String token, Instant expiresAt) {
 
+    /** Exhaustive over the sealed states, so no state, and no null, can fall through to "none". */
     public static NamespaceCredentialResponse from(TemporalTokenState state) {
-        if (state instanceof TemporalTokenState.Bearer bearer) {
-            return new NamespaceCredentialResponse(
-                    "bearer", bearer.token().value(), bearer.token().expiresAt());
-        }
-        if (state instanceof TemporalTokenState.Unavailable) {
-            return unavailable();
-        }
-        return none();
+        return switch (state) {
+            case TemporalTokenState.Bearer bearer ->
+                new NamespaceCredentialResponse(
+                        "bearer", bearer.token().value(), bearer.token().expiresAt());
+            case TemporalTokenState.None none -> none();
+            case TemporalTokenState.Unavailable unavailable -> unavailable();
+        };
     }
 
     public static NamespaceCredentialResponse none() {

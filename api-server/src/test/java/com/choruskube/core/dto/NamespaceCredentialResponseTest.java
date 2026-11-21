@@ -1,6 +1,7 @@
 package com.choruskube.core.dto;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.choruskube.core.credential.TemporalBearerToken;
 import com.choruskube.core.credential.TemporalTokenState;
@@ -52,6 +53,12 @@ class NamespaceCredentialResponseTest {
         assertThat(json.get("state").asText()).isEqualTo("unavailable");
         assertThat(json.has("token")).isFalse();
         assertThat(json.has("expiresAt")).isFalse();
+    }
+
+    /** A missing state must fail the roster rather than tell the orchestrator to send no credential. */
+    @Test
+    void from_null_isRejectedRatherThanReportedNone() {
+        assertThatThrownBy(() -> NamespaceCredentialResponse.from(null)).isInstanceOf(NullPointerException.class);
     }
 
     @Test

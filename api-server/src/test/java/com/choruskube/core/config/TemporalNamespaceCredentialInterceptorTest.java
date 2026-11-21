@@ -32,6 +32,10 @@ import io.temporal.api.workflowservice.v1.StartWorkflowExecutionResponse;
 import io.temporal.api.workflowservice.v1.TerminateWorkflowExecutionRequest;
 import io.temporal.api.workflowservice.v1.TerminateWorkflowExecutionResponse;
 import io.temporal.api.workflowservice.v1.WorkflowServiceGrpc;
+import io.temporal.client.WorkflowClient;
+import io.temporal.client.WorkflowClientOptions;
+import io.temporal.client.WorkflowOptions;
+import io.temporal.client.WorkflowStub;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import io.temporal.serviceclient.WorkflowServiceStubsOptions;
 import java.io.IOException;
@@ -42,7 +46,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -146,6 +152,89 @@ class TemporalNamespaceCredentialInterceptorTest {
         assertThat(service.authFor("DescribeTaskQueue")).isEqualTo("Bearer tok-a");
     }
 
+    /** The path the api-server's own callers take: namespace-bound clients over the one shared stubs. */
+    @Test
+    void workflowClientCallsThroughTheRegistry_eachCarryTheirNamespacesToken() throws Exception {
+        RecordingService service = start(tokensFor(Map.of("ns-a", "tok-a", "ns-b", "tok-b")));
+        WorkflowClient defaultClient = WorkflowClient.newInstance(
+                stubs, WorkflowClientOptions.newBuilder().setNamespace("ns-a").build());
+        WorkflowClientRegistry registry = new WorkflowClientRegistry(stubs, defaultClient, "ns-a");
+
+        for (String ns : List.of("ns-a", "ns-b")) {
+            WorkflowClient client = registry.clientFor(ns);
+            client.newUntypedWorkflowStub(
+                            "AnyWorkflow",
+                            WorkflowOptions.newBuilder()
+                                    .setWorkflowId("wf-" + ns)
+                                    .setTaskQueue("q")
+                                    .build())
+                    .start();
+            WorkflowStub existing = client.newUntypedWorkflowStub("wf-" + ns);
+            existing.signal("any-signal");
+            existing.terminate("deleted");
+        }
+
+        assertThat(service.authsFor("StartWorkflowExecution")).containsExactly("Bearer tok-a", "Bearer tok-b");
+        assertThat(service.authsFor("SignalWorkflowExecution")).containsExactly("Bearer tok-a", "Bearer tok-b");
+        assertThat(service.authsFor("TerminateWorkflowExecution")).containsExactly("Bearer tok-a", "Bearer tok-b");
+    }
+
+    @Test
+    void blankNamespace_carriesNoHeader_evenWhenTheSourceWouldAnswerForIt() throws Exception {
+        TemporalTokenSupplier everyNamespace = ns ->
+                Optional.of(new TemporalBearerToken("tok-" + ns, Instant.now().plusSeconds(600)));
+        RecordingService service = start(new ControlPlaneTemporalTokens(
+                Optional.of(everyNamespace), Clock.systemUTC(), Executors.newCachedThreadPool()));
+
+        stubs.blockingStub()
+                .signalWorkflowExecution(SignalWorkflowExecutionRequest.newBuilder()
+                        .setNamespace("")
+                        .build());
+
+        assertThat(service.requestCountFor("SignalWorkflowExecution")).isEqualTo(1);
+        assertThat(service.authFor("SignalWorkflowExecution")).isNull();
+    }
+
+    @Test
+    void hangingSource_callFailsUnauthenticatedWithinItsDeadline_andNeverReachesTheServer() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        TemporalTokenSupplier hanging = ns -> {
+            release.await(10, TimeUnit.SECONDS);
+            return Optional.empty();
+        };
+        RecordingService service = start(new ControlPlaneTemporalTokens(
+                Optional.of(hanging), Clock.systemUTC(), Executors.newCachedThreadPool()));
+        try {
+            long startNanos = System.nanoTime();
+            StatusRuntimeException thrown = (StatusRuntimeException) catchCall(() -> stubs.blockingStub()
+                    .withDeadlineAfter(300, TimeUnit.MILLISECONDS)
+                    .startWorkflowExecution(StartWorkflowExecutionRequest.newBuilder()
+                            .setNamespace("ns-a")
+                            .setWorkflowId("wf")
+                            .build()));
+            long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+
+            assertThat(thrown.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+            assertThat(elapsedMs).isLessThan(5000);
+            assertThat(service.requestCountFor("StartWorkflowExecution")).isZero();
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
+    void interceptorIsInstalledOnlyWhenASourceIsPresent() {
+        assertThat(TemporalConfig.stubsOptions("localhost:7233", noSource())
+                        .build()
+                        .getGrpcClientInterceptors())
+                .isNullOrEmpty();
+        assertThat(TemporalConfig.stubsOptions("localhost:7233", tokensFor(Map.of()))
+                        .build()
+                        .getGrpcClientInterceptors())
+                .singleElement()
+                .isInstanceOf(TemporalNamespaceCredentialInterceptor.class);
+    }
+
     @Test
     void callsNamingTwoNamespaces_carryTwoDifferentTokens() throws Exception {
         RecordingService service = start(tokensFor(Map.of("ns-a", "tok-a", "ns-b", "tok-b")));
@@ -191,7 +280,7 @@ class TemporalNamespaceCredentialInterceptorTest {
     @Test
     void unavailableToken_failsUnauthenticated_recordsNoRequest_leaksNoToken() throws Exception {
         TemporalTokenSupplier failing = ns -> {
-            throw new IOException("issuer unreachable, definitely-not-a-token-value");
+            throw new IOException("token source unreachable, definitely-not-a-token-value");
         };
         ControlPlaneTemporalTokens tokens = new ControlPlaneTemporalTokens(
                 Optional.of(failing), Clock.systemUTC(), Executors.newCachedThreadPool());

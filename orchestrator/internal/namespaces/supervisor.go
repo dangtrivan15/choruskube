@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -24,9 +25,9 @@ import (
 // it hangs until its activity times out, so the wait is invisible until then.
 const RefreshInterval = 60 * time.Second
 
-// ErrUnreachable classifies a Serve failure as Temporal never being reached at all (a dial
-// failure). Distinct from ErrRefused so a caller can tell a transient outage from Temporal
-// actively rejecting the namespace.
+// ErrUnreachable classifies a Serve failure as the dial failing: Temporal was never reached, or
+// the namespace's credential callback had no valid token for the dial's first call. Distinct from
+// ErrRefused so a caller can tell either from Temporal actively rejecting the namespace.
 var ErrUnreachable = errors.New("temporal unreachable")
 
 // ErrRefused classifies a Serve failure as Temporal being reached but refusing the namespace — a
@@ -119,10 +120,30 @@ func (s *Supervisor) Count() int {
 	return len(s.served)
 }
 
-func (s *Supervisor) setNoneSet(ns map[string]bool) {
+// applyRoster pushes every roster namespace's state into the token holder and replaces the
+// none-marked set. A namespace newly marked none is logged once, by name only, as the holder logs
+// a namespace's first token.
+func (s *Supervisor) applyRoster(r apiclient.NamespaceRoster) {
+	none := map[string]bool{}
+	for _, ns := range r.Namespaces {
+		cred, present := r.Credentials[ns]
+		state, isNone := credentialState(cred, present)
+		s.tokens.Update(ns, state)
+		if isNone {
+			none[ns] = true
+		}
+	}
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.none = ns
+	previous := s.none
+	s.none = none
+	s.mu.Unlock()
+
+	for _, ns := range r.Namespaces {
+		if none[ns] && !previous[ns] {
+			log.Printf("namespace %s: roster marks no credential; calls carry none", ns)
+		}
+	}
 }
 
 func (s *Supervisor) isMarkedNone(ns string) bool {
@@ -134,28 +155,22 @@ func (s *Supervisor) isMarkedNone(ns string) bool {
 // credentialState turns one roster entry into the state pushed to the token holder. present is
 // false for a namespace with no entry at all — including every namespace when Credentials itself
 // is nil, which is how an api-server predating this field reads. isNone reports whether this
-// entry means "no credential by design", for the exit-rule's none-marked check.
+// entry means "no credential by design", for the exit-rule's none-marked check. An entry that is
+// present but names no known state is unavailable: reading it as none would send calls uncredentialed.
 func credentialState(cred apiclient.NamespaceCredential, present bool) (temporaltoken.State, bool) {
-	if !present || cred.State == "" || cred.State == "none" {
+	switch {
+	case !present || cred.State == "none":
 		return temporaltoken.None(), true
-	}
-	if cred.State == "bearer" {
+	case cred.State == "bearer":
 		return temporaltoken.Bearer(temporaltoken.NewToken(cred.Token, cred.ExpiresAt)), false
+	default:
+		return temporaltoken.Unavailable(), false
 	}
-	return temporaltoken.Unavailable(), false
-}
-
-func contains(list []string, item string) bool {
-	for _, s := range list {
-		if s == item {
-			return true
-		}
-	}
-	return false
 }
 
 // refreshOnce fetches the roster, pushes every namespace's token state into the holder, and
-// retries Serve for every namespace not yet served — the roster's and configured alike. It never
+// retries Serve for every namespace not yet served — the roster's and configured alike. A failed
+// fetch still retries the configured namespace, which never waits on the api-server. It never
 // stops a namespace already being served: one that leaves the roster can still hold a running
 // workflow, and an idle poller is cheaper than abandoning it.
 //
@@ -165,25 +180,15 @@ func contains(list []string, item string) bool {
 // roster fetch error, a refusal the token source simply hasn't caught up to) is logged and left
 // for the next tick.
 func refreshOnce(ctx context.Context, sup *Supervisor, roster Roster, configured string) error {
+	var toServe []string
 	rosterResult, err := roster.ListNamespaces(ctx)
 	if err != nil {
 		log.Printf("namespace roster refresh failed, will retry next interval: %v", err)
-		return nil
+	} else {
+		sup.applyRoster(rosterResult)
+		toServe = append(toServe, rosterResult.Namespaces...)
 	}
-
-	none := map[string]bool{}
-	for _, ns := range rosterResult.Namespaces {
-		cred, present := rosterResult.Credentials[ns]
-		state, isNone := credentialState(cred, present)
-		sup.tokens.Update(ns, state)
-		if isNone {
-			none[ns] = true
-		}
-	}
-	sup.setNoneSet(none)
-
-	toServe := append([]string{}, rosterResult.Namespaces...)
-	if !contains(toServe, configured) {
+	if !slices.Contains(toServe, configured) {
 		toServe = append(toServe, configured)
 	}
 

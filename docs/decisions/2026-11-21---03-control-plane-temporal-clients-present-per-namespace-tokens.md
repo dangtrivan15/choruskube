@@ -4,8 +4,9 @@
 
 ## Context
 
-Core's api-server and orchestrator call Temporal on one shared connection per process, with no
-per-namespace credential: every call goes out as whichever identity the transport itself grants.
+Core's api-server calls Temporal on one connection shared by every namespace, and the
+orchestrator on one connection per namespace it serves. Neither presents a credential: every call
+goes out as whichever identity the transport itself grants.
 A deployment whose Temporal checks per-namespace tokens needs both components to present one, but
 the open-source default — nothing configured — must keep behaving exactly as it does today, with
 no credential on any call.
@@ -86,11 +87,3 @@ on the api-server at all; retrying instead of exiting is what lets a deployment 
 token keep that same immediate attempt, while reserving a fatal exit for a refusal that already
 holds a token or that a roster has explicitly said needs none — both of which Temporal should not
 have refused, so exiting then stays loud rather than silently retrying forever.
-
-## Rejected
-
-See each Technical Decision's table above for the alternative weighed against the option taken.
-
-This entry names no token issuer, no deployment and no namespace: the seam, and every decision
-here, are generic by construction — a closed deployment's own choice of issuer is its own,
-unrecorded here.

@@ -1,9 +1,7 @@
 package namespaces
 
 import (
-	"bytes"
 	"context"
-	"log"
 	"net"
 	"sync"
 	"testing"
@@ -112,21 +110,6 @@ func startFakeWorkflowService(t *testing.T) (*fakeWorkflowService, string) {
 
 func testSupervisorAt(address string) *Supervisor {
 	return NewSupervisor(address, activity.NewActivities(nil, nil, nil), temporaltoken.NewHolder(nil))
-}
-
-func captureSupervisorLog(t *testing.T, fn func()) string {
-	t.Helper()
-	var buf bytes.Buffer
-	prevOut := log.Writer()
-	prevFlags := log.Flags()
-	log.SetOutput(&buf)
-	log.SetFlags(0)
-	defer func() {
-		log.SetOutput(prevOut)
-		log.SetFlags(prevFlags)
-	}()
-	fn()
-	return buf.String()
 }
 
 func TestServeConfigured_NoTokenNeeded_ServesAtOnce(t *testing.T) {
@@ -274,9 +257,9 @@ func TestRefreshOnce_RefusalWhileRosterMarksTheNamespaceNone_IsFatal(t *testing.
 	assert.ErrorIs(t, err, ErrRefused)
 }
 
-// A refusal on a namespace that is neither held nor marked none — the token source simply hasn't
-// caught up yet — must not be fatal: it is retried, same as an unreachable Temporal.
-func TestRefreshOnce_RefusalWhileUnavailable_IsNotFatal(t *testing.T) {
+// An unavailable entry with nothing held never reaches Temporal: the credential callback fails the
+// dial's first call, so the namespace is retried as unreachable rather than judged a refusal.
+func TestRefreshOnce_UnavailableWithNothingHeld_IsRetriedNotFatal(t *testing.T) {
 	srv, addr := startFakeWorkflowService(t)
 	srv.setRefused("ns-a", true)
 	sup := testSupervisorAt(addr)
@@ -287,10 +270,34 @@ func TestRefreshOnce_RefusalWhileUnavailable_IsNotFatal(t *testing.T) {
 		credentials: map[string]apiclient.NamespaceCredential{"ns-a": {State: "unavailable"}},
 	}
 
-	err := refreshOnce(context.Background(), sup, roster, "ns-a")
+	var err error
+	out := captureLog(t, func() {
+		err = refreshOnce(context.Background(), sup, roster, "ns-a")
+	})
 
 	require.NoError(t, err)
 	assert.Equal(t, 0, sup.Count())
+	assert.Contains(t, out, "no valid token held")
+	assert.Empty(t, srv.authsFor("DescribeNamespace"), "no call may reach Temporal without its credential")
+}
+
+// A refusal on a namespace that is neither held nor marked none (here the configured one, absent
+// from the roster) has a missing token to explain it, so it is retried rather than fatal.
+func TestRefreshOnce_RefusalNeitherHeldNorMarkedNone_IsNotFatal(t *testing.T) {
+	srv, addr := startFakeWorkflowService(t)
+	srv.setRefused("ns-configured", true)
+	sup := testSupervisorAt(addr)
+	t.Cleanup(sup.StopAll)
+
+	roster := &fixedRoster{
+		namespaces:  []string{"ns-other"},
+		credentials: map[string]apiclient.NamespaceCredential{"ns-other": {State: "none"}},
+	}
+
+	err := refreshOnce(context.Background(), sup, roster, "ns-configured")
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, sup.Count(), "ns-other is served; the refused configured namespace is left for the next tick")
 }
 
 func TestServe_LogsNeverContainAToken(t *testing.T) {
@@ -300,7 +307,7 @@ func TestServe_LogsNeverContainAToken(t *testing.T) {
 	sup.tokens.Update("ns-a", temporaltoken.Bearer(
 		temporaltoken.NewToken("super-secret-token-xyz", time.Now().Add(time.Hour))))
 
-	out := captureSupervisorLog(t, func() {
+	out := captureLog(t, func() {
 		require.NoError(t, sup.Serve("ns-a"))
 	})
 

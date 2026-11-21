@@ -96,6 +96,7 @@ func main() {
 	log.Println("Shutting down")
 	server.Shutdown(context.Background())
 	if fatalErr != nil {
+		sup.StopAll() // log.Fatalf skips the deferred StopAll
 		log.Fatalf("namespace supervisor exited: %v", fatalErr)
 	}
 }

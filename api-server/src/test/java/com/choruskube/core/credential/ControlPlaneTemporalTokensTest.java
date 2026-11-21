@@ -133,6 +133,24 @@ class ControlPlaneTemporalTokensTest {
     }
 
     @Test
+    void authorizationHeader_hangingSupplier_givesUpAsUnavailableOnceMaxWaitPasses() {
+        CountDownLatch release = new CountDownLatch(1);
+        TemporalTokenSupplier supplier = ns -> {
+            release.await(10, TimeUnit.SECONDS);
+            return Optional.empty();
+        };
+        ControlPlaneTemporalTokens tokens = new ControlPlaneTemporalTokens(Optional.of(supplier), clock, executor);
+        try {
+            long start = System.nanoTime();
+            assertThatThrownBy(() -> tokens.authorizationHeader("ns", Duration.ofMillis(200)))
+                    .isInstanceOf(TemporalTokenUnavailableException.class);
+            assertThat((System.nanoTime() - start) / 1_000_000).isLessThan(2000);
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
     void failedRenewal_keepsLastValidToken_authorizationHeaderThrowsAfterExpiry() throws Exception {
         AtomicBoolean fail = new AtomicBoolean(false);
         TemporalBearerToken token =

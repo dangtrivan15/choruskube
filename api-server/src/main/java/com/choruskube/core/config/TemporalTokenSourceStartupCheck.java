@@ -11,9 +11,7 @@ import org.springframework.stereotype.Component;
  * Refuses to boot once a control-plane token source is wired in unless {@code InternalAuthFilter}
  * is actually enforcing with an orchestrator secret: tokens travel to the orchestrator on {@code
  * GET /internal/placements}, and with no secret configured that filter lets every request through
- * regardless of mode. No {@code @Profile} exclusion: unlike the cloud overlay's equivalent check,
- * no test here wires a token source without also setting the two properties it requires, so the
- * check is a no-op in every context that doesn't.
+ * regardless of mode.
  */
 @Component
 @Lazy(false)

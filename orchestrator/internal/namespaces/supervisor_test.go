@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -63,14 +64,6 @@ func captureLog(t *testing.T, fn func()) string {
 	}()
 	fn()
 	return buf.String()
-}
-
-func newTestSupervisor() *Supervisor {
-	return &Supervisor{
-		address: unreachableAddress,
-		tokens:  temporaltoken.NewHolder(nil),
-		served:  map[string]func(){},
-	}
 }
 
 // Serve dials Temporal, which a unit test cannot do — but the guard that makes it safe to call
@@ -132,7 +125,7 @@ func TestRefreshOnceNeverStopsAWorker(t *testing.T) {
 }
 
 func TestRunFetchesTheRosterBeforeTheFirstTick(t *testing.T) {
-	sup := newTestSupervisor()
+	sup := testSupervisorAt(unreachableAddress)
 	roster := &fixedRoster{}
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -153,12 +146,11 @@ func TestRunFetchesTheRosterBeforeTheFirstTick(t *testing.T) {
 // observable here because an unreachable Temporal means Serve never succeeds, so the retry
 // attempt is the only thing that can keep happening.
 func TestRunRetriesEveryUnservedNamespaceIncludingConfiguredOnEachTick(t *testing.T) {
-	sup := newTestSupervisor()
+	sup := testSupervisorAt(unreachableAddress)
 	roster := &fixedRoster{namespaces: []string{"ns-a"}}
 	ctx, cancel := context.WithCancel(context.Background())
 
-	var out string
-	logged := captureLog(t, func() {
+	out := captureLog(t, func() {
 		done := make(chan error, 1)
 		go func() { done <- Run(ctx, sup, roster, "ns-configured", 20*time.Millisecond) }()
 
@@ -169,22 +161,63 @@ func TestRunRetriesEveryUnservedNamespaceIncludingConfiguredOnEachTick(t *testin
 		cancel()
 		require.NoError(t, <-done)
 	})
-	out = logged
 
 	assert.GreaterOrEqual(t, roster.callCount(), 3, "the roster must be refetched on later ticks, not just once")
-	assert.Contains(t, out, "ns-a")
-	assert.Contains(t, out, "ns-configured")
+	assert.GreaterOrEqual(t, strings.Count(out, "could not reach temporal for namespace ns-a,"), 3)
+	assert.GreaterOrEqual(t, strings.Count(out, "could not reach temporal for namespace ns-configured,"), 3)
+}
+
+// The configured namespace never waits on the api-server, so a failed roster fetch still retries it.
+func TestRefreshOnceRosterFailureStillRetriesTheConfiguredNamespace(t *testing.T) {
+	sup := testSupervisorAt(unreachableAddress)
+	roster := &fixedRoster{err: errors.New("api server down")}
+
+	var err error
+	out := captureLog(t, func() {
+		err = refreshOnce(context.Background(), sup, roster, "ns-configured")
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "could not reach temporal for namespace ns-configured,")
+}
+
+func TestRefreshOnceLogsANamespaceNewlyMarkedNoneOnce(t *testing.T) {
+	sup := testSupervisorAt(unreachableAddress)
+	future := time.Now().Add(time.Hour)
+	roster := &fixedRoster{
+		namespaces:  []string{"ns-a"},
+		credentials: map[string]apiclient.NamespaceCredential{"ns-a": {State: "none"}},
+	}
+	const line = "namespace ns-a: roster marks no credential"
+
+	out := captureLog(t, func() {
+		require.NoError(t, refreshOnce(context.Background(), sup, roster, "ns-a"))
+		require.NoError(t, refreshOnce(context.Background(), sup, roster, "ns-a"))
+	})
+	assert.Equal(t, 1, strings.Count(out, line), "an unchanged none must not be logged every tick")
+
+	roster.setCredentials(map[string]apiclient.NamespaceCredential{
+		"ns-a": {State: "bearer", Token: "tok-a", ExpiresAt: future},
+	})
+	out = captureLog(t, func() {
+		require.NoError(t, refreshOnce(context.Background(), sup, roster, "ns-a"))
+		roster.setCredentials(map[string]apiclient.NamespaceCredential{"ns-a": {State: "none"}})
+		require.NoError(t, refreshOnce(context.Background(), sup, roster, "ns-a"))
+	})
+	assert.Equal(t, 1, strings.Count(out, line), "a namespace returning to none is logged again")
+	assert.NotContains(t, out, "tok-a")
 }
 
 func TestRefreshOnceMapsRosterStatesIntoTheHolder(t *testing.T) {
-	sup := newTestSupervisor()
+	sup := testSupervisorAt(unreachableAddress)
 	future := time.Now().Add(time.Hour)
 	roster := &fixedRoster{
-		namespaces: []string{"bearer-ns", "none-ns", "missing-entry-ns", "unknown-ns"},
+		namespaces: []string{"bearer-ns", "none-ns", "missing-entry-ns", "unknown-ns", "empty-state-ns"},
 		credentials: map[string]apiclient.NamespaceCredential{
-			"bearer-ns":  {State: "bearer", Token: "tok-a", ExpiresAt: future},
-			"none-ns":    {State: "none"},
-			"unknown-ns": {State: "something-else"},
+			"bearer-ns":      {State: "bearer", Token: "tok-a", ExpiresAt: future},
+			"none-ns":        {State: "none"},
+			"unknown-ns":     {State: "something-else"},
+			"empty-state-ns": {},
 			// missing-entry-ns deliberately has no entry at all.
 		},
 	}
@@ -209,10 +242,13 @@ func TestRefreshOnceMapsRosterStatesIntoTheHolder(t *testing.T) {
 	assert.False(t, sup.tokens.Holds("unknown-ns"))
 	_, err = sup.tokens.Credential("unknown-ns")(context.Background())
 	require.Error(t, err, "an unrecognized state must be treated as unavailable, not none")
+
+	_, err = sup.tokens.Credential("empty-state-ns")(context.Background())
+	require.Error(t, err, "an entry present with no state must be treated as unavailable, not none")
 }
 
 func TestRefreshOnceMissingCredentialsFieldMeansNoneForEveryNamespace(t *testing.T) {
-	sup := newTestSupervisor()
+	sup := testSupervisorAt(unreachableAddress)
 	roster := &fixedRoster{namespaces: []string{"ns-a"}} // Credentials left nil, as an old api-server sends
 
 	require.NoError(t, refreshOnce(context.Background(), sup, roster, "ns-a"))
@@ -224,7 +260,7 @@ func TestRefreshOnceMissingCredentialsFieldMeansNoneForEveryNamespace(t *testing
 }
 
 func TestRefreshOnceUnavailableEntryKeepsTheHeldToken(t *testing.T) {
-	sup := newTestSupervisor()
+	sup := testSupervisorAt(unreachableAddress)
 	future := time.Now().Add(time.Hour)
 	roster := &fixedRoster{
 		namespaces:  []string{"ns-a"},

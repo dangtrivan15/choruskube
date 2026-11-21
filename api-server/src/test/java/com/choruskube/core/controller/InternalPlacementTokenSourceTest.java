@@ -53,7 +53,7 @@ class InternalPlacementTokenSourceTest extends SharedContextTest {
         TemporalTokenSupplier temporalTokenSupplier() {
             return ns -> {
                 if (ns.equals(FAILING_NAMESPACE)) {
-                    throw new IOException("issuer refused");
+                    throw new IOException("token source refused");
                 }
                 return Optional.of(new TemporalBearerToken(
                         DISTINCTIVE_TOKEN_PREFIX + ns, Instant.now().plusSeconds(600)));
