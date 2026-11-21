@@ -153,6 +153,79 @@ describe("ArtifactBrowser", () => {
     expect(screen.getByText("1")).toBeInTheDocument();
   });
 
+  describe("when the run's artifacts have expired", () => {
+    const artifacts = [
+      { name: "output.json", size: 1024, lastModified: "2026-01-01T00:00:00Z" },
+    ];
+    // Midday UTC keeps the formatted date the same in every test-runner timezone.
+    const expiredAt = "2026-11-20T12:00:00Z";
+
+    it("shows the expiry date in place of the file list and does not fetch the list", () => {
+      // Data a still-cached list query would hand back must not leak into the panel.
+      mockUseArtifacts.mockReturnValue({ data: artifacts, isLoading: false });
+      renderWithProviders(<ArtifactBrowser runId="r1" execId="e1" expiredAt={expiredAt} />);
+
+      expect(screen.getByTestId("artifacts-expired")).toHaveTextContent(
+        "Artifacts expired on Nov 20, 2026",
+      );
+      expect(mockUseArtifacts).toHaveBeenCalledWith("r1", "e1", false);
+      expect(screen.queryByTestId("artifact-browser")).not.toBeInTheDocument();
+      expect(screen.queryByText("output.json")).not.toBeInTheDocument();
+    });
+
+    it("offers no file to open", () => {
+      mockUseArtifacts.mockReturnValue({ data: artifacts, isLoading: false });
+      renderWithProviders(<ArtifactBrowser runId="r1" execId="e1" expiredAt={expiredAt} />);
+
+      expect(screen.queryAllByRole("button")).toHaveLength(0);
+      // The viewer dialog is not even mounted, so no file content can be requested.
+      expect(mockUseArtifactContent).not.toHaveBeenCalled();
+    });
+
+    it("fetches and lists files as before while expiredAt is null", () => {
+      mockUseArtifacts.mockReturnValue({ data: artifacts, isLoading: false });
+      renderWithProviders(<ArtifactBrowser runId="r1" execId="e1" expiredAt={null} />);
+
+      expect(mockUseArtifacts).toHaveBeenCalledWith("r1", "e1", true);
+      expect(screen.getByText("output.json")).toBeInTheDocument();
+      expect(screen.queryByTestId("artifacts-expired")).not.toBeInTheDocument();
+    });
+
+    it("replaces an open file list once expiredAt arrives", () => {
+      mockUseArtifacts.mockReturnValue({ data: artifacts, isLoading: false });
+      const { rerender } = renderWithProviders(
+        <ArtifactBrowser runId="r1" execId="e1" expiredAt={null} />,
+      );
+      expect(screen.getByText("output.json")).toBeInTheDocument();
+
+      rerender(<ArtifactBrowser runId="r1" execId="e1" expiredAt={expiredAt} />);
+
+      expect(screen.getByTestId("artifacts-expired")).toBeInTheDocument();
+      expect(screen.queryByText("output.json")).not.toBeInTheDocument();
+      expect(mockUseArtifacts).toHaveBeenLastCalledWith("r1", "e1", false);
+    });
+
+    it("closes an open file viewer once expiredAt arrives", async () => {
+      const user = userEvent.setup();
+      mockUseArtifacts.mockReturnValue({ data: artifacts, isLoading: false });
+      mockUseArtifactContent.mockReturnValue({
+        data: '{"result": "success"}',
+        isLoading: false,
+        isError: false,
+      });
+      const { rerender } = renderWithProviders(
+        <ArtifactBrowser runId="r1" execId="e1" expiredAt={null} />,
+      );
+      await user.click(screen.getByText("output.json"));
+      expect(screen.getByText('{"result": "success"}')).toBeInTheDocument();
+
+      rerender(<ArtifactBrowser runId="r1" execId="e1" expiredAt={expiredAt} />);
+
+      expect(screen.queryByText('{"result": "success"}')).not.toBeInTheDocument();
+      expect(screen.getByTestId("artifacts-expired")).toBeInTheDocument();
+    });
+  });
+
   it("opens dialog with plain text content for non-.md files", async () => {
     const user = userEvent.setup();
     const artifacts = [

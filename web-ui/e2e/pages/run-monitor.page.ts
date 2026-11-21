@@ -60,6 +60,8 @@ export class RunMonitorPage {
   readonly artifactList: Locator;
   readonly artifactListItems: Locator;
   readonly artifactBrowserItems: Locator;
+  /** Shown by ArtifactBrowser.tsx in place of the file list once the run's artifacts expired. */
+  readonly artifactsExpired: Locator;
 
   // Artifact viewer dialog (ArtifactViewerDialog.tsx)
   readonly artifactViewerDialog: Locator;
@@ -116,6 +118,7 @@ export class RunMonitorPage {
     // render via ArtifactBrowser.tsx instead, which is why artifactBrowserItems exists
     // as a separate locator rather than reusing artifactListItems.
     this.artifactBrowserItems = page.getByTestId("artifact-browser-items").locator("li");
+    this.artifactsExpired = page.getByTestId("artifacts-expired");
 
     this.artifactViewerDialog = page.getByTestId("artifact-viewer-dialog");
     this.artifactViewerContent = page.getByTestId("artifact-viewer-content");

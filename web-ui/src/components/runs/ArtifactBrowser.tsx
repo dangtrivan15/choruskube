@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { ChevronDown, ChevronRight, FileText, Loader2 } from "lucide-react";
+import { format } from "date-fns";
+import { ChevronDown, ChevronRight, FileText, FileX, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import TruncatedText from "@/components/ui/TruncatedText";
 import { Separator } from "@/components/ui/separator";
@@ -11,14 +12,22 @@ interface ArtifactBrowserProps {
   runId: string;
   execId: string;
   filterArtifactNames?: string[];
+  /** The run's `artifactsExpiredAt`: once set, its files are gone, so they are neither listed nor opened. */
+  expiredAt?: string | null;
 }
 
-export default function ArtifactBrowser({ runId, execId, filterArtifactNames }: ArtifactBrowserProps) {
+export default function ArtifactBrowser({
+  runId,
+  execId,
+  filterArtifactNames,
+  expiredAt,
+}: ArtifactBrowserProps) {
   const [expanded, setExpanded] = useState(true);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  const { data: artifacts, isLoading } = useArtifacts(runId, execId);
+  const expired = expiredAt != null;
+  const { data: artifacts, isLoading } = useArtifacts(runId, execId, !expired);
 
   // Reset selection when switching nodes
   useEffect(() => {
@@ -42,6 +51,21 @@ export default function ArtifactBrowser({ runId, execId, filterArtifactNames }: 
     filterArtifactNames != null
       ? (artifacts ?? []).filter((a) => filterArtifactNames.includes(a.name))
       : artifacts;
+
+  if (expired) {
+    return (
+      <>
+        <Separator />
+        <div
+          data-testid="artifacts-expired"
+          className="flex items-center gap-1.5 text-xs text-muted-foreground"
+        >
+          <FileX className="h-3.5 w-3.5 shrink-0" />
+          Artifacts expired on {format(new Date(expiredAt), "MMM d, yyyy")}
+        </div>
+      </>
+    );
+  }
 
   if (isLoading) {
     return (

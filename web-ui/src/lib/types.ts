@@ -76,6 +76,8 @@ export interface RunResponse {
   softwareProject: SoftwareProjectRef | null;
   /** The Story spec version a Task Delivery run planned against; `null` on every other run. */
   storySpecVersion: number | null;
+  /** When retention deleted this run's stored artifacts; `null` while they are still kept. */
+  artifactsExpiredAt: string | null;
 }
 
 export interface GraphSnapshot {
@@ -231,7 +233,12 @@ export interface GraphTemplateResponse {
 }
 
 export interface RunEvent {
-  type: "run_status_changed" | "node_status_changed" | "node_logs_updated" | "run_pull_request_created";
+  type:
+    | "run_status_changed"
+    | "node_status_changed"
+    | "node_logs_updated"
+    | "run_pull_request_created"
+    | "run_artifacts_expired";
   runId: string;
   nodeExecutionId: string | null;
   status: string | null;

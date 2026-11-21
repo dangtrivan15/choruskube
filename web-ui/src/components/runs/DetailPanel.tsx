@@ -342,7 +342,7 @@ function CompletedPanel({
       )}
 
       {/* Artifacts */}
-      <ArtifactBrowser runId={run.id} execId={exec.id} />
+      <ArtifactBrowser runId={run.id} execId={exec.id} expiredAt={run.artifactsExpiredAt} />
 
       <Separator />
 

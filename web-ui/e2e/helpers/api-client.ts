@@ -458,6 +458,16 @@ export class TestApiClient {
     return this.get(`/api/v1/runs/${runId}/nodes/${nodeExecId}/logs`);
   }
 
+  /**
+   * Runs one real retention pass over this run as if its retention period had elapsed; on
+   * return its stored artifacts are deleted and `artifactsExpiredAt` is recorded. Throws on
+   * the 409 the server answers for a run still open, or one retention must skip.
+   * The route exists only under the api-server's `e2e` Spring profile.
+   */
+  async expireRunArtifacts(runId: string): Promise<void> {
+    return this.post(`/api/v1/e2e/runs/${runId}/expire-artifacts`);
+  }
+
   // ── Epics / Stories / Tasks ────────────────────────────────────────
 
   async listEpics(): Promise<PageResponse<Epic>> {

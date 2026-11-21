@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders } from "@/__tests__/test-utils";
+import { useQuery } from "@tanstack/react-query";
+import { createTestHookWrapper, renderWithProviders } from "@/__tests__/test-utils";
+import { useArtifacts } from "@/hooks/useArtifacts";
 import DetailPanel from "../DetailPanel";
 import type { GateStampResponse, RunResponse } from "@/lib/types";
 
@@ -17,6 +19,10 @@ vi.mock("@/hooks/useRuns", () => ({
     isPending: false,
   })),
   useReviewHistory: vi.fn(() => ({
+    data: [],
+    isLoading: false,
+  })),
+  useNodeLogs: vi.fn(() => ({
     data: [],
     isLoading: false,
   })),
@@ -109,6 +115,7 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
     task: null,
     autopilotId: null,
     storySpecVersion: null,
+    artifactsExpiredAt: null,
     softwareProject: null,
     ...overrides,
   };
@@ -767,5 +774,101 @@ describe("DetailPanel", () => {
     renderWithProviders(<DetailPanel run={run} nodeId="node-1" />);
 
     expect(screen.queryByText(/^Effort: /)).not.toBeInTheDocument();
+  });
+
+  describe("a closed run's artifacts", () => {
+    const artifacts = [
+      { name: "report.md", size: 64, lastModified: "2026-01-01T00:00:00Z" },
+    ];
+
+    function makeClosedRun(artifactsExpiredAt: string | null): RunResponse {
+      return makeRun({
+        status: "completed",
+        artifactsExpiredAt,
+        graphSnapshot: {
+          nodes: [
+            { template_node_id: "node-1", label: "produce_files", executor_type: "script", is_entrypoint: true },
+          ],
+          edges: [],
+        },
+        nodeExecutions: [
+          {
+            id: "exec-1",
+            templateNodeId: "node-1",
+            status: "completed",
+            result: null,
+            decision: null,
+            podName: null,
+            iteration: 1,
+            startedAt: null,
+            completedAt: null,
+            errorMessage: null,
+            graphVersion: 1,
+            artifactRefs: "{}",
+            label: null,
+            loopGroup: null,
+            reviewerType: null,
+            traversedEdgeIds: null,
+            requiredArtifacts: null,
+            candidateBreakdown: null,
+          },
+        ],
+      });
+    }
+
+    /** Reads the run from the `["runs", id]` cache entry, as the Run Monitor page does via `useRun`. */
+    function PanelFromRunQuery({ runId }: { runId: string }) {
+      const { data: run } = useQuery<RunResponse>({
+        queryKey: ["runs", runId],
+        queryFn: () => new Promise<RunResponse>(() => {}),
+        staleTime: Infinity,
+      });
+      return run ? <DetailPanel run={run} nodeId="node-1" /> : null;
+    }
+
+    beforeEach(() => {
+      vi.mocked(useArtifacts).mockReturnValue({
+        data: artifacts,
+        isLoading: false,
+      } as ReturnType<typeof useArtifacts>);
+    });
+
+    it("lists the node's files while the run's artifacts are kept", () => {
+      renderWithProviders(<DetailPanel run={makeClosedRun(null)} nodeId="node-1" />);
+
+      expect(screen.getByText("report.md")).toBeInTheDocument();
+      expect(screen.queryByTestId("artifacts-expired")).not.toBeInTheDocument();
+      expect(useArtifacts).toHaveBeenCalledWith("run-1", "exec-1", true);
+    });
+
+    it("shows the expiry notice instead of the files once the run reports them expired", () => {
+      renderWithProviders(
+        <DetailPanel run={makeClosedRun("2026-11-20T12:00:00Z")} nodeId="node-1" />,
+      );
+
+      expect(screen.getByTestId("artifacts-expired")).toHaveTextContent(
+        "Artifacts expired on Nov 20, 2026",
+      );
+      expect(screen.queryByText("report.md")).not.toBeInTheDocument();
+      expect(useArtifacts).toHaveBeenCalledWith("run-1", "exec-1", false);
+      expect(useArtifacts).not.toHaveBeenCalledWith("run-1", "exec-1", true);
+    });
+
+    it("switches an open panel to the notice when the refetched run carries the expiry", async () => {
+      const { queryClient, wrapper } = createTestHookWrapper();
+      queryClient.setQueryData(["runs", "run-1"], makeClosedRun(null));
+      render(<PanelFromRunQuery runId="run-1" />, { wrapper });
+      expect(screen.getByText("report.md")).toBeInTheDocument();
+
+      await act(async () => {
+        queryClient.setQueryData(["runs", "run-1"], makeClosedRun("2026-11-20T12:00:00Z"));
+      });
+
+      expect(await screen.findByTestId("artifacts-expired")).toHaveTextContent(
+        "Artifacts expired on Nov 20, 2026",
+      );
+      expect(screen.queryByText("report.md")).not.toBeInTheDocument();
+      expect(useArtifacts).toHaveBeenLastCalledWith("run-1", "exec-1", false);
+    });
   });
 });

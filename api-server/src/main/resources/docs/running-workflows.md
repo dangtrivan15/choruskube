@@ -104,6 +104,12 @@ node results are preserved. Cancelled runs cannot be resumed.
 
 ## Run History and Retention
 
-All completed, failed, and cancelled runs remain visible in the **Runs** list indefinitely.
-Run logs and artifacts are stored in object storage and are accessible via the **Artifact Browser**
-as long as the run record exists.
+All completed, failed, and cancelled runs remain visible in the **Runs** list indefinitely, with
+their node results, logs, review history and pull requests.
+
+Run artifacts are kept in object storage and are accessible via the **Artifact Browser**. By
+default they are kept for as long as the run record exists. A deployment can set a retention period
+(`OBJECT_STORE_ARTIFACT_RETENTION`, for example `30d`): once that long has passed since a run closed,
+its stored artifacts are deleted, and each of its nodes shows **Artifacts expired on** the deletion
+date in place of the file browser. A run that is still open is never touched, and the deletion
+cannot be undone.

@@ -47,6 +47,18 @@ describe("useArtifacts hooks", () => {
       );
     });
 
+    it("does not fetch when disabled", () => {
+      const { wrapper } = createTestHookWrapper();
+
+      const { result } = renderHook(
+        () => useArtifacts("run-1", "exec-1", false),
+        { wrapper }
+      );
+
+      expect(result.current.fetchStatus).toBe("idle");
+      expect(mockApi.get).not.toHaveBeenCalled();
+    });
+
     it("handles fetch error", async () => {
       mockApi.get.mockRejectedValueOnce(new Error("not found"));
       const { wrapper } = createTestHookWrapper();

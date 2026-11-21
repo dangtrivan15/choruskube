@@ -124,6 +124,16 @@ describe("toast-messages", () => {
       expect(mapEventToToast(event)).toBeNull();
     });
 
+    it("returns null for run_artifacts_expired events", () => {
+      const event: RunEvent = {
+        type: "run_artifacts_expired",
+        runId: "r1",
+        nodeExecutionId: null,
+        status: null,
+      };
+      expect(mapEventToToast(event)).toBeNull();
+    });
+
     // --- RoadmapItemEvent tests (matches backend shape) ---
 
     it("maps epic_changed with status backlog to info toast", () => {

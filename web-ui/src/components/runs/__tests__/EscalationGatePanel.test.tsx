@@ -213,7 +213,7 @@ describe("EscalationGatePanel", () => {
       />
     );
 
-    expect(mockUseArtifacts).toHaveBeenCalledWith("run-1", "escalator-exec-1");
+    expect(mockUseArtifacts).toHaveBeenCalledWith("run-1", "escalator-exec-1", true);
   });
 
   it("degrades gracefully when escalation is null: still renders a functional picker", () => {

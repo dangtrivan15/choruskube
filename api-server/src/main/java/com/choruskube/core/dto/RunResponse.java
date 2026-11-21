@@ -9,6 +9,7 @@ import java.util.UUID;
 /**
  * @param autopilotId set when the Autopilot started this run, null when a person did
  * @param storySpecVersion the Story spec version a Task Delivery run planned against; null on other runs
+ * @param artifactsExpiredAt when retention deleted the run's stored artifacts; null while they remain
  */
 public record RunResponse(
         UUID id,
@@ -29,4 +30,5 @@ public record RunResponse(
         @Nullable RunTaskSummary task,
         @Nullable UUID autopilotId,
         @Nullable SoftwareProjectRef softwareProject,
-        @Nullable Integer storySpecVersion) {}
+        @Nullable Integer storySpecVersion,
+        @Nullable Instant artifactsExpiredAt) {}
