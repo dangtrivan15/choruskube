@@ -8,7 +8,9 @@ import static org.mockito.Mockito.when;
 
 import com.choruskube.core.config.ObjectStoreConfig;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeAll;
@@ -122,7 +124,63 @@ class ObjectTreeDeleterIntegrationTest {
         for (String prefix : new String[] {null, "", " ", "/", "system/runs/run-a"}) {
             assertThatThrownBy(() -> deleter.deleteAll(prefix)).isInstanceOf(IllegalArgumentException.class);
             assertThatThrownBy(() -> deleter.isEmpty(prefix)).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> deleter.deleteModifiedBefore(prefix, Instant.now()))
+                    .isInstanceOf(IllegalArgumentException.class);
         }
+    }
+
+    @Test
+    void storagePrefixes_returnsEachTopLevelPrefixOnce_withATrailingSlash() {
+        String org = "sp-" + UUID.randomUUID();
+        put(org + "/staging/" + UUID.randomUUID() + "/a.txt");
+        put(org + "/runs/" + UUID.randomUUID() + "/out/file.md");
+
+        List<String> prefixes = deleter.storagePrefixes();
+
+        assertThat(prefixes).contains(org + "/").allMatch(p -> p.endsWith("/"));
+        assertThat(prefixes).doesNotHaveDuplicates();
+    }
+
+    @Test
+    void deleteModifiedBefore_withACutoffInTheFuture_deletesOnlyUnderThatPrefix() {
+        String org = "dmb-future-" + UUID.randomUUID();
+        put(org + "/staging/" + UUID.randomUUID() + "/a.txt");
+        put(org + "/staging/" + UUID.randomUUID() + "/b.txt");
+        // Shares the "staging" text as a substring, not a path segment, and must survive.
+        put(org + "-x/staging/" + UUID.randomUUID() + "/sibling.txt");
+        put(org + "/runs/" + UUID.randomUUID() + "/inputs/kept.md");
+
+        int deleted =
+                deleter.deleteModifiedBefore(org + "/staging/", Instant.now().plusSeconds(60));
+
+        assertThat(deleted).isEqualTo(2);
+        assertThat(deleter.isEmpty(org + "/staging/")).isTrue();
+        assertThat(deleter.isEmpty(org + "-x/staging/")).isFalse();
+        assertThat(deleter.isEmpty(org + "/runs/")).isFalse();
+    }
+
+    @Test
+    void deleteModifiedBefore_withACutoffInThePast_deletesNothing() {
+        String org = "dmb-past-" + UUID.randomUUID();
+        put(org + "/staging/" + UUID.randomUUID() + "/a.txt");
+
+        int deleted =
+                deleter.deleteModifiedBefore(org + "/staging/", Instant.now().minusSeconds(60));
+
+        assertThat(deleted).isZero();
+        assertThat(deleter.isEmpty(org + "/staging/")).isFalse();
+    }
+
+    @Test
+    void deleteModifiedBefore_deletesMoreThanOneBatch() {
+        String org = "dmb-batch-" + UUID.randomUUID();
+        IntStream.range(0, 1005).forEach(i -> put(org + "/staging/s/file-" + i + ".txt"));
+
+        int deleted =
+                deleter.deleteModifiedBefore(org + "/staging/", Instant.now().plusSeconds(60));
+
+        assertThat(deleted).isEqualTo(1005);
+        assertThat(deleter.isEmpty(org + "/staging/")).isTrue();
     }
 
     @Test

@@ -16,9 +16,10 @@ import org.springframework.stereotype.Service;
 
 /**
  * Deletes a closed run's whole storage tree once the retention period a deployment sets has passed
- * since the run closed, then records when on the run. Does nothing while the period is unset. Not
- * transactional: each run's deletion and record stand alone, so one run's failure never holds back
- * another's, and a concurrent pass or replica only repeats work.
+ * since the run closed, then records when on the run. Also deletes staged uploads no run took once
+ * they are a day old. Both do nothing while the period is unset. Not transactional: each run's or
+ * prefix's deletion stands alone, so one failure never holds back another, and a concurrent pass or
+ * replica only repeats work.
  */
 @Service
 public class ArtifactRetentionService {
@@ -26,6 +27,10 @@ public class ArtifactRetentionService {
     private static final Logger log = LoggerFactory.getLogger(ArtifactRetentionService.class);
 
     static final Duration MINIMUM_PERIOD = Duration.ofDays(1);
+
+    // Staging is transient by contract (a run start moves or discards it in the same request), so an
+    // object's age here is itself a positive record that it was abandoned.
+    static final Duration STAGING_MAX_AGE = Duration.ofDays(1);
 
     private final WorkflowRunRepository runRepo;
     private final RunStorageScope storageScope;
@@ -72,6 +77,28 @@ public class ArtifactRetentionService {
             }
         }
         return expired;
+    }
+
+    /**
+     * Deletes staging objects older than {@link #STAGING_MAX_AGE} under every organization's
+     * staging area, while a retention period is set — otherwise returns 0 without touching the
+     * store. Each prefix is swept independently: a failure on one is logged and the rest still run.
+     * Never touches anything under a run's own tree. Returns how many objects it deleted.
+     */
+    public int deleteAbandonedStaging() {
+        if (period == null) {
+            return 0;
+        }
+        Instant cutoff = Instant.now().minus(STAGING_MAX_AGE);
+        int deleted = 0;
+        for (String prefix : treeDeleter.storagePrefixes()) {
+            try {
+                deleted += treeDeleter.deleteModifiedBefore(prefix + UploadService.STAGING_SEGMENT, cutoff);
+            } catch (RuntimeException e) {
+                log.warn("Could not sweep staged uploads under {}: {}", prefix, e.getMessage(), e);
+            }
+        }
+        return deleted;
     }
 
     /**

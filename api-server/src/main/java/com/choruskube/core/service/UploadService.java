@@ -23,6 +23,9 @@ public class UploadService {
 
     private static final Logger logger = LoggerFactory.getLogger(UploadService.class);
 
+    /** The staging segment of a staged key, {@code {prefix}/staging/{stagingId}/{file}}. */
+    public static final String STAGING_SEGMENT = "staging/";
+
     private final S3Client s3Client;
     private final ObjectMapper objectMapper;
     private final StoragePrefixResolver storagePrefixResolver;
@@ -52,7 +55,7 @@ public class UploadService {
         Map<String, String> refs = new LinkedHashMap<>();
         for (MultipartFile file : files) {
             String safeName = sanitiseFilename(file.getOriginalFilename());
-            String objectKey = orgSlug + "/staging/" + stagingId + "/" + safeName;
+            String objectKey = orgSlug + "/" + STAGING_SEGMENT + stagingId + "/" + safeName;
             s3Client.putObject(
                     PutObjectRequest.builder()
                             .bucket(bucket)
@@ -79,7 +82,7 @@ public class UploadService {
         Map<String, String> refs = new LinkedHashMap<>();
         for (Map.Entry<String, String> entry : contentByFileName.entrySet()) {
             String safeName = sanitiseFilename(entry.getKey());
-            String objectKey = orgSlug + "/staging/" + stagingId + "/" + safeName;
+            String objectKey = orgSlug + "/" + STAGING_SEGMENT + stagingId + "/" + safeName;
             s3Client.putObject(
                     PutObjectRequest.builder()
                             .bucket(bucket)
