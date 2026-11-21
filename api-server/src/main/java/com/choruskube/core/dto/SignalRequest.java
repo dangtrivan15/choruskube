@@ -12,10 +12,9 @@ import jakarta.validation.constraints.Size;
  * cascades into every {@link CandidateMilestone}/{@link CandidateEpicProposal}/{@link
  * CandidateDependency}.
  *
- * <p>{@code feedback}'s {@code @Size} mirrors the web-ui's {@code MAX_GATE_FEEDBACK_LENGTH}
- * (decisions.ts) and is enforced only by the controller's {@code @Valid} — a request this DTO's
- * constructor builds for itself (a Story-version re-check, a Story-conflict release) is never run
- * through a {@code Validator} and may exceed it.
+ * <p>{@code feedback}'s {@code @Size} must equal the web-ui's {@code MAX_GATE_FEEDBACK_LENGTH}
+ * (decisions.ts). Only the signal controller's {@code @Valid} applies it: a request the server builds
+ * itself (a Story-version re-check, a Story-conflict release) can exceed it and must not be validated.
  */
 public record SignalRequest(
         @NotBlank String decision,

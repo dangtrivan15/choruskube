@@ -130,7 +130,6 @@ public class HumanGateDecisionFlowTest extends SharedContextTest {
         return createAwaitingHumanExec(run, 1);
     }
 
-    /** {@code iteration} must be unique per (run, template node) — one run holds only one at a time. */
     private UUID createAwaitingHumanExec(RunWithHumanNode run, int iteration) {
         NodeExecution exec = new NodeExecution();
         exec.setWorkflowRunId(run.runId());
@@ -144,7 +143,7 @@ public class HumanGateDecisionFlowTest extends SharedContextTest {
     }
 
     @Test
-    void signal_feedbackOverCap_rejectedBefore400() throws Exception {
+    void signal_feedbackOverCap_rejectedWith400AndGateLeftOpen() throws Exception {
         var run = createRunWithHumanGate();
         UUID execId = createAwaitingHumanExec(run);
 

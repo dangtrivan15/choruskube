@@ -5,6 +5,8 @@
 ## Context
 
 Two of our own services write into a run's storage tree outside any agent presign, and
+so outside the per-run upload budget of
+[2026-11-18---01](2026-11-18---01-agent-uploads-are-sized-and-budgeted-per-run.md), and
 neither write was bounded. A reviewer's gate feedback (`SignalRequest#feedback`) had no
 size limit, so a reviewer — or any API caller with operate rights — could make the
 api-server write megabytes of guidance into the run's tree per approval, with a fresh
@@ -58,12 +60,13 @@ input, so a Temporal retry produces an identical entry.
 
 ## Consequences
 
+- Both writes stay unbooked against the run's upload budget: each is bounded per request
+  instead, and a deployment's storage cap backstops the total.
 - A gate signal over the feedback cap gets 400 before any claim, workflow signal, or
   gate-text write; the gate is left exactly as it was. A null or empty feedback, and
   feedback at exactly the cap, are accepted unchanged.
 - A run log can still grow without bound in the number of entries it holds, and each
   append still rewrites the whole object — only one entry's own fields are now capped.
-  A deployment's own storage cap backstops the total.
 - `attachmentRefs` and the free text inside a signal's `editedCandidates` remain
   uncapped at the API: neither is written to the object store as its own object, so
   neither needed this cap to bound a write.

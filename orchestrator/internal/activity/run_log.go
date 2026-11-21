@@ -11,10 +11,9 @@ import (
 	"github.com/dangtrivan15/choruskube/orchestrator/internal/objectstore"
 )
 
-// maxRunLogFieldBytes bounds Result, ErrorMessage and ArtifactRefs so a Worker outside our
-// network, or a runaway agent result, cannot grow a run log entry past a fixed size: every later
-// agent reads the whole log as its input. 20000 characters of capped reviewer feedback are at
-// most 60000 bytes even in 3-byte UTF-8, leaving headroom for the text the server adds around it.
+// maxRunLogFieldBytes must exceed 60000 bytes — SignalRequest#feedback's 20000 characters in
+// 3-byte UTF-8 — plus the text the server adds around it, or capped reviewer feedback is cut in
+// the log every later agent reads.
 const maxRunLogFieldBytes = 64 << 10
 
 // capRunLogField cuts s to maxRunLogFieldBytes, never inside a UTF-8 rune, and appends a marker
@@ -102,13 +101,12 @@ func buildRunLogEntry(p AppendRunLogParams) string {
 	// Result — always present
 	fmt.Fprintf(&sb, "**Result:** %s\n", capRunLogField(p.Result))
 
-	// Error — omit if empty. Emptiness is checked on the raw value: the cap never turns a
-	// non-empty field into one that looks absent.
+	// Error — omit if empty
 	if p.ErrorMessage != "" {
 		fmt.Fprintf(&sb, "**Error:** %s\n", capRunLogField(p.ErrorMessage))
 	}
 
-	// Artifacts — omit if empty or bare "{}", checked on the raw value for the same reason.
+	// Artifacts — omit if empty or bare "{}"
 	if p.ArtifactRefs != "" && p.ArtifactRefs != "{}" {
 		fmt.Fprintf(&sb, "**Artifacts:** %s\n", capRunLogField(p.ArtifactRefs))
 	}

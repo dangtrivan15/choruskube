@@ -212,17 +212,22 @@ func TestCapRunLogField_OverCapASCII(t *testing.T) {
 }
 
 func TestCapRunLogField_CutBeforeMultiByteRune(t *testing.T) {
-	// "é" is 2 bytes (0xC3 0xA9); place one straddling the cap so a naive byte cut would
-	// split it.
-	s := strings.Repeat("a", maxRunLogFieldBytes-1) + "é" + strings.Repeat("a", 100)
+	// Each rune is placed so the cap falls on every one of its continuation bytes in turn; a
+	// naive byte cut would split it, so the whole rune must be dropped instead.
+	for _, r := range []string{"é", "€", "😀"} {
+		for straddle := 1; straddle < len(r); straddle++ {
+			t.Run(fmt.Sprintf("%dbyte/cap-after-byte-%d", len(r), straddle), func(t *testing.T) {
+				keptLen := maxRunLogFieldBytes - straddle
+				s := strings.Repeat("a", keptLen) + r + strings.Repeat("a", 100)
 
-	result := capRunLogField(s)
+				result := capRunLogField(s)
 
-	require.True(t, utf8.ValidString(result), "result must not cut inside a UTF-8 rune")
-	// The multi-byte rune straddles the cap, so the whole rune is dropped rather than split.
-	kept := strings.Repeat("a", maxRunLogFieldBytes-1)
-	assert.True(t, strings.HasPrefix(result, kept))
-	assert.Contains(t, result, "truncated by the run log")
+				require.True(t, utf8.ValidString(result), "result must not cut inside a UTF-8 rune")
+				marker := fmt.Sprintf("\n… [truncated by the run log: %d of %d bytes kept]", keptLen, len(s))
+				assert.Equal(t, strings.Repeat("a", keptLen)+marker, result)
+			})
+		}
+	}
 }
 
 func TestBuildRunLogEntry_CapsAllThreeFields(t *testing.T) {
