@@ -40,6 +40,24 @@ class InternalPlacementControllerTest extends SharedContextTest {
                 .andExpect(jsonPath("$.namespaces[0]").value("choruskube"));
     }
 
+    /** With no control-plane token source wired in, every namespace reports "none", unchanged. */
+    @Test
+    void placements_noTokenSource_everyNamespaceIsNone_withNoTokenOrExpiresAt() throws Exception {
+        mockMvc.perform(get("/internal/placements"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.credentials.choruskube.state").value("none"))
+                .andExpect(jsonPath("$.credentials.choruskube.token").doesNotExist())
+                .andExpect(jsonPath("$.credentials.choruskube.expiresAt").doesNotExist());
+    }
+
+    /** An orchestrator that predates the token-state field reads only {@code namespaces}. */
+    @Test
+    void placements_jsonClientReadingOnlyNamespaces_stillGetsTheList() throws Exception {
+        mockMvc.perform(get("/internal/placements"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.namespaces", org.hamcrest.Matchers.hasItem("choruskube")));
+    }
+
     @Test
     void placement_unknownRun_is404() throws Exception {
         mockMvc.perform(get("/internal/runs/00000000-0000-0000-0000-000000000000/placement"))

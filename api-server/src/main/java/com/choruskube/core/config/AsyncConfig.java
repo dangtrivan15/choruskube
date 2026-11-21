@@ -53,4 +53,20 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    /**
+     * Backs {@code ControlPlaneTemporalTokens}'s background token refreshes. Separated from the
+     * other pools so a hanging token source can't starve K8s provisioning, IdP cleanup or
+     * workflow termination, and vice versa.
+     */
+    @Bean("temporalTokenExecutor")
+    public Executor temporalTokenExecutor() {
+        var executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(50);
+        executor.setThreadNamePrefix("temporal-token-");
+        executor.initialize();
+        return executor;
+    }
 }

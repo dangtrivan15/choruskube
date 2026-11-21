@@ -566,19 +566,53 @@ func (c *Client) GetRunNamespace(ctx context.Context, runID uuid.UUID) (RunNames
 	return result, nil
 }
 
-// ListNamespaces returns every Temporal namespace this deployment may place a run in.
-func (c *Client) ListNamespaces(ctx context.Context) ([]string, error) {
+// NamespaceCredential is one namespace's entry in a NamespaceRoster: how the orchestrator should
+// authenticate to it. State is exactly one of "bearer", "none" or "unavailable"; Token and
+// ExpiresAt are present only for "bearer" — an api-server predating this field, or one with no
+// entry for a namespace, omits them, which the zero value already represents as "none".
+type NamespaceCredential struct {
+	State     string    `json:"state"`
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+// String never includes Token.
+func (c NamespaceCredential) String() string {
+	if c.State != "bearer" {
+		return fmt.Sprintf("NamespaceCredential{%s}", c.State)
+	}
+	return fmt.Sprintf("NamespaceCredential{bearer, expires=%s}", c.ExpiresAt.UTC().Format(time.RFC3339))
+}
+
+// GoString never includes Token.
+func (c NamespaceCredential) GoString() string {
+	return c.String()
+}
+
+// NamespaceRoster is the api-server's answer to which namespaces this deployment may place a run
+// in, and how to authenticate to each one. Credentials is nil when the api-server predates the
+// field; a namespace absent from it, or from Credentials entirely, is "none".
+type NamespaceRoster struct {
+	Namespaces  []string
+	Credentials map[string]NamespaceCredential
+}
+
+// ListNamespaces returns every Temporal namespace this deployment may place a run in, and each
+// one's current credential state.
+func (c *Client) ListNamespaces(ctx context.Context) (NamespaceRoster, error) {
 	resp, err := c.doJSON(ctx, http.MethodGet, "/internal/placements", nil)
 	if err != nil {
-		return nil, fmt.Errorf("list namespaces: %w", err)
+		return NamespaceRoster{}, fmt.Errorf("list namespaces: %w", err)
 	}
 	var result struct {
-		Namespaces []string `json:"namespaces"`
+		Namespaces  []string                       `json:"namespaces"`
+		Credentials map[string]NamespaceCredential `json:"credentials"`
 	}
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal namespaces: %w", err)
+		// The body may carry a bearer token; never include it in the wrapped error.
+		return NamespaceRoster{}, errors.New("unmarshal namespaces: malformed response body")
 	}
-	return result.Namespaces, nil
+	return NamespaceRoster{Namespaces: result.Namespaces, Credentials: result.Credentials}, nil
 }
 
 // --- Gate finalize ---

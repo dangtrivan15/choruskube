@@ -3,9 +3,10 @@ package com.choruskube.core.credential;
 import java.util.Optional;
 
 /**
- * The pluggable source {@link TemporalBearerTokenHolder} pulls a namespace's token from. This is
- * a plain interface, not a Spring bean — the seam that wires a concrete supplier in belongs to
- * whichever deployment has one to offer.
+ * The optional seam a deployment provides as a Spring bean of this type to become a control-plane
+ * Temporal token source. {@link ControlPlaneTemporalTokens} looks up this type at construction
+ * time; with no such bean present, core presents no credential on any Temporal call and the
+ * roster reports every namespace "none" — today's behaviour, unchanged.
  *
  * <p>Contract: an empty {@link Optional} means this deployment presents no credential for the
  * namespace at all — callers must send no credential and not treat it as a failure. A thrown exception means
