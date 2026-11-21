@@ -14,7 +14,10 @@ const mockStartMutate = vi.fn();
 const mockCompleteMutate = vi.fn();
 const mockUpdateTaskMutate = vi.fn();
 const mockDesignMutate = vi.fn();
+const mockCloseDeliveredMutate = vi.fn();
 let mockStartTaskError: unknown = null;
+let mockCloseDeliveredError: unknown = null;
+let mockCloseDeliveredPending = false;
 
 vi.mock("@/hooks/useTasks", () => ({
   useTask: (id: string) => mockUseTask(id),
@@ -42,6 +45,13 @@ vi.mock("@/hooks/useTasks", () => ({
     mutate: mockCompleteMutate,
     isPending: false,
     isError: false,
+    reset: vi.fn(),
+  }),
+  useCloseTaskAsDelivered: () => ({
+    mutate: mockCloseDeliveredMutate,
+    isPending: mockCloseDeliveredPending,
+    isError: mockCloseDeliveredError != null,
+    error: mockCloseDeliveredError,
     reset: vi.fn(),
   }),
 }));
@@ -86,7 +96,10 @@ beforeEach(() => {
   mockCompleteMutate.mockReset();
   mockUpdateTaskMutate.mockReset();
   mockDesignMutate.mockReset();
+  mockCloseDeliveredMutate.mockReset();
   mockStartTaskError = null;
+  mockCloseDeliveredError = null;
+  mockCloseDeliveredPending = false;
   mockUseTaskRuns.mockReturnValue({ data: undefined, isLoading: false });
   mockUseStory.mockReturnValue({ data: undefined });
   mockUseBlockingChain.mockReturnValue({ data: undefined, isLoading: false });
@@ -521,5 +534,134 @@ describe("TaskDetailPage", () => {
     renderWithProviders(<TaskDetailPage />);
     expect(screen.getByTestId("task-run-history-list")).toBeInTheDocument();
     expect(screen.getAllByTestId("task-run-history-item")).toHaveLength(1);
+  });
+  describe("Close as delivered", () => {
+    const MERGED_PR = "https://github.com/acme/backend-api/pull/12";
+    const OTHER_PR = "https://github.com/acme/backend-api/pull/13";
+
+    async function openDialog(task: Partial<TaskResponse> = {}) {
+      mockUseTask.mockReturnValue({ data: makeTask(task), isLoading: false });
+      renderWithProviders(<TaskDetailPage />);
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      await user.click(screen.getByTestId("task-close-delivered-button"));
+      expect(screen.getByTestId("task-close-delivered-dialog")).toBeInTheDocument();
+      return user;
+    }
+
+    it.each([
+      ["a backlog Task", { status: "backlog" as const, latestRunStatus: null }],
+      ["an in-progress Task whose run completed", { status: "in_progress" as const, latestRunStatus: "completed" }],
+      ["an in-progress Task whose run failed", { status: "in_progress" as const, latestRunStatus: "failed" }],
+      ["an in-progress Task whose run was cancelled", { status: "in_progress" as const, latestRunStatus: "cancelled" }],
+    ])("is offered for %s", (_label, overrides) => {
+      mockUseTask.mockReturnValue({ data: makeTask(overrides), isLoading: false });
+      renderWithProviders(<TaskDetailPage />);
+      expect(screen.getByTestId("task-close-delivered-button")).toBeEnabled();
+    });
+
+    it.each([
+      ["a done Task", { status: "done" as const, latestRunStatus: "completed" }],
+      ["an in-progress Task whose run is still running", { status: "in_progress" as const, latestRunStatus: "running" }],
+      ["an in-progress Task whose run awaits a decision", { status: "in_progress" as const, latestRunStatus: "awaiting_human" }],
+      ["an in-progress Task with no run status yet", { status: "in_progress" as const, latestRunStatus: null }],
+    ])("is not offered for %s", (_label, overrides) => {
+      mockUseTask.mockReturnValue({ data: makeTask(overrides), isLoading: false });
+      renderWithProviders(<TaskDetailPage />);
+      expect(screen.queryByTestId("task-close-delivered-button")).not.toBeInTheDocument();
+    });
+
+    it("explains what the check does", async () => {
+      await openDialog();
+      expect(screen.getByTestId("task-close-delivered-dialog")).toHaveTextContent(
+        "checks that each pull request is merged into its repository’s default branch, then marks the Task done"
+      );
+    });
+
+    it("keeps submit disabled until there is a pull request URL and a non-blank note", async () => {
+      const user = await openDialog();
+      const submit = screen.getByTestId("task-close-delivered-submit");
+      expect(submit).toBeDisabled();
+
+      await user.type(screen.getByTestId("task-close-delivered-prs"), "  {Enter}");
+      await user.type(screen.getByTestId("task-close-delivered-note"), "Shipped in the hotfix train");
+      expect(submit).toBeDisabled();
+
+      await user.type(screen.getByTestId("task-close-delivered-prs"), MERGED_PR);
+      expect(submit).toBeEnabled();
+
+      await user.clear(screen.getByTestId("task-close-delivered-note"));
+      await user.type(screen.getByTestId("task-close-delivered-note"), "   ");
+      expect(submit).toBeDisabled();
+    });
+
+    it("keeps submit disabled while the request is pending", async () => {
+      mockCloseDeliveredPending = true;
+      const user = await openDialog();
+      await user.type(screen.getByTestId("task-close-delivered-prs"), MERGED_PR);
+      await user.type(screen.getByTestId("task-close-delivered-note"), "Shipped elsewhere");
+      expect(screen.getByTestId("task-close-delivered-submit")).toBeDisabled();
+    });
+
+    it("sends one trimmed URL per non-blank line and the trimmed note", async () => {
+      const user = await openDialog({ status: "in_progress", latestRunStatus: "failed" });
+      await user.type(
+        screen.getByTestId("task-close-delivered-prs"),
+        `  ${MERGED_PR}  {Enter}{Enter}   {Enter}${OTHER_PR}{Enter}`
+      );
+      await user.type(screen.getByTestId("task-close-delivered-note"), "  Landed via the release branch  ");
+      await user.click(screen.getByTestId("task-close-delivered-submit"));
+
+      expect(mockCloseDeliveredMutate).toHaveBeenCalledTimes(1);
+      const [vars] = mockCloseDeliveredMutate.mock.calls[0];
+      expect(vars).toEqual({
+        id: "task-1",
+        body: { pullRequestUrls: [MERGED_PR, OTHER_PR], note: "Landed via the release branch" },
+      });
+    });
+
+    it("shows the server's refusal inline", async () => {
+      const { ApiError } = await import("@/lib/api");
+      mockCloseDeliveredError = new ApiError(
+        400,
+        "https://github.com/other/repo/pull/1 is not a repository of this Task's software project"
+      );
+      await openDialog();
+      expect(screen.getByTestId("task-close-delivered-error")).toHaveTextContent(
+        "https://github.com/other/repo/pull/1 is not a repository of this Task's software project"
+      );
+    });
+
+    it("falls back to a generic message when the refusal has no text", async () => {
+      const { ApiError } = await import("@/lib/api");
+      mockCloseDeliveredError = new ApiError(500, null);
+      await openDialog();
+      expect(screen.getByTestId("task-close-delivered-error")).toHaveTextContent(
+        "Failed to start the delivery check."
+      );
+    });
+
+    it("closes the dialog once the check has started", async () => {
+      mockCloseDeliveredMutate.mockImplementation(
+        (_vars: unknown, options?: { onSuccess?: () => void }) => options?.onSuccess?.()
+      );
+      const user = await openDialog();
+      await user.type(screen.getByTestId("task-close-delivered-prs"), MERGED_PR);
+      await user.type(screen.getByTestId("task-close-delivered-note"), "Shipped elsewhere");
+      await user.click(screen.getByTestId("task-close-delivered-submit"));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("task-close-delivered-dialog")).not.toBeInTheDocument();
+      });
+    });
+
+    it("keeps the dialog open when the server refuses", async () => {
+      const user = await openDialog();
+      await user.type(screen.getByTestId("task-close-delivered-prs"), MERGED_PR);
+      await user.type(screen.getByTestId("task-close-delivered-note"), "Shipped elsewhere");
+      await user.click(screen.getByTestId("task-close-delivered-submit"));
+
+      expect(mockCloseDeliveredMutate).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("task-close-delivered-dialog")).toBeInTheDocument();
+    });
   });
 });

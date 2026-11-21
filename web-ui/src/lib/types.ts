@@ -852,6 +852,17 @@ export interface TaskStatusUpdateRequest {
   note?: string;
 }
 
+/**
+ * Body for `POST /tasks/{id}/delivery-check`: close a Task whose work landed through pull requests
+ * made outside ChorusKube. The server starts a Delivery check run that verifies each pull request
+ * is merged into its repository's default branch; the Task becomes `done` only once that run
+ * completes. Answers with the Task (`in_progress`, `latestRunId` = the check run).
+ */
+export interface TaskDeliveryCheckRequest {
+  pullRequestUrls: string[];
+  note: string;
+}
+
 // --- Roadmap Graph View ---
 
 /**

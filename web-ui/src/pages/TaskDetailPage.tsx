@@ -1,6 +1,16 @@
 import { useId, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { ArrowLeft, Trash2, Pencil, Play, CheckCircle2, GitBranch, Layers, Sparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  Trash2,
+  Pencil,
+  Play,
+  CheckCircle2,
+  GitBranch,
+  Layers,
+  Sparkles,
+  PackageCheck,
+} from "lucide-react";
 import Authorized from "@/components/Authorized";
 import { apiErrorMessage } from "@/lib/api";
 import { useTask, useDeleteTask, useStartTask, useCompleteTask } from "@/hooks/useTasks";
@@ -24,6 +34,7 @@ import {
 } from "@/components/ui/dialog";
 import TaskRunHistoryList from "@/components/roadmap/TaskRunHistoryList";
 import EditTaskDialog from "@/components/roadmap/EditTaskDialog";
+import CloseTaskAsDeliveredDialog from "@/components/roadmap/CloseTaskAsDeliveredDialog";
 import LevelBadge from "@/components/roadmap/LevelBadge";
 import PageHeader from "@/components/layout/PageHeader";
 import type { StoryResponse } from "@/lib/types";
@@ -39,6 +50,8 @@ function storySpecStartReason(story: StoryResponse | undefined): string | null {
   if (story.specUnderRevision) return "Story spec under revision";
   return null;
 }
+
+const ENDED_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 function statusBadge(status: string) {
   switch (status) {
@@ -91,6 +104,7 @@ export default function TaskDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [startOpen, setStartOpen] = useState(false);
+  const [closeDeliveredOpen, setCloseDeliveredOpen] = useState(false);
 
   function handleDelete() {
     if (!id) return;
@@ -128,6 +142,12 @@ export default function TaskDetailPage() {
 
   const canComplete = task.status === "in_progress" && task.latestRunStatus === "completed";
 
+  const canCloseDelivered =
+    task.status === "backlog" ||
+    (task.status === "in_progress" &&
+      task.latestRunStatus != null &&
+      ENDED_RUN_STATUSES.has(task.latestRunStatus));
+
   const sp = task.softwareProject;
   const Icon = sp.type === "repo_group" ? Layers : GitBranch;
   // Degrades to the roadmap root while the parent Story is resolving (or if it errored) —
@@ -136,6 +156,18 @@ export default function TaskDetailPage() {
   const backTo = parentStory
     ? `/roadmap/epics/${parentStory.epicId}/stories/${parentStory.id}`
     : "/roadmap";
+
+  const closeDeliveredButton = canCloseDelivered && (
+    <Button
+      data-testid="task-close-delivered-button"
+      variant="outline"
+      size="sm"
+      onClick={() => setCloseDeliveredOpen(true)}
+    >
+      <PackageCheck className="size-4" />
+      Close as delivered
+    </Button>
+  );
 
   // A disabled native <button> receives no pointer events (`disabled:pointer-events-none`), so the
   // Tooltip's hover trigger is a wrapping <span>: hovering where the button sits still reaches it.
@@ -218,6 +250,7 @@ export default function TaskDetailPage() {
           <>
             <Authorized require="canOperate">
               {renderStartTrigger("task-start-button", "Start")}
+              {closeDeliveredButton}
             </Authorized>
             <Authorized require="canAdmin">
               <Button
@@ -253,6 +286,7 @@ export default function TaskDetailPage() {
               <CheckCircle2 className="size-4" />
               {completeTask.isPending ? "Completing..." : "Complete"}
             </Button>
+            {closeDeliveredButton}
           </Authorized>
         )}
       </div>
@@ -305,6 +339,11 @@ export default function TaskDetailPage() {
       </div>
 
       <EditTaskDialog task={task} open={editOpen} onOpenChange={setEditOpen} />
+      <CloseTaskAsDeliveredDialog
+        task={task}
+        open={closeDeliveredOpen}
+        onOpenChange={setCloseDeliveredOpen}
+      />
 
       <Dialog
         open={deleteOpen}

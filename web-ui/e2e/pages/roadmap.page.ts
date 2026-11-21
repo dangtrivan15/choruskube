@@ -74,6 +74,7 @@ export class RoadmapPage {
   readonly taskRunHistoryList: Locator;
   readonly taskStartReason: Locator;
   readonly taskDesignStoryButton: Locator;
+  readonly taskCloseDeliveredButton: Locator;
   readonly backToStoryLink: Locator;
 
   // Create Epic dialog
@@ -116,6 +117,13 @@ export class RoadmapPage {
   readonly deleteStoryConfirmButton: Locator;
   readonly deleteTaskConfirmButton: Locator;
   readonly startTaskConfirmButton: Locator;
+
+  // Close as delivered dialog
+  readonly closeDeliveredDialog: Locator;
+  readonly closeDeliveredPullRequests: Locator;
+  readonly closeDeliveredNote: Locator;
+  readonly closeDeliveredSubmit: Locator;
+  readonly closeDeliveredError: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -191,6 +199,7 @@ export class RoadmapPage {
     this.taskRunHistoryList = page.getByTestId("task-run-history-list");
     this.taskStartReason = page.getByTestId("task-start-reason");
     this.taskDesignStoryButton = page.getByTestId("task-design-story-button");
+    this.taskCloseDeliveredButton = page.getByTestId("task-close-delivered-button");
     this.backToStoryLink = page.getByRole("link", { name: "Back to Story" });
 
     // Create Epic dialog
@@ -241,6 +250,12 @@ export class RoadmapPage {
     this.deleteStoryConfirmButton = page.getByTestId("delete-story-confirm");
     this.deleteTaskConfirmButton = page.getByTestId("delete-task-confirm");
     this.startTaskConfirmButton = page.getByTestId("start-task-confirm");
+
+    this.closeDeliveredDialog = page.getByTestId("task-close-delivered-dialog");
+    this.closeDeliveredPullRequests = page.getByTestId("task-close-delivered-prs");
+    this.closeDeliveredNote = page.getByTestId("task-close-delivered-note");
+    this.closeDeliveredSubmit = page.getByTestId("task-close-delivered-submit");
+    this.closeDeliveredError = page.getByTestId("task-close-delivered-error");
   }
 
   async goto() {

@@ -463,6 +463,12 @@ Task closes only when all of these hold:
 
 Any other case is left alone, so a repeated report is a no-op.
 
+A Task whose work merged outside ChorusKube closes by the same rule. Closing it as delivered
+starts a Delivery Check run with the named pull requests registered on it. The run's one gate
+approves itself as it opens and has the Worker verify each pull request is merged into its
+repository's default branch, recording it as merged. The run's finish then settles the Task here
+like any other (see [2026-11-21---01](../decisions/2026-11-21---01-a-task-delivered-elsewhere-closes-through-a-delivery-check-run.md)).
+
 Two properties of the flow make this enough on its own:
 
 - **The merges are already recorded.** Final Approval merges the run's pull requests and

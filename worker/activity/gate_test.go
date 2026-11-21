@@ -1187,6 +1187,222 @@ func TestRunGateGitHubSteps_RetryAfterPartialMergeResumesMergingInsteadOfRecheck
 	assert.Equal(t, 1, gh.count(http.MethodPut, mergePath(first)), "the first pull request is never merged twice")
 }
 
+// verifiedPR is a pull request of a verify-only plan, whose repository's default branch is main.
+func verifiedPR(ownerRepo string, number int) GatePR {
+	pr := gatePR(ownerRepo, number)
+	pr.DefaultBranch = "main"
+	return pr
+}
+
+func (r *gateRig) verifyParams(prs ...GatePR) GateGitHubParams {
+	return GateGitHubParams{RunID: r.run, NodeExecutionID: r.gate, PRs: prs, VerifyOnly: true}
+}
+
+func (r *gateRig) verify(t *testing.T, prs ...GatePR) (GateGitHubResult, error) {
+	t.Helper()
+	return r.acts.RunGateGitHubSteps(context.Background(), r.verifyParams(prs...))
+}
+
+const verifyRefusal = "Every pull request must already be merged into its repository's default branch. "
+
+func TestRunGateGitHubSteps_VerifyOnlyRecordsEveryPrMergedIntoItsDefaultBranch(t *testing.T) {
+	rig := newGateRig(t)
+	web, api := verifiedPR("acme/web", 1), verifiedPR("acme/api", 2)
+	api.DefaultBranch = "trunk"
+	rig.gh.pr(web, mergedPR("head-one"))
+	onTrunk := mergedPR("head-two")
+	onTrunk.Base, onTrunk.MergedAt = "trunk", "2026-10-11T09:30:00Z"
+	rig.gh.pr(api, onTrunk)
+
+	res, err := rig.verify(t, web, api)
+
+	require.NoError(t, err)
+	assert.Empty(t, res.Refused)
+	assert.False(t, res.Stale)
+	assert.NotNil(t, res.Compares)
+	assert.Empty(t, res.Compares)
+	require.Len(t, res.Merges, 2)
+	for i, want := range []struct {
+		pr GatePR
+		at time.Time
+	}{
+		{web, time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)},
+		{api, time.Date(2026, 10, 11, 9, 30, 0, 0, time.UTC)},
+	} {
+		assert.Equal(t, want.pr.RowID, res.Merges[i].RowID)
+		assert.Equal(t, GatePRAlreadyMerged, res.Merges[i].Kind)
+		assert.Empty(t, res.Merges[i].MergeSha)
+		require.NotNil(t, res.Merges[i].MergedAt)
+		assert.True(t, res.Merges[i].MergedAt.Equal(want.at))
+	}
+	assert.Equal(t, []string{"GET " + prPath(web), "GET " + prPath(api)}, rig.gh.sequence(),
+		"each pull request is read once, and nothing is compared or merged")
+	assert.Equal(t, []string{"verify:0", "verify:1"}, rig.beatNames())
+	assert.Empty(t, rig.reads(), "nothing merges, so the gate is never re-read")
+	assert.Equal(t, []uuid.UUID{rig.run}, rig.prov.calls)
+}
+
+func TestRunGateGitHubSteps_VerifyOnlyNeedsNoAPIClient(t *testing.T) {
+	rig := newGateRig(t)
+	rig.acts.client = nil
+	pr := verifiedPR("acme/web", 1)
+	rig.gh.pr(pr, mergedPR("head-one"))
+
+	res, err := rig.verify(t, pr)
+
+	require.NoError(t, err)
+	assert.Empty(t, res.Refused)
+	require.Len(t, res.Merges, 1)
+	assert.Equal(t, GatePRAlreadyMerged, res.Merges[0].Kind)
+}
+
+func TestRunGateGitHubSteps_VerifyOnlyRefusesAPrNotMergedIntoItsDefaultBranch(t *testing.T) {
+	draft := openPR("head-one")
+	draft.Draft = true
+	closed := openPR("head-one")
+	closed.State = "closed"
+	elsewhere := mergedPR("head-one")
+	elsewhere.Base = "release"
+	for name, tc := range map[string]struct {
+		state prState
+		want  string
+	}{
+		"open":                             {openPR("head-one"), "acme/web#1 is not merged"},
+		"draft":                            {draft, "acme/web#1 is not merged"},
+		"closed without merge":             {closed, "acme/web#1 was closed without being merged"},
+		"merged into a non-default branch": {elsewhere, "acme/web#1 was merged into release, not the default branch main"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rig := newGateRig(t)
+			pr := verifiedPR("acme/web", 1)
+			rig.gh.pr(pr, tc.state)
+
+			res, err := rig.verify(t, pr)
+
+			require.NoError(t, err)
+			assert.Equal(t, verifyRefusal+tc.want+".", res.Refused)
+			assert.Empty(t, res.Merges)
+			assert.False(t, res.Stale)
+			assert.Equal(t, []string{"GET " + prPath(pr)}, rig.gh.sequence())
+		})
+	}
+}
+
+func TestRunGateGitHubSteps_VerifyOnlyRefusalKeepsWhatIsAlreadyMerged(t *testing.T) {
+	rig := newGateRig(t)
+	done, open, elsewhere, alsoDone := verifiedPR("acme/web", 1), verifiedPR("acme/web", 2),
+		verifiedPR("acme/api", 3), verifiedPR("acme/api", 4)
+	rig.gh.pr(done, mergedPR("head-one"))
+	rig.gh.pr(open, openPR("head-two"))
+	other := mergedPR("head-three")
+	other.Base = "release"
+	rig.gh.pr(elsewhere, other)
+	rig.gh.pr(alsoDone, mergedPR("head-four"))
+
+	res, err := rig.verify(t, done, open, elsewhere, alsoDone)
+
+	require.NoError(t, err)
+	assert.Equal(t, verifyRefusal+
+		"acme/web#2 is not merged; acme/api#3 was merged into release, not the default branch main.", res.Refused)
+	require.Len(t, res.Merges, 2, "the API records what is already merged before it voids the approval")
+	assert.Equal(t, done.RowID, res.Merges[0].RowID)
+	assert.Equal(t, GatePRAlreadyMerged, res.Merges[0].Kind)
+	assert.Equal(t, alsoDone.RowID, res.Merges[1].RowID)
+	assert.Equal(t, GatePRAlreadyMerged, res.Merges[1].Kind)
+	assert.Len(t, rig.gh.sequence(), 4, "every pull request is read even after the first blocker")
+	assert.Empty(t, rig.gh.puts())
+}
+
+func TestRunGateGitHubSteps_VerifyOnlyRefusesAPrItCannotRead(t *testing.T) {
+	rig := newGateRig(t)
+	missing, first, second := verifiedPR("acme/web", 9), verifiedPR("acme/api", 1), verifiedPR("acme/api", 2)
+	rig.gh.route(http.MethodGet, prPath(missing), statusReply(http.StatusNotFound))
+	rig.gh.route(http.MethodGet, prPath(first), statusReply(http.StatusForbidden))
+	rig.gh.route(http.MethodGet, prPath(second), statusReply(http.StatusForbidden))
+
+	res, err := rig.verify(t, missing, first, second)
+
+	require.NoError(t, err)
+	assert.Equal(t, verifyRefusal+"acme/web#9 not found (or not visible to the credential); "+
+		"the GitHub credential cannot access acme/api.", res.Refused, "one repo's credential fault is named once")
+	assert.Empty(t, res.Merges)
+}
+
+func TestRunGateGitHubSteps_VerifyOnlyTransientReadErrorIsReturnedForRetry(t *testing.T) {
+	rig := newGateRig(t)
+	done, flaky := verifiedPR("acme/web", 1), verifiedPR("acme/web", 2)
+	rig.gh.pr(done, mergedPR("head-one"))
+	rig.gh.route(http.MethodGet, prPath(flaky), statusReply(http.StatusBadGateway))
+
+	res, err := rig.verify(t, done, flaky)
+
+	require.Error(t, err)
+	var api *github.APIError
+	require.ErrorAs(t, err, &api)
+	assert.Equal(t, http.StatusBadGateway, api.Status)
+	var app *temporal.ApplicationError
+	assert.False(t, errors.As(err, &app) && app.NonRetryable(), "Temporal must be free to retry")
+	assert.Empty(t, res.Refused)
+}
+
+func TestRunGateGitHubSteps_VerifyOnlyRefusesAMalformedPlanBeforeReadingAnything(t *testing.T) {
+	for name, tc := range map[string]struct {
+		edit    func(p *GateGitHubParams)
+		errType string
+	}{
+		"a merge method": {func(p *GateGitHubParams) { p.MergeMethod = "squash" }, "GateVerifyOnly"},
+		"a compare": {func(p *GateGitHubParams) {
+			p.Compares = []GateCompare{gateCompare("acme/web")}
+		}, "GateVerifyOnly"},
+		"no pull request":   {func(p *GateGitHubParams) { p.PRs = nil }, "GateVerifyOnly"},
+		"no default branch": {func(p *GateGitHubParams) { p.PRs[1].DefaultBranch = "" }, "GateDefaultBranch"},
+		"no gate execution": {func(p *GateGitHubParams) { p.NodeExecutionID = uuid.Nil }, "GateExecution"},
+		"another run's id":  {func(p *GateGitHubParams) { p.RunID = uuid.New() }, "GateRunBinding"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rig := newGateRig(t)
+			p := rig.verifyParams(verifiedPR("acme/web", 1), verifiedPR("acme/api", 2))
+			tc.edit(&p)
+
+			res, err := rig.acts.RunGateGitHubSteps(context.Background(), p)
+
+			require.Error(t, err)
+			var app *temporal.ApplicationError
+			require.ErrorAs(t, err, &app)
+			assert.True(t, app.NonRetryable(), "a malformed plan never heals on retry")
+			assert.Equal(t, tc.errType, app.Type())
+			assert.Empty(t, res.Merges)
+			assert.Empty(t, rig.prov.calls, "no credential is fetched")
+			assert.Empty(t, rig.gh.sequence())
+		})
+	}
+}
+
+func TestRunGateGitHubSteps_VerifyOnlyStillNeedsTheRunsCredential(t *testing.T) {
+	t.Run("provider error", func(t *testing.T) {
+		rig := newGateRig(t)
+		boom := errors.New("control plane unavailable")
+		rig.prov.err = boom
+
+		_, err := rig.verify(t, verifiedPR("acme/web", 1))
+
+		require.ErrorIs(t, err, boom)
+		var app *temporal.ApplicationError
+		assert.False(t, errors.As(err, &app) && app.NonRetryable())
+		assert.Empty(t, rig.gh.sequence())
+	})
+	t.Run("no credentials configured", func(t *testing.T) {
+		run := stubbedRun(t)
+
+		_, err := (&Activities{}).RunGateGitHubSteps(context.Background(), GateGitHubParams{
+			RunID: run, NodeExecutionID: uuid.New(), PRs: []GatePR{verifiedPR("acme/web", 1)}, VerifyOnly: true,
+		})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no GitHub credentials or client configured")
+	})
+}
+
 func TestGateTypesCarryTheWireNamesTheOrchestratorCopies(t *testing.T) {
 	id := uuid.New()
 	at := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
@@ -1207,9 +1423,9 @@ func TestGateTypesCarryTheWireNamesTheOrchestratorCopies(t *testing.T) {
 
 	assert.ElementsMatch(t, []string{"gitRepoId", "ownerRepo", "branch", "baseSha"},
 		names(keys(GateCompare{GitRepoID: id})))
-	assert.ElementsMatch(t, []string{"rowId", "ownerRepo", "number", "label", "prUrl"},
+	assert.ElementsMatch(t, []string{"rowId", "ownerRepo", "number", "label", "prUrl", "defaultBranch"},
 		names(keys(GatePR{RowID: id})))
-	assert.ElementsMatch(t, []string{"runId", "nodeExecutionId", "compares", "prs", "mergeMethod"},
+	assert.ElementsMatch(t, []string{"runId", "nodeExecutionId", "compares", "prs", "mergeMethod", "verifyOnly"},
 		names(keys(GateGitHubParams{RunID: id, NodeExecutionID: id})))
 	assert.ElementsMatch(t, []string{"gitRepoId", "aheadBy", "baseGone"},
 		names(keys(GateCompareResult{GitRepoID: id})))
@@ -1250,4 +1466,35 @@ func TestRunGateGitHubSteps_IsRegisteredUnderItsNameAndSurvivesTheDataConverter(
 	assert.Equal(t, GatePRMerged, res.Merges[0].Kind)
 	assert.Equal(t, "merge-one", res.Merges[0].MergeSha)
 	assert.Equal(t, pr.RowID, res.Merges[0].RowID)
+}
+
+// A converter that dropped verifyOnly would leave PRs without a merge method, and one that dropped
+// defaultBranch would leave nothing to verify against; either refuses instead of verifying.
+func TestRunGateGitHubSteps_VerifyOnlySurvivesTheDataConverter(t *testing.T) {
+	run := stubbedRun(t)
+	gh := newGateGitHub(t)
+	acts := &Activities{}
+	acts.SetCredentials(&fakeGateProvider{})
+	acts.SetGitHub(github.New(gh.srv.URL))
+	pr := verifiedPR("acme/web", 1)
+	pr.DefaultBranch = "trunk"
+	done := mergedPR("head-one")
+	done.Base = "trunk"
+	gh.pr(pr, done)
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestActivityEnvironment()
+	Register(env, acts)
+	val, err := env.ExecuteActivity("RunGateGitHubSteps", GateGitHubParams{
+		RunID: run, NodeExecutionID: uuid.New(), PRs: []GatePR{pr}, VerifyOnly: true,
+	})
+
+	require.NoError(t, err)
+	var res GateGitHubResult
+	require.NoError(t, val.Get(&res))
+	assert.Empty(t, res.Refused)
+	require.Len(t, res.Merges, 1)
+	assert.Equal(t, GatePRAlreadyMerged, res.Merges[0].Kind)
+	assert.Equal(t, pr.RowID, res.Merges[0].RowID)
+	assert.Equal(t, []string{"GET " + prPath(pr)}, gh.sequence())
 }

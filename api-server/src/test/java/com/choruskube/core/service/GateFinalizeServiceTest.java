@@ -171,6 +171,10 @@ class GateFinalizeServiceTest {
             + "\"materialize\":\"roadmap_extension\",\"merge_pull_requests\":\"squash\"}";
     private static final String MATERIALIZE_GATE =
             "{\"terminal_decisions\":[\"approved\"],\"materialize\":\"roadmap_extension\"}";
+    private static final String VERIFY_GATE = "{\"terminal_decisions\":[\"approved\"],"
+            + "\"verify_pull_requests_merged\":true,\"approve_on_arrival\":true}";
+    private static final String VERIFY_ONLY_GATE =
+            "{\"terminal_decisions\":[\"approved\"],\"verify_pull_requests_merged\":true}";
 
     @BeforeEach
     void setUp() {
@@ -259,7 +263,7 @@ class GateFinalizeServiceTest {
     }
 
     private PrRef prRef() {
-        return new PrRef(rowId, "acme/app#7", "https://github.com/acme/app/pull/7", "acme/app", 7);
+        return new PrRef(rowId, "acme/app#7", "https://github.com/acme/app/pull/7", "acme/app", 7, null);
     }
 
     private MergePlan mergePlan() {
@@ -557,6 +561,134 @@ class GateFinalizeServiceTest {
         verify(gateRecheck, never()).claimHeld(any(), any());
     }
 
+    // ── a gate that approves itself on arrival ─────────────────────────────────
+
+    @Test
+    void claimHeld_approveOnArrival_claimsTheGateAndStampsAnApproval() {
+        snapshot(VERIFY_GATE);
+        gate.setStatus(NodeExecutionStatus.awaiting_human);
+        when(claims.compareAndSetStatus(gateExecId, NodeExecutionStatus.awaiting_human, NodeExecutionStatus.finalizing))
+                .thenReturn(1);
+        when(gateRecheck.begin(runId, gate, "final_approval", StampMode.always, null, null, null))
+                .thenReturn(stamp);
+
+        HeldClaim claim = service.claimHeld(runId, gateExecId);
+
+        assertThat(claim.approvalId()).isEqualTo(approvalId);
+        verify(gateRecheck).voidLeftBehind(runId, templateNodeId, gateExecId);
+        verify(events).publishNodeStatusChanged(runId, gateExecId, "finalizing");
+    }
+
+    @Test
+    void claimHeld_approveOnArrival_losesTheGateToAReviewer_returnsEmpty() {
+        snapshot(VERIFY_GATE);
+        gate.setStatus(NodeExecutionStatus.awaiting_human);
+        when(claims.compareAndSetStatus(any(), any(), any())).thenReturn(0);
+
+        HeldClaim claim = service.claimHeld(runId, gateExecId);
+
+        assertThat(claim.approvalId()).isNull();
+        verify(gateRecheck, never()).begin(any(), any(), any(), any(), any(), any(), any());
+        verify(events, never()).publishNodeStatusChanged(any(), any(), any());
+    }
+
+    @Test
+    void claimHeld_approveOnArrival_retryAfterItsOwnApproval_returnsTheSameApproval() {
+        snapshot(VERIFY_GATE);
+        when(gateRecheck.findFinalizingFor(runId, templateNodeId)).thenReturn(Optional.of(stamp));
+
+        HeldClaim claim = service.claimHeld(runId, gateExecId);
+
+        assertThat(claim.approvalId()).isEqualTo(approvalId);
+        verify(claims, never()).compareAndSetStatus(any(), any(), any());
+    }
+
+    @Test
+    void claimHeld_verifyingGateWithoutApproveOnArrival_waitsForAReviewer() {
+        snapshot(VERIFY_ONLY_GATE);
+        gate.setStatus(NodeExecutionStatus.awaiting_human);
+
+        HeldClaim claim = service.claimHeld(runId, gateExecId);
+
+        assertThat(claim.approvalId()).isNull();
+        verify(claims, never()).compareAndSetStatus(any(), any(), any());
+    }
+
+    @Test
+    void plan_verifyOnly_listsEachPullRequestWithItsDefaultBranch_andNoMergeMethod() {
+        snapshot(VERIFY_GATE);
+        PrRef ref = new PrRef(rowId, "acme/app#7", "https://github.com/acme/app/pull/7", "acme/app", 7, "trunk");
+        when(merge.planVerification(runId)).thenReturn(new MergePlan(null, List.of(), List.of(ref), List.of()));
+
+        PlanResponse plan = service.plan(runId, gateExecId, approvalId);
+
+        assertThat(plan.outcome()).isEqualTo(GateFinalizeService.PROCEED);
+        assertThat(plan.verifyOnly()).isTrue();
+        assertThat(plan.mergeMethod()).isNull();
+        assertThat(plan.compares()).isEmpty();
+        assertThat(plan.prs())
+                .containsExactly(
+                        new PrItem(rowId, "acme/app", 7, "acme/app#7", "https://github.com/acme/app/pull/7", "trunk"));
+        verify(merge, never()).planMerge(any(), any());
+    }
+
+    @Test
+    void plan_verifyOnly_withNoPullRequestRegistered_refused() {
+        snapshot(VERIFY_GATE);
+        when(merge.planVerification(runId)).thenReturn(new MergePlan(null, List.of(), List.of(), List.of()));
+
+        PlanResponse plan = service.plan(runId, gateExecId, approvalId);
+
+        assertThat(plan.outcome()).isEqualTo(GateFinalizeService.REFUSED);
+        assertThat(plan.reason()).contains("at least one registered pull request");
+    }
+
+    @Test
+    void plan_verifyOnly_unresolvablePullRequest_refused() {
+        snapshot(VERIFY_GATE);
+        when(merge.planVerification(runId))
+                .thenReturn(new MergePlan(null, List.of(), List.of(), List.of("x: cannot determine its repository")));
+
+        PlanResponse plan = service.plan(runId, gateExecId, approvalId);
+
+        assertThat(plan.outcome()).isEqualTo(GateFinalizeService.REFUSED);
+        assertThat(plan.reason()).contains("cannot determine its repository");
+        assertThat(plan.prs()).isEmpty();
+    }
+
+    @Test
+    void complete_verifyOnly_recordsTheVerifiedPullRequests_andNotesThem() {
+        snapshot(VERIFY_GATE);
+        stamp.setFeedback(null);
+        stamp.setAttachmentRefs(null);
+        MergePlan plan = new MergePlan(null, List.of(), List.of(prRef()), List.of());
+        when(merge.planVerification(runId)).thenReturn(plan);
+        List<WorkerPrResult> worker = List.of(new WorkerPrResult(rowId, Kind.ALREADY_MERGED, NOW, null));
+        MergeOutcome outcome = new MergeOutcome(
+                null, List.of(new PullRequestMergeService.Result(prRef(), Kind.ALREADY_MERGED, NOW, null)));
+        when(merge.outcomeOf(runId, plan, worker, approvalId)).thenReturn(outcome);
+        when(merge.note(outcome)).thenReturn("Pull requests verified merged into their default branch: acme/app#7.");
+        doAnswer(inv -> {
+                    stamp.setStatus(GateStampStatus.consumed);
+                    return null;
+                })
+                .when(gateRecheck)
+                .consume(approvalId);
+
+        StepResult result = service.complete(
+                runId,
+                gateExecId,
+                approvalId,
+                List.of(new PrResultItem(rowId, "ALREADY_MERGED", NOW, null)),
+                List.of());
+
+        assertThat(result.outcome()).isEqualTo(GateFinalizeService.COMPLETED);
+        assertThat(result.result()).endsWith("Pull requests verified merged into their default branch: acme/app#7.");
+        verify(merge).recordOutcome(runId, outcome);
+        verify(merge, never()).planMerge(any(), any());
+        assertThat(gate.getDecision()).isEqualTo("approved");
+    }
+
     // ── plan ────────────────────────────────────────────────────────────────────
 
     @Test
@@ -616,7 +748,8 @@ class GateFinalizeServiceTest {
         assertThat(plan.reason()).isNull();
         assertThat(plan.compares()).containsExactly(new CompareItem(repoId, "acme/app", "main", "abc1234"));
         assertThat(plan.prs())
-                .containsExactly(new PrItem(rowId, "acme/app", 7, "acme/app#7", "https://github.com/acme/app/pull/7"));
+                .containsExactly(
+                        new PrItem(rowId, "acme/app", 7, "acme/app#7", "https://github.com/acme/app/pull/7", null));
         assertThat(plan.mergeMethod()).isEqualTo("squash");
     }
 

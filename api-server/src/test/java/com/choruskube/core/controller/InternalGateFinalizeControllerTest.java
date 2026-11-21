@@ -64,7 +64,7 @@ class InternalGateFinalizeControllerTest {
         StepResult held = new StepResult("held", "r", "{}", null);
         when(service.claimHeld(runId, execId)).thenAnswer(inv -> scoped(new HeldClaim(approvalId)));
         when(service.plan(runId, execId, approvalId))
-                .thenAnswer(inv -> scoped(new PlanResponse("proceed", null, List.of(), List.of(), null, true)));
+                .thenAnswer(inv -> scoped(new PlanResponse("proceed", null, List.of(), List.of(), null, true, false)));
         List<CompareResultItem> compares = List.of(new CompareResultItem(UUID.randomUUID(), 1, false));
         when(service.hold(runId, execId, approvalId, compares)).thenAnswer(inv -> scoped(held));
         List<PrResultItem> merges = List.of(new PrResultItem(UUID.randomUUID(), "MERGED", Instant.now(), "m"));
@@ -107,7 +107,7 @@ class InternalGateFinalizeControllerTest {
     @Test
     void plan_forAGateWithNoRoadmap_serializesWritesRoadmapFalse() throws Exception {
         when(service.plan(runId, execId, approvalId))
-                .thenReturn(new PlanResponse("proceed", null, List.of(), List.of(), null, false));
+                .thenReturn(new PlanResponse("proceed", null, List.of(), List.of(), null, false, false));
 
         JsonNode json = new ObjectMapper().valueToTree(controller.plan(runId, execId, approvalId));
 

@@ -19,7 +19,10 @@ public final class GateFinalizeDtos {
     /**
      * {@code outcome}: {@code proceed}, {@code hold} or {@code refused} (with {@code reason}).
      * {@code writesRoadmap} sends the orchestrator down the split write-then-file protocol. It stays
-     * a primitive, always serialized: the orchestrator refuses a plan that omits it.
+     * a primitive, always serialized: the orchestrator refuses a plan that omits it. {@code
+     * verifyOnly} has the Worker confirm each pull request merged into its {@code defaultBranch}
+     * instead of merging; such a plan carries no {@code mergeMethod}, so a Worker that predates the
+     * flag refuses it rather than merging.
      */
     public record PlanResponse(
             String outcome,
@@ -27,11 +30,13 @@ public final class GateFinalizeDtos {
             List<CompareItem> compares,
             List<PrItem> prs,
             String mergeMethod,
-            boolean writesRoadmap) {}
+            boolean writesRoadmap,
+            boolean verifyOnly) {}
 
     public record CompareItem(UUID gitRepoId, String ownerRepo, String branch, String baseSha) {}
 
-    public record PrItem(UUID rowId, String ownerRepo, int number, String label, String prUrl) {}
+    /** {@code defaultBranch} is set on verify-only plans: the branch the pull request must have merged into. */
+    public record PrItem(UUID rowId, String ownerRepo, int number, String label, String prUrl, String defaultBranch) {}
 
     public record HoldRequest(List<CompareResultItem> compares) {}
 

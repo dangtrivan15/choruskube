@@ -617,11 +617,12 @@ type GateCompareItem struct {
 }
 
 type GatePRItem struct {
-	RowID     uuid.UUID `json:"rowId"`
-	OwnerRepo string    `json:"ownerRepo"`
-	Number    int       `json:"number"`
-	Label     string    `json:"label"`
-	PRURL     string    `json:"prUrl"`
+	RowID         uuid.UUID `json:"rowId"`
+	OwnerRepo     string    `json:"ownerRepo"`
+	Number        int       `json:"number"`
+	Label         string    `json:"label"`
+	PRURL         string    `json:"prUrl"`
+	DefaultBranch string    `json:"defaultBranch"`
 }
 
 type GateCompareResultItem struct {
@@ -656,13 +657,15 @@ type GateIssueResultItem struct {
 
 // GatePlanResponse.Outcome is proceed, hold or refused. A null Reason or MergeMethod decodes to
 // "". WritesRoadmap is a pointer so PlanGateFinalize can refuse a plan without it: read as false,
-// an approved roadmap would take the one-step complete, which the API refuses.
+// an approved roadmap would take the one-step complete, which the API refuses. A missing
+// VerifyOnly reads as false and fails closed: its plan has no merge method, which the Worker refuses.
 type GatePlanResponse struct {
 	Outcome       string            `json:"outcome"`
 	Reason        string            `json:"reason"`
 	Compares      []GateCompareItem `json:"compares"`
 	PRs           []GatePRItem      `json:"prs"`
 	MergeMethod   string            `json:"mergeMethod"`
+	VerifyOnly    bool              `json:"verifyOnly"`
 	WritesRoadmap *bool             `json:"writesRoadmap"`
 }
 

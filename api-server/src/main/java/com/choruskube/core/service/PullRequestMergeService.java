@@ -18,6 +18,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -61,8 +62,11 @@ public class PullRequestMergeService {
         this.clock = clock;
     }
 
-    /** One pull request, identified for the merge call and for display. */
-    public record PrRef(UUID rowId, String label, String prUrl, String ownerRepo, int number) {}
+    /**
+     * One pull request, identified for the merge call and for display. {@code defaultBranch} is its
+     * repository's, which a verification requires it to have merged into; null when unresolved.
+     */
+    public record PrRef(UUID rowId, String label, String prUrl, String ownerRepo, int number, String defaultBranch) {}
 
     public enum Kind {
         MERGED,
@@ -72,12 +76,18 @@ public class PullRequestMergeService {
 
     public record Result(PrRef pr, Kind kind, Instant mergedAt, String mergeSha) {}
 
+    /** {@code method} is null for a verification, which merges nothing. */
     public record MergeOutcome(PullRequestMergeMethod method, List<Result> results) {
         public boolean isEmpty() {
             return results.isEmpty();
         }
+
+        public boolean verification() {
+            return method == null;
+        }
     }
 
+    /** {@code method} is null for a verification, which merges nothing. */
     public record MergePlan(
             PullRequestMergeMethod method, List<Result> alreadyMerged, List<PrRef> toInspect, List<String> blockers) {}
 
@@ -95,6 +105,18 @@ public class PullRequestMergeService {
 
     /** Makes no GitHub call and resolves no credential, so a row recorded as merged never costs one. */
     public MergePlan planMerge(UUID runId, PullRequestMergeMethod method) {
+        return plan(runId, Objects.requireNonNull(method, "method"));
+    }
+
+    /**
+     * What a verify-only gate asks the Worker to read: the same rows {@link #planMerge} would list,
+     * none of which it may merge.
+     */
+    public MergePlan planVerification(UUID runId) {
+        return plan(runId, null);
+    }
+
+    private MergePlan plan(UUID runId, PullRequestMergeMethod method) {
         List<RunPullRequest> rows = prRepo.findByWorkflowRunId(runId).stream()
                 .sorted(Comparator.comparing(RunPullRequest::getCreatedAt).thenComparing(RunPullRequest::getId))
                 .toList();
@@ -134,6 +156,15 @@ public class PullRequestMergeService {
         List<Result> allResults = new ArrayList<>();
         List<Result> merged = new ArrayList<>();
         for (WorkerPrResult worker : results) {
+            // A verification merges nothing, so a Worker claiming a merge for one is not believed.
+            if (plan.method() == null && worker.kind() != Kind.ALREADY_MERGED) {
+                log.warn(
+                        "Run {}: dropping a {} result for pull request row {} on a verification",
+                        runId,
+                        worker.kind(),
+                        worker.rowId());
+                continue;
+            }
             PrRef ref = inspected.get(worker.rowId());
             if (ref != null) {
                 Result result = new Result(ref, worker.kind(), worker.mergedAt(), worker.mergeSha());
@@ -154,7 +185,9 @@ public class PullRequestMergeService {
                     worker.rowId());
         }
         allResults.addAll(alreadyMerged.values());
-        audit(runId, plan.method(), merged, heldApprovalId);
+        if (plan.method() != null) {
+            audit(runId, plan.method(), merged, heldApprovalId);
+        }
         return new MergeOutcome(plan.method(), allResults);
     }
 
@@ -193,6 +226,10 @@ public class PullRequestMergeService {
     public String note(MergeOutcome outcome) {
         if (outcome.isEmpty()) {
             return null;
+        }
+        if (outcome.verification()) {
+            return "Pull requests verified merged into their default branch: "
+                    + String.join(", ", labelsOf(outcome, Kind.ALREADY_MERGED)) + ".";
         }
         List<String> merged = labelsOf(outcome, Kind.MERGED);
         List<String> alreadyMerged = labelsOf(outcome, Kind.ALREADY_MERGED);
@@ -246,7 +283,8 @@ public class PullRequestMergeService {
                     + ": cannot determine its repository or number — merge it by hand, then " + "approve again");
         }
         String ownerRepo = RepoNameUtil.deriveOwnerRepoName(repo.getUrl());
-        return ResolvedRef.of(new PrRef(row.getId(), ownerRepo + "#" + number, row.getPrUrl(), ownerRepo, number));
+        return ResolvedRef.of(new PrRef(
+                row.getId(), ownerRepo + "#" + number, row.getPrUrl(), ownerRepo, number, repo.getDefaultBranch()));
     }
 
     /** For a row already recorded as merged — a display label is all it needs, never a GitHub call. */
@@ -256,7 +294,12 @@ public class PullRequestMergeService {
             return resolved.ref();
         }
         return new PrRef(
-                row.getId(), row.getPrUrl(), row.getPrUrl(), null, row.getPrNumber() == null ? -1 : row.getPrNumber());
+                row.getId(),
+                row.getPrUrl(),
+                row.getPrUrl(),
+                null,
+                row.getPrNumber() == null ? -1 : row.getPrNumber(),
+                null);
     }
 
     /**

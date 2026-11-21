@@ -34,22 +34,26 @@ type GateCompare struct {
 	BaseSha   string    `json:"baseSha"`
 }
 
-// GatePR is one registered pull request, in the order it must merge.
+// GatePR is one registered pull request, in the order it must merge. DefaultBranch is its
+// repository's default branch, which a verify-only gate requires it to have merged into.
 type GatePR struct {
-	RowID     uuid.UUID `json:"rowId"`
-	OwnerRepo string    `json:"ownerRepo"`
-	Number    int       `json:"number"`
-	Label     string    `json:"label"`
-	PRURL     string    `json:"prUrl"`
+	RowID         uuid.UUID `json:"rowId"`
+	OwnerRepo     string    `json:"ownerRepo"`
+	Number        int       `json:"number"`
+	Label         string    `json:"label"`
+	PRURL         string    `json:"prUrl"`
+	DefaultBranch string    `json:"defaultBranch"`
 }
 
-// GateGitHubParams.NodeExecutionID is the gate's execution, read before every merge.
+// GateGitHubParams.NodeExecutionID is the gate's execution, read before every merge. VerifyOnly
+// only reads the pull requests, to confirm each already merged; it never compares or merges.
 type GateGitHubParams struct {
 	RunID           uuid.UUID     `json:"runId"`
 	NodeExecutionID uuid.UUID     `json:"nodeExecutionId"`
 	Compares        []GateCompare `json:"compares"`
 	PRs             []GatePR      `json:"prs"`
 	MergeMethod     string        `json:"mergeMethod"`
+	VerifyOnly      bool          `json:"verifyOnly"`
 }
 
 type GateCompareResult struct {
@@ -87,6 +91,7 @@ const (
 	gatePhaseCompare = "compare"
 	gatePhaseInspect = "inspect"
 	gatePhaseMerge   = "merge"
+	gatePhaseVerify  = "verify"
 )
 
 // gateProgress is what every heartbeat saves for a retry. A retry that finds Phase merge skips the
@@ -118,6 +123,9 @@ func (a *Activities) RunGateGitHubSteps(ctx context.Context, p GateGitHubParams)
 	if p.NodeExecutionID == uuid.Nil {
 		return res, temporal.NewNonRetryableApplicationError(
 			"gate steps without the gate's execution, which every merge is checked against", "GateExecution", nil)
+	}
+	if p.VerifyOnly {
+		return a.verifyMerged(ctx, p)
 	}
 	if len(p.Compares) == 0 && len(p.PRs) == 0 {
 		return res, nil
@@ -171,6 +179,80 @@ func (a *Activities) RunGateGitHubSteps(ctx context.Context, p GateGitHubParams)
 		return res, nil
 	}
 	return res, s.merge(ctx, in.queue, &res)
+}
+
+// verifyMerged confirms every pull request is already merged into its repository's default
+// branch. It reads only: a plan that asks it to compare or merge is malformed, never half-obeyed.
+func (a *Activities) verifyMerged(ctx context.Context, p GateGitHubParams) (GateGitHubResult, error) {
+	res := GateGitHubResult{Compares: []GateCompareResult{}, Merges: []GatePRResult{}}
+	if p.MergeMethod != "" || len(p.Compares) > 0 {
+		return res, temporal.NewNonRetryableApplicationError(
+			"a verify-only gate neither compares nor merges", "GateVerifyOnly", nil)
+	}
+	// Reported as verified, an empty list would close the work with nothing checked.
+	if len(p.PRs) == 0 {
+		return res, temporal.NewNonRetryableApplicationError(
+			"a verify-only gate has no pull request to verify", "GateVerifyOnly", nil)
+	}
+	for _, pr := range p.PRs {
+		if pr.DefaultBranch == "" {
+			return res, temporal.NewNonRetryableApplicationError(
+				prLabel(pr)+" has no default branch to verify it was merged into", "GateDefaultBranch", nil)
+		}
+	}
+	if a.credentials == nil || a.gh == nil {
+		return res, errors.New("this Worker has no GitHub credentials or client configured")
+	}
+	tok, err := a.credentials.GitHubToken(ctx, p.RunID)
+	if err != nil {
+		return res, fmt.Errorf("obtain GitHub token for run %s: %w", p.RunID, err)
+	}
+	if strings.TrimSpace(tok.Value) == "" {
+		return res, errors.New("credential provider returned a blank GitHub token")
+	}
+	s := &gateSteps{gh: a.gh, token: tok.Value, runID: p.RunID, gateExecID: p.NodeExecutionID}
+	return res, s.verify(ctx, p.PRs, &res)
+}
+
+// verify records each pull request merged into its default branch as ALREADY_MERGED, and refuses
+// if any is not: a merge into another branch is no proof the change reached the default branch.
+func (s *gateSteps) verify(ctx context.Context, prs []GatePR, res *GateGitHubResult) error {
+	var blockers []string
+	for i, pr := range prs {
+		s.beat(ctx, gatePhaseVerify, i)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		label := prLabel(pr)
+		detail, err := s.gh.PullRequest(ctx, s.token, pr.OwnerRepo, pr.Number)
+		if err != nil {
+			reason, refused := readRefusal(err, pr.OwnerRepo, label)
+			if !refused {
+				return failed(ctx, "verify "+label, err)
+			}
+			if !slices.Contains(blockers, reason) {
+				blockers = append(blockers, reason)
+			}
+			continue
+		}
+		switch {
+		case detail.Merged && detail.BaseRef == pr.DefaultBranch:
+			res.Merges = append(res.Merges,
+				GatePRResult{RowID: pr.RowID, Kind: GatePRAlreadyMerged, MergedAt: utcOrNow(detail.MergedAt)})
+		case detail.Merged:
+			blockers = append(blockers, fmt.Sprintf("%s was merged into %s, not the default branch %s",
+				label, detail.BaseRef, pr.DefaultBranch))
+		case detail.State == "closed":
+			blockers = append(blockers, label+" was closed without being merged")
+		default:
+			blockers = append(blockers, label+" is not merged")
+		}
+	}
+	if len(blockers) > 0 {
+		res.Refused = "Every pull request must already be merged into its repository's default branch. " +
+			strings.Join(blockers, "; ") + "."
+	}
+	return nil
 }
 
 func refusalBeforeMerging(in inspection) string {

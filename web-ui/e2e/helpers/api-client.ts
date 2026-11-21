@@ -609,6 +609,19 @@ export class TestApiClient {
     return this.patch(`/api/v1/tasks/${id}/complete`);
   }
 
+  async getTask(id: string): Promise<Task> {
+    return this.get(`/api/v1/tasks/${id}`);
+  }
+
+  /**
+   * Closes a Task as delivered elsewhere (mirrors useCloseTaskAsDelivered): starts its Delivery
+   * check run and returns the Task, `in_progress` with that run as `latestRunId`. The Task turns
+   * `done` only once the run verifies every pull request merged — pair with `waitForTaskStatus`.
+   */
+  async closeTaskAsDelivered(id: string, pullRequestUrls: string[], note: string): Promise<Task> {
+    return this.post(`/api/v1/tasks/${id}/delivery-check`, { pullRequestUrls, note });
+  }
+
   // ── Story specs ──────────────────────────────────────────────────
   //
   // A Task starts only once its Story's spec is approved. Designing runs E2eTestDataSeeder's mock
@@ -930,6 +943,26 @@ export class TestApiClient {
     if (run) return run;
     throw new Error(
       `Run ${runId} did not reach status [${targetStatuses.join(", ")}] within ${timeoutMs}ms`,
+    );
+  }
+
+  async waitForTaskStatus(
+    taskId: string,
+    targetStatuses: string[],
+    timeoutMs = 60_000,
+    pollIntervalMs = 2_000,
+  ): Promise<Task> {
+    const task = await pollUntil(
+      async () => {
+        const current = await this.getTask(taskId);
+        return targetStatuses.includes(current.status) ? current : undefined;
+      },
+      timeoutMs,
+      pollIntervalMs,
+    );
+    if (task) return task;
+    throw new Error(
+      `Task ${taskId} did not reach status [${targetStatuses.join(", ")}] within ${timeoutMs}ms`,
     );
   }
 

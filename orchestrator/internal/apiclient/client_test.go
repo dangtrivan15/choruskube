@@ -633,6 +633,32 @@ func TestPlanGateFinalize_MapsComparesAndPullRequests(t *testing.T) {
 	}, plan)
 }
 
+func TestPlanGateFinalize_DecodesAVerifyOnlyPlan(t *testing.T) {
+	rowID := uuid.New()
+	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{
+			"outcome": "proceed", "reason": null, "compares": [],
+			"prs": [{"rowId": "%s", "ownerRepo": "acme/api", "number": 42, "label": "api", "prUrl": "https://github.com/acme/api/pull/42", "defaultBranch": "trunk"}],
+			"mergeMethod": null, "writesRoadmap": false, "verifyOnly": true
+		}`, rowID)
+	})
+
+	plan, err := client.PlanGateFinalize(context.Background(), uuid.New(), uuid.New(), uuid.New())
+	require.NoError(t, err)
+	writesRoadmap := false
+	assert.Equal(t, GatePlanResponse{
+		Outcome:  "proceed",
+		Compares: []GateCompareItem{},
+		PRs: []GatePRItem{{
+			RowID: rowID, OwnerRepo: "acme/api", Number: 42, Label: "api", PRURL: "https://github.com/acme/api/pull/42",
+			DefaultBranch: "trunk",
+		}},
+		VerifyOnly:    true,
+		WritesRoadmap: &writesRoadmap,
+	}, plan)
+}
+
 func TestPlanGateFinalize_HoldCarriesNoWork(t *testing.T) {
 	_, client := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

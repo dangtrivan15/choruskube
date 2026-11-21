@@ -6,6 +6,7 @@ public final class GraphIds {
     public static final String ROADMAP_PROVISIONER = "roadmap-provisioner";
     public static final String STORY_DESIGN = "story-design";
     public static final String TASK_DELIVERY = "task-delivery";
+    public static final String DELIVERY_CHECK = "delivery-check";
 
     private GraphIds() {}
 }

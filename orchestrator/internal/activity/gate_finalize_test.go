@@ -98,6 +98,29 @@ func TestPlanGateFinalize_MapsThePlanIntoTheWorkersTypes(t *testing.T) {
 	}, plan)
 }
 
+func TestPlanGateFinalize_MapsAVerifyOnlyPlan(t *testing.T) {
+	rowID := uuid.New()
+	f := newGateFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{
+			"outcome": "proceed", "reason": null, "compares": [],
+			"prs": [{"rowId": "%s", "ownerRepo": "acme/api", "number": 42, "label": "api", "prUrl": "https://github.com/acme/api/pull/42", "defaultBranch": "trunk"}],
+			"mergeMethod": null, "writesRoadmap": false, "verifyOnly": true
+		}`, rowID)
+	})
+
+	plan, err := f.acts.PlanGateFinalize(withWorkflowRunID(t, f.runID), f.approvalRef())
+	require.NoError(t, err)
+	assert.Equal(t, GatePlan{
+		Outcome:  GatePlanProceed,
+		Compares: []GateCompare{},
+		PRs: []GatePR{{
+			RowID: rowID, OwnerRepo: "acme/api", Number: 42, Label: "api", PRURL: "https://github.com/acme/api/pull/42",
+			DefaultBranch: "trunk",
+		}},
+		VerifyOnly: true,
+	}, plan)
+}
+
 func TestPlanGateFinalize_HoldAndRefusedCarryNoWork(t *testing.T) {
 	f := newGateFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"outcome":"refused","reason":"nothing to merge","compares":[],"prs":[],"mergeMethod":null,"writesRoadmap":false}`))
@@ -422,7 +445,7 @@ func TestWorkerMirroredTypes_KeepTheWorkersJSONKeys(t *testing.T) {
 
 	task := uuid.MustParse("55555555-5555-5555-5555-555555555555")
 	compare := GateCompare{GitRepoID: repo, OwnerRepo: "acme/api", Branch: "main", BaseSha: "abc"}
-	pr := GatePR{RowID: row, OwnerRepo: "acme/api", Number: 7, Label: "api", PRURL: "https://example.test/pull/7"}
+	pr := GatePR{RowID: row, OwnerRepo: "acme/api", Number: 7, Label: "api", PRURL: "https://example.test/pull/7", DefaultBranch: "main"}
 	compareResult := GateCompareResult{GitRepoID: repo, AheadBy: 2, BaseGone: true}
 	merged := GatePRResult{RowID: row, Kind: "MERGED", MergedAt: &at, MergeSha: "deadbeef"}
 	issue := GateIssue{TaskID: task, GitRepoID: repo, OwnerRepo: "acme/api", Title: "t", Body: "b"}
@@ -434,13 +457,21 @@ func TestWorkerMirroredTypes_KeepTheWorkersJSONKeys(t *testing.T) {
 		"GateCompare": {compare,
 			`{"gitRepoId":"11111111-1111-1111-1111-111111111111","ownerRepo":"acme/api","branch":"main","baseSha":"abc"}`},
 		"GatePR": {pr,
-			`{"rowId":"22222222-2222-2222-2222-222222222222","ownerRepo":"acme/api","number":7,"label":"api","prUrl":"https://example.test/pull/7"}`},
+			`{"rowId":"22222222-2222-2222-2222-222222222222","ownerRepo":"acme/api","number":7,"label":"api","prUrl":"https://example.test/pull/7","defaultBranch":"main"}`},
 		"GateGitHubParams": {GateGitHubParams{RunID: run, NodeExecutionID: gate, Compares: []GateCompare{compare}, PRs: []GatePR{pr}, MergeMethod: "squash"},
 			`{"runId":"33333333-3333-3333-3333-333333333333",
 			  "nodeExecutionId":"44444444-4444-4444-4444-444444444444",
 			  "compares":[{"gitRepoId":"11111111-1111-1111-1111-111111111111","ownerRepo":"acme/api","branch":"main","baseSha":"abc"}],
-			  "prs":[{"rowId":"22222222-2222-2222-2222-222222222222","ownerRepo":"acme/api","number":7,"label":"api","prUrl":"https://example.test/pull/7"}],
-			  "mergeMethod":"squash"}`},
+			  "prs":[{"rowId":"22222222-2222-2222-2222-222222222222","ownerRepo":"acme/api","number":7,"label":"api","prUrl":"https://example.test/pull/7","defaultBranch":"main"}],
+			  "mergeMethod":"squash",
+			  "verifyOnly":false}`},
+		"GateGitHubParams verify-only": {GateGitHubParams{RunID: run, NodeExecutionID: gate, Compares: []GateCompare{}, PRs: []GatePR{pr}, VerifyOnly: true},
+			`{"runId":"33333333-3333-3333-3333-333333333333",
+			  "nodeExecutionId":"44444444-4444-4444-4444-444444444444",
+			  "compares":[],
+			  "prs":[{"rowId":"22222222-2222-2222-2222-222222222222","ownerRepo":"acme/api","number":7,"label":"api","prUrl":"https://example.test/pull/7","defaultBranch":"main"}],
+			  "mergeMethod":"",
+			  "verifyOnly":true}`},
 		"GateCompareResult": {compareResult,
 			`{"gitRepoId":"11111111-1111-1111-1111-111111111111","aheadBy":2,"baseGone":true}`},
 		"GatePRResult": {merged,
@@ -570,6 +601,18 @@ func TestGateParams_RoundTripThroughTheDataConverter(t *testing.T) {
 		var resultOut GateIssuesResult
 		roundTrip(t, result, &resultOut)
 		assert.Equal(t, result, resultOut)
+	})
+	t.Run("verify-only plan and GitHub params", func(t *testing.T) {
+		prs := []GatePR{{RowID: uuid.New(), OwnerRepo: "acme/api", Number: 1, Label: "api", PRURL: "u", DefaultBranch: "trunk"}}
+		plan := GatePlan{Outcome: GatePlanProceed, Compares: []GateCompare{}, PRs: prs, VerifyOnly: true}
+		var planOut GatePlan
+		roundTrip(t, plan, &planOut)
+		assert.Equal(t, plan, planOut)
+
+		params := GateGitHubParams{RunID: ref.RunID, NodeExecutionID: ref.NodeExecutionID, Compares: []GateCompare{}, PRs: prs, VerifyOnly: true}
+		var paramsOut GateGitHubParams
+		roundTrip(t, params, &paramsOut)
+		assert.Equal(t, params, paramsOut)
 	})
 	t.Run("plan and step result", func(t *testing.T) {
 		in := GatePlan{

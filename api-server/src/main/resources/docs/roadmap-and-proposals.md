@@ -72,6 +72,23 @@ move it to `done`. Completion is gated on that most recent run being terminal �
 Task done while a run is still in progress, and there is no way to mark a Task done without ever
 running it.
 
+### Closing a Task delivered elsewhere
+
+When a Task's work merged through pull requests made outside ChorusKube, click **Close as
+delivered** on the Task detail view. List the pull request URLs, one per line, and add a note
+saying where and why the work was delivered. Every pull request must be in a repository of the
+Task's Software Project. The action is available while the Task is in `backlog`, or `in_progress`
+once its latest run has ended.
+
+ChorusKube starts a short **Delivery Check** run of the Task. It does no agent work: its one gate
+checks that each pull request is merged into its repository's default branch, and when every one
+is, the run completes and the Task moves to `done`. A Task's blockers and its Story's spec are not
+checked, because this records work that already landed rather than starting any.
+
+If a pull request is not merged, or merged into another branch, the check stops at its gate with
+the reason. Merge it and approve the gate to check again, or cancel the run and close the Task
+again with the right pull requests.
+
 ## Status and Progress Are Derived, Not Set
 
 Only a Task has a status you set directly (`backlog` → `in_progress` → `done`, driven by

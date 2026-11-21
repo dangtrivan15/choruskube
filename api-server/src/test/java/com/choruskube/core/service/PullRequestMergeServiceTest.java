@@ -65,11 +65,11 @@ class PullRequestMergeServiceTest {
         when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(merged, alreadyMerged, closed));
 
         var mergedRef =
-                new PullRequestMergeService.PrRef(merged.getId(), "org/repo#1", merged.getPrUrl(), "org/repo", 1);
+                new PullRequestMergeService.PrRef(merged.getId(), "org/repo#1", merged.getPrUrl(), "org/repo", 1, null);
         var alreadyRef = new PullRequestMergeService.PrRef(
-                alreadyMerged.getId(), "org/repo#2", alreadyMerged.getPrUrl(), "org/repo", 2);
+                alreadyMerged.getId(), "org/repo#2", alreadyMerged.getPrUrl(), "org/repo", 2, null);
         var closedRef =
-                new PullRequestMergeService.PrRef(closed.getId(), "org/repo#3", closed.getPrUrl(), "org/repo", 3);
+                new PullRequestMergeService.PrRef(closed.getId(), "org/repo#3", closed.getPrUrl(), "org/repo", 3, null);
         var outcome = new PullRequestMergeService.MergeOutcome(
                 PullRequestMergeMethod.squash,
                 List.of(
@@ -104,9 +104,9 @@ class PullRequestMergeServiceTest {
 
     @Test
     void note_combinesMergedAlreadyMergedAndSkippedClosed() {
-        var mergedRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
-        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#2", "u2", "org/repo", 2);
-        var closedRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#3", "u3", "org/repo", 3);
+        var mergedRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1, null);
+        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#2", "u2", "org/repo", 2, null);
+        var closedRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#3", "u3", "org/repo", 3, null);
         var outcome = new PullRequestMergeService.MergeOutcome(
                 PullRequestMergeMethod.squash,
                 List.of(
@@ -133,7 +133,7 @@ class PullRequestMergeServiceTest {
 
     @Test
     void note_nothingMergedThisTime_saysNone() {
-        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#2", "u2", "org/repo", 2);
+        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#2", "u2", "org/repo", 2, null);
         var outcome = new PullRequestMergeService.MergeOutcome(
                 PullRequestMergeMethod.squash,
                 List.of(new PullRequestMergeService.Result(
@@ -172,6 +172,67 @@ class PullRequestMergeServiceTest {
             assertThat(ref.number()).isEqualTo(3);
         });
         verifyNoInteractions(auditSink);
+    }
+
+    @Test
+    void planVerification_listsTheSameRowsWithEachRepositorysDefaultBranch_andNoMethod() {
+        RunPullRequest merged = pr(1, Instant.parse("2026-01-01T00:00:00Z"));
+        merged.setMergedAt(Instant.parse("2026-01-02T00:00:00Z"));
+        RunPullRequest open = pr(2, Instant.parse("2026-01-02T00:00:00Z"));
+        when(prRepo.findByWorkflowRunId(runId)).thenReturn(List.of(open, merged));
+        GitRepo repo = new GitRepo();
+        repo.setUrl("https://github.com/org/repo.git");
+        repo.setDefaultBranch("trunk");
+        when(gitRepoRepo.findById(gitRepoId)).thenReturn(Optional.of(repo));
+
+        var plan = service().planVerification(runId);
+
+        assertThat(plan.method()).isNull();
+        assertThat(plan.alreadyMerged()).singleElement().satisfies(r -> assertThat(r.pr().rowId())
+                .isEqualTo(merged.getId()));
+        assertThat(plan.toInspect()).singleElement().satisfies(ref -> {
+            assertThat(ref.rowId()).isEqualTo(open.getId());
+            assertThat(ref.defaultBranch()).isEqualTo("trunk");
+        });
+        verifyNoInteractions(auditSink);
+    }
+
+    @Test
+    void outcomeOf_verification_believesOnlyAlreadyMerged_andAuditsNothing() {
+        var verified = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1, "main");
+        var claimed = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#2", "u2", "org/repo", 2, "main");
+        var plan = new PullRequestMergeService.MergePlan(null, List.of(), List.of(verified, claimed), List.of());
+        Instant at = Instant.parse("2026-01-03T00:00:00Z");
+
+        var outcome = service()
+                .outcomeOf(
+                        runId,
+                        plan,
+                        List.of(
+                                new PullRequestMergeService.WorkerPrResult(
+                                        verified.rowId(), PullRequestMergeService.Kind.ALREADY_MERGED, at, null),
+                                new PullRequestMergeService.WorkerPrResult(
+                                        claimed.rowId(), PullRequestMergeService.Kind.MERGED, at, "sha")),
+                        null);
+
+        assertThat(outcome.verification()).isTrue();
+        assertThat(outcome.results()).singleElement().satisfies(r -> {
+            assertThat(r.pr()).isEqualTo(verified);
+            assertThat(r.kind()).isEqualTo(PullRequestMergeService.Kind.ALREADY_MERGED);
+        });
+        verifyNoInteractions(auditSink);
+    }
+
+    @Test
+    void note_verification_namesTheVerifiedPullRequests() {
+        var ref = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1, "main");
+        var outcome = new PullRequestMergeService.MergeOutcome(
+                null,
+                List.of(new PullRequestMergeService.Result(
+                        ref, PullRequestMergeService.Kind.ALREADY_MERGED, null, null)));
+
+        assertThat(service().note(outcome))
+                .isEqualTo("Pull requests verified merged into their default branch: org/repo#1.");
     }
 
     @Test
@@ -225,9 +286,9 @@ class PullRequestMergeServiceTest {
 
     @Test
     void outcomeOf_auditsOnlyWhatTheWorkerMerged() throws Exception {
-        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
-        var mergedRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#2", "u2", "org/repo", 2);
-        var raceRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#3", "u3", "org/repo", 3);
+        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1, null);
+        var mergedRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#2", "u2", "org/repo", 2, null);
+        var raceRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#3", "u3", "org/repo", 3, null);
         var plan = new PullRequestMergeService.MergePlan(
                 PullRequestMergeMethod.squash,
                 List.of(new PullRequestMergeService.Result(
@@ -266,7 +327,7 @@ class PullRequestMergeServiceTest {
 
     @Test
     void outcomeOf_auditWriteFailure_neverChangesTheOutcome() {
-        var ref = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
+        var ref = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1, null);
         var plan = new PullRequestMergeService.MergePlan(
                 PullRequestMergeMethod.squash, List.of(), List.of(ref), List.of());
         doThrow(new RuntimeException("audit store down"))
@@ -289,7 +350,7 @@ class PullRequestMergeServiceTest {
 
     @Test
     void outcomeOf_recordsNoAuditWhenTheWorkerMergedNothing() {
-        var ref = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
+        var ref = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1, null);
         var plan = new PullRequestMergeService.MergePlan(
                 PullRequestMergeMethod.squash, List.of(), List.of(ref), List.of());
 
@@ -310,7 +371,7 @@ class PullRequestMergeServiceTest {
 
     @Test
     void outcomeOf_ignoresAResultForARowThePlanNeverListed() {
-        var ref = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
+        var ref = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1, null);
         var plan = new PullRequestMergeService.MergePlan(
                 PullRequestMergeMethod.squash, List.of(), List.of(ref), List.of());
 
@@ -328,7 +389,7 @@ class PullRequestMergeServiceTest {
 
     @Test
     void outcomeOf_rowRecordedByAnEarlierStep_keepsWorkersKind_auditsOnce() {
-        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
+        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1, null);
         var plan = new PullRequestMergeService.MergePlan(
                 PullRequestMergeMethod.squash,
                 List.of(new PullRequestMergeService.Result(
@@ -358,8 +419,9 @@ class PullRequestMergeServiceTest {
 
     @Test
     void outcomeOf_unplannedRow_stillDropped() {
-        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1);
-        var inspectedRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#2", "u2", "org/repo", 2);
+        var alreadyRef = new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#1", "u1", "org/repo", 1, null);
+        var inspectedRef =
+                new PullRequestMergeService.PrRef(UUID.randomUUID(), "org/repo#2", "u2", "org/repo", 2, null);
         var plan = new PullRequestMergeService.MergePlan(
                 PullRequestMergeMethod.squash,
                 List.of(new PullRequestMergeService.Result(
