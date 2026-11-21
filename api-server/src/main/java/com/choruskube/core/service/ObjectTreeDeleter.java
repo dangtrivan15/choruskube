@@ -42,9 +42,8 @@ public class ObjectTreeDeleter {
     }
 
     /**
-     * The bucket's top-level common prefixes (one per organization's storage prefix), each ending
-     * in {@code /}. Reaches an organization whose rows are already gone, unlike a lookup keyed on a
-     * run or an organization row.
+     * The bucket's top-level common prefixes, one per storage prefix, each ending in {@code /}. Read
+     * from the bucket rather than the database, so a prefix that no row names any more is still found.
      */
     public List<String> storagePrefixes() {
         return s3Client.listObjectsV2Paginator(b -> b.bucket(bucket).delimiter("/")).commonPrefixes().stream()

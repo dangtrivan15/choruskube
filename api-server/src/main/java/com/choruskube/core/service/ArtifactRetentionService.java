@@ -80,8 +80,8 @@ public class ArtifactRetentionService {
     }
 
     /**
-     * Deletes staging objects older than {@link #STAGING_MAX_AGE} under every organization's
-     * staging area, while a retention period is set — otherwise returns 0 without touching the
+     * Deletes staging objects older than {@link #STAGING_MAX_AGE} under every storage prefix's
+     * staging segment, while a retention period is set — otherwise returns 0 without touching the
      * store. Each prefix is swept independently: a failure on one is logged and the rest still run.
      * Never touches anything under a run's own tree. Returns how many objects it deleted.
      */
