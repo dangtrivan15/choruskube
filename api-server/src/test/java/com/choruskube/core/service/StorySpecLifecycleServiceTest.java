@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -12,6 +13,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.choruskube.core.SharedContextTest;
+import com.choruskube.core.StorySpecFixtures;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.StoryDesignGraph;
 import com.choruskube.core.dto.EpicRequest;
@@ -28,9 +30,12 @@ import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.GitRepoRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.NodeExecutionRepository;
+import com.choruskube.core.repository.StorySpecVersionMetaView;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -40,8 +45,10 @@ import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 import software.amazon.awssdk.core.ResponseInputStream;
@@ -81,6 +88,12 @@ class StorySpecLifecycleServiceTest extends SharedContextTest {
     @Autowired
     private NodeExecutionRepository execRepo;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
     @MockitoBean
     private RunEventPublisher runEventPublisher;
 
@@ -105,8 +118,8 @@ class StorySpecLifecycleServiceTest extends SharedContextTest {
     void recordCompletedDesigns_recordsApprovedSpecFromLatestReview() {
         StoryResponse story = makeStory("lifecycle-latest-review");
         WorkflowRun run = designRun(story.id(), WorkflowRunStatus.completed);
-        reviewExecution(run, 1, "# Spec as first reviewed");
-        reviewExecution(run, 2, "# Spec as finally approved");
+        reviewExecution(run, 1, "# Spec as first reviewed", "Reasoning v1");
+        reviewExecution(run, 2, "# Spec as finally approved", "Reasoning v2 final");
         clearInvocations(runEventPublisher);
 
         int recorded = lifecycle.recordCompletedDesigns();
@@ -116,7 +129,139 @@ class StorySpecLifecycleServiceTest extends SharedContextTest {
         assertThat(current.getContent()).isEqualTo("# Spec as finally approved");
         assertThat(current.getVersion()).isEqualTo(1);
         assertThat(current.getRunId()).isEqualTo(run.getId());
+        assertThat(current.getFinalReview()).isEqualTo("Reasoning v2 final");
+        assertThat(current.getReviewCapturedAt()).isNotNull();
         verify(runEventPublisher).publishRoadmapItemChanged("story", story.id(), story.stage());
+    }
+
+    @Test
+    void recordCompletedDesigns_reviewFileMissing_recordsWithNoReviewButStillCaptured() {
+        StoryResponse story = makeStory("lifecycle-review-missing");
+        WorkflowRun run = designRun(story.id(), WorkflowRunStatus.completed);
+        reviewExecution(run, 1, "# Spec"); // no review text staged: the read answers NoSuchKeyException
+
+        lifecycle.recordCompletedDesigns();
+
+        StorySpecVersion current = specService.current(story.id()).orElseThrow();
+        assertThat(current.getFinalReview()).isNull();
+        assertThat(current.getReviewCapturedAt()).isNotNull();
+    }
+
+    @Test
+    void recordCompletedDesigns_reviewReadFailsOtherwise_leavesTheRunUnrecorded() {
+        StoryResponse story = makeStory("lifecycle-review-storage-down");
+        WorkflowRun run = designRun(story.id(), WorkflowRunStatus.completed);
+        reviewExecution(run, 1, "# Spec", "Reasoning");
+        String reviewKey = "system/runs/" + run.getId() + "/outputs/review-1/story_spec_review.md";
+        when(s3Client.getObject(
+                        ArgumentMatchers.<GetObjectRequest>argThat(req -> req != null && reviewKey.equals(req.key()))))
+                .thenThrow(new IllegalStateException("storage down"));
+
+        List<ILoggingEvent> events = captureLogs(() -> lifecycle.recordCompletedDesigns());
+
+        assertThat(specService.current(story.id())).isEmpty();
+        assertThat(errorsNaming(events, run.getId()))
+                .singleElement()
+                .satisfies(m -> assertThat(m).contains("will be retried").doesNotContain("deleted"));
+    }
+
+    @Test
+    void backfillReviews_fillsAnUncapturedVersionFromItsRunsReviewFile() {
+        StoryResponse story = makeStory("lifecycle-backfill-fills");
+        WorkflowRun run = designRun(story.id(), WorkflowRunStatus.completed);
+        reviewExecution(run, 1, "# Spec", "Reasoning to backfill");
+        StorySpecVersion version = StorySpecFixtures.insertUncaptured(jdbc, story.id(), run.getId());
+
+        int backfilled = lifecycle.backfillReviews();
+
+        assertThat(backfilled).isEqualTo(1);
+        StorySpecVersion reloaded = specService.version(story.id(), version.getVersion());
+        assertThat(reloaded.getFinalReview()).isEqualTo("Reasoning to backfill");
+        assertThat(reloaded.getReviewCapturedAt()).isNotNull();
+    }
+
+    @Test
+    void backfillReviews_capturesNoneWhenThereIsNothingToRead() {
+        StoryResponse noReviewExec = makeStory("lifecycle-backfill-no-exec");
+        WorkflowRun runNoExec = designRun(noReviewExec.id(), WorkflowRunStatus.completed);
+        StorySpecVersion versionNoExec = StorySpecFixtures.insertUncaptured(jdbc, noReviewExec.id(), runNoExec.getId());
+
+        StoryResponse missingFile = makeStory("lifecycle-backfill-missing-file");
+        WorkflowRun runMissingFile = designRun(missingFile.id(), WorkflowRunStatus.completed);
+        reviewExecution(runMissingFile, 1, "# Spec"); // no review text staged
+        StorySpecVersion versionMissingFile =
+                StorySpecFixtures.insertUncaptured(jdbc, missingFile.id(), runMissingFile.getId());
+
+        StoryResponse noRun = makeStory("lifecycle-backfill-no-run");
+        int noRunVersion = StorySpecFixtures.approve(jdbc, noRun.id());
+
+        int backfilled = lifecycle.backfillReviews();
+
+        assertThat(backfilled).isEqualTo(3);
+        assertThat(specService
+                        .version(noReviewExec.id(), versionNoExec.getVersion())
+                        .getFinalReview())
+                .isNull();
+        assertThat(specService
+                        .version(noReviewExec.id(), versionNoExec.getVersion())
+                        .getReviewCapturedAt())
+                .isNotNull();
+        assertThat(specService
+                        .version(missingFile.id(), versionMissingFile.getVersion())
+                        .getFinalReview())
+                .isNull();
+        assertThat(specService
+                        .version(missingFile.id(), versionMissingFile.getVersion())
+                        .getReviewCapturedAt())
+                .isNotNull();
+        assertThat(specService.version(noRun.id(), noRunVersion).getFinalReview())
+                .isNull();
+        assertThat(specService.version(noRun.id(), noRunVersion).getReviewCapturedAt())
+                .isNotNull();
+    }
+
+    @Test
+    void backfillReviews_storageFailureLeavesThatVersionUncapturedButStillCapturesOthers() {
+        StoryResponse failing = makeStory("lifecycle-backfill-storage-down");
+        WorkflowRun failingRun = designRun(failing.id(), WorkflowRunStatus.completed);
+        reviewExecution(failingRun, 1, "# Spec", "Unreachable review");
+        StorySpecVersion failingVersion = StorySpecFixtures.insertUncaptured(jdbc, failing.id(), failingRun.getId());
+        String reviewKey = "system/runs/" + failingRun.getId() + "/outputs/review-1/story_spec_review.md";
+        when(s3Client.getObject(
+                        ArgumentMatchers.<GetObjectRequest>argThat(req -> req != null && reviewKey.equals(req.key()))))
+                .thenThrow(new IllegalStateException("storage down"));
+
+        StoryResponse good = makeStory("lifecycle-backfill-storage-good");
+        WorkflowRun goodRun = designRun(good.id(), WorkflowRunStatus.completed);
+        reviewExecution(goodRun, 1, "# Spec", "Reachable review");
+        StorySpecVersion goodVersion = StorySpecFixtures.insertUncaptured(jdbc, good.id(), goodRun.getId());
+
+        List<ILoggingEvent> events = captureLogs(() -> lifecycle.backfillReviews());
+
+        StorySpecVersion reloadedGood = specService.version(good.id(), goodVersion.getVersion());
+        assertThat(reloadedGood.getFinalReview()).isEqualTo("Reachable review");
+        assertThat(specService.uncapturedReviews())
+                .extracting(StorySpecVersionMetaView::getId)
+                .containsExactly(failingVersion.getId());
+        assertThat(events)
+                .filteredOn(e -> e.getLevel() == Level.WARN)
+                .map(ILoggingEvent::getFormattedMessage)
+                .anySatisfy(m -> assertThat(m).contains(failingVersion.getId().toString()));
+    }
+
+    @Test
+    void backfillReviews_secondPass_capturesNothingAndReadsNoStorage() {
+        StoryResponse story = makeStory("lifecycle-backfill-idempotent");
+        WorkflowRun run = designRun(story.id(), WorkflowRunStatus.completed);
+        reviewExecution(run, 1, "# Spec", "Reasoning");
+        StorySpecFixtures.insertUncaptured(jdbc, story.id(), run.getId());
+        lifecycle.backfillReviews();
+        clearInvocations(s3Client);
+
+        int second = lifecycle.backfillReviews();
+
+        assertThat(second).isZero();
+        verify(s3Client, never()).getObject(any(GetObjectRequest.class));
     }
 
     @Test
@@ -155,10 +300,12 @@ class StorySpecLifecycleServiceTest extends SharedContextTest {
         lifecycle.recordCompletedDesigns();
 
         assertThat(specService.versions(story.id()))
-                .extracting(StorySpecVersion::getVersion, StorySpecVersion::getContent, StorySpecVersion::getRunId)
+                .extracting(StorySpecVersionMetaView::getVersion, StorySpecVersionMetaView::getRunId)
                 .containsExactly(
-                        org.assertj.core.groups.Tuple.tuple(1, "# Spec v1", first.getId()),
-                        org.assertj.core.groups.Tuple.tuple(2, "# Spec v2", revision.getId()));
+                        org.assertj.core.groups.Tuple.tuple(1, first.getId()),
+                        org.assertj.core.groups.Tuple.tuple(2, revision.getId()));
+        assertThat(specService.version(story.id(), 1).getContent()).isEqualTo("# Spec v1");
+        assertThat(specService.version(story.id(), 2).getContent()).isEqualTo("# Spec v2");
     }
 
     @Test
@@ -258,6 +405,11 @@ class StorySpecLifecycleServiceTest extends SharedContextTest {
 
     /** A completed Story Spec Review execution; a null {@code spec} leaves its story_spec.md unwritten. */
     private void reviewExecution(WorkflowRun run, int iteration, String spec) {
+        reviewExecution(run, iteration, spec, null);
+    }
+
+    /** As above, plus a null {@code review} leaves its story_spec_review.md unwritten. */
+    private void reviewExecution(WorkflowRun run, int iteration, String spec, String review) {
         TemplateNode reviewNode = templateNodeRepo.findByGraphTemplateId(run.getGraphTemplateId()).stream()
                 .filter(n -> StoryDesignGraph.REVIEW.equals(n.getLabel()))
                 .findFirst()
@@ -276,6 +428,9 @@ class StorySpecLifecycleServiceTest extends SharedContextTest {
         if (spec != null) {
             objects.put(prefix + "story_spec.md", spec);
         }
+        if (review != null) {
+            objects.put(prefix + "story_spec_review.md", review);
+        }
     }
 
     private StoryResponse makeStory(String slug) {
@@ -285,7 +440,11 @@ class StorySpecLifecycleServiceTest extends SharedContextTest {
         r.setName(RepoNameUtil.deriveOwnerRepoName(url));
         GitRepo repo = gitRepoRepo.save(r);
         EpicResponse epic = epicService.create(new EpicRequest("Epic", "D", null, repo.getId()), null);
-        return storyService.create(epic.id(), new StoryRequest("Story", "D"));
+        StoryResponse story = storyService.create(epic.id(), new StoryRequest("Story", "D"));
+        // Flushed so a raw jdbc insert immediately after (the Story spec fixtures) sees this row:
+        // JdbcTemplate bypasses Hibernate, so an unflushed Story would fail that insert's FK check.
+        entityManager.flush();
+        return story;
     }
 
     private static ResponseInputStream<GetObjectResponse> objectBody(String text) {

@@ -8,9 +8,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Records approved Story Design runs as spec versions, then moves Story conflicts on. Polling rather
- * than hooking the gate's finalize paths also covers a crash between completion and the write; both
- * steps are idempotent, so a concurrent pass or replica repeats them harmlessly.
+ * Records approved Story Design runs as spec versions, backfills any version recorded before review
+ * capture existed, then moves Story conflicts on. Polling rather than hooking the gate's finalize
+ * paths also covers a crash between completion and the write; every step is idempotent, so a
+ * concurrent pass or replica repeats them harmlessly.
  */
 @Component
 @ConditionalOnProperty(name = "choruskube.story-spec.enabled", havingValue = "true", matchIfMissing = true)
@@ -24,7 +25,10 @@ public class StorySpecReconciler {
         this.lifecycle = lifecycle;
     }
 
-    /** Records first, so a revision that just completed releases its conflicts in the same pass. */
+    /**
+     * Records first, so a revision that just completed releases its conflicts in the same pass.
+     * Backfills before conflicts, as a revision refuses to start while any version's review is uncaptured.
+     */
     @Scheduled(fixedDelayString = "${choruskube.story-spec.interval:PT10S}")
     public void reconcile() {
         try {
@@ -34,6 +38,14 @@ public class StorySpecReconciler {
             }
         } catch (Exception e) {
             log.error("StorySpecReconciler could not record approved Story specs: {}", e.getMessage(), e);
+        }
+        try {
+            int backfilled = lifecycle.backfillReviews();
+            if (backfilled > 0) {
+                log.info("StorySpecReconciler backfilled {} Story spec version review(s)", backfilled);
+            }
+        } catch (Exception e) {
+            log.error("StorySpecReconciler could not backfill Story spec version reviews: {}", e.getMessage(), e);
         }
         try {
             int processed = lifecycle.processConflicts();

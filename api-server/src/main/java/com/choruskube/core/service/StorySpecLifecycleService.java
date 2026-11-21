@@ -15,6 +15,7 @@ import com.choruskube.core.model.enums.WorkflowRunStatusGroups;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.StoryConflictRepository;
 import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.StorySpecVersionMetaView;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -40,6 +41,7 @@ public class StorySpecLifecycleService {
     private static final Logger log = LoggerFactory.getLogger(StorySpecLifecycleService.class);
 
     static final String SPEC_FILE = "story_spec.md";
+    static final String REVIEW_FILE = "story_spec_review.md";
     static final String GUIDANCE_FILE = "human_guidance.md";
 
     private final WorkflowRunRepository runRepo;
@@ -142,7 +144,13 @@ public class StorySpecLifecycleService {
                     SPEC_FILE);
             return false;
         }
-        StorySpecVersion version = specService.recordApproved(storyId, runId, content);
+        String finalReview;
+        try {
+            finalReview = artifactService.getArtifactContent(runId, review.get().getId(), REVIEW_FILE);
+        } catch (NotFoundException e) {
+            finalReview = null; // the review step ran without recording one, which is a valid outcome
+        }
+        StorySpecVersion version = specService.recordApproved(storyId, runId, content, finalReview);
         // Past this point the version is committed: a failed announcement must not report it unrecorded.
         try {
             announce(storyId);
@@ -155,6 +163,52 @@ public class StorySpecLifecycleService {
                     e);
         }
         return true;
+    }
+
+    /**
+     * Fills versions recorded before review capture existed, from their runs' storage, which still
+     * exists because retention skips a design run until its version's review is captured. Returns
+     * how many it captured. Not transactional: each capture commits on its own, so a storage failure
+     * on one version never rolls back another's, and a second pass over an already-captured version
+     * is a no-op.
+     */
+    public int backfillReviews() {
+        int captured = 0;
+        for (StorySpecVersionMetaView version : specService.uncapturedReviews()) {
+            UUID versionId = version.getId();
+            UUID runId = version.getRunId();
+            try {
+                String finalReview = runId == null ? null : reviewTextFromRun(runId);
+                if (specService.captureReview(versionId, finalReview)) {
+                    captured++;
+                }
+            } catch (Exception e) {
+                warn(
+                        "Could not backfill the final review of Story spec version {} of Story {}; will be retried",
+                        versionId,
+                        version.getStoryId(),
+                        e);
+            }
+        }
+        return captured;
+    }
+
+    /** Null when the run never completed a review, or its review file is gone: both mean "had none". */
+    private String reviewTextFromRun(UUID runId) {
+        AtomicReference<String> text = new AtomicReference<>();
+        // The read is org-checked, and nothing else binds an org on this thread.
+        runScopeBinder.runInScopeOf(runId, () -> {
+            Optional<NodeExecution> review = specService.finalReview(runId);
+            if (review.isEmpty()) {
+                return;
+            }
+            try {
+                text.set(artifactService.getArtifactContent(runId, review.get().getId(), REVIEW_FILE));
+            } catch (NotFoundException e) {
+                // the review step ran without recording one, which is a valid outcome
+            }
+        });
+        return text.get();
     }
 
     /**
@@ -176,10 +230,10 @@ public class StorySpecLifecycleService {
     }
 
     private int processStory(UUID storyId) {
-        Optional<StorySpecVersion> current = specService.current(storyId);
+        Integer currentVersion = specService.currentVersions(List.of(storyId)).get(storyId);
         // No version: the Story was deleted, conflicts and all. An open design run holds every conflict,
         // so one raised during a revision is released against the version it records, never joined to it.
-        if (current.isEmpty() || specService.openDesignRun(storyId).isPresent()) {
+        if (currentVersion == null || specService.openDesignRun(storyId).isPresent()) {
             return 0;
         }
         int processed = 0;
@@ -195,8 +249,8 @@ public class StorySpecLifecycleService {
                 if (!stillWaitedOn(conflict, taskRun.get(), execs)) {
                     close(conflict, taskRun.get());
                     processed++;
-                } else if (current.get().getVersion() > conflict.getRaisedAgainstVersion()) {
-                    if (release(conflict, current.get(), execs)) {
+                } else if (currentVersion > conflict.getRaisedAgainstVersion()) {
+                    if (release(conflict, execs)) {
                         processed++;
                     }
                 } else if (conflict.getRevisionRunId() == null) {
@@ -255,13 +309,14 @@ public class StorySpecLifecycleService {
      * Ordered so a retry after any failure repeats it harmlessly: every write before the decision is
      * idempotent, and the conflict is marked released only once its run has been resumed.
      */
-    private boolean release(StoryConflict conflict, StorySpecVersion current, List<NodeExecution> execs) {
+    private boolean release(StoryConflict conflict, List<NodeExecution> execs) {
         // The orchestrator opens the gate only after Analyze completes; a later pass finds it.
         Optional<NodeExecution> gate =
                 latest(execs, TaskDeliveryGraph.AWAIT_STORY_REVISION, NodeExecutionStatus.awaiting_human);
         if (gate.isEmpty()) {
             return false;
         }
+        StorySpecVersion current = specService.current(conflict.getStoryId()).orElseThrow();
         UUID runId = conflict.getTaskRunId();
         UUID gateId = gate.get().getId();
         int from = conflict.getRaisedAgainstVersion();

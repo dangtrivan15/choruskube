@@ -8,7 +8,6 @@ import com.choruskube.core.exception.ConflictException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.Epic;
 import com.choruskube.core.model.GraphTemplate;
-import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.Story;
 import com.choruskube.core.model.StoryConflict;
 import com.choruskube.core.model.StorySpecVersion;
@@ -19,6 +18,7 @@ import com.choruskube.core.repository.EpicRepository;
 import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.StoryConflictRepository;
 import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.StorySpecVersionReviewView;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import jakarta.persistence.EntityManager;
@@ -34,8 +34,6 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.IntFunction;
 import java.util.stream.Collectors;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,10 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class StoryDesignService {
 
-    private static final Logger log = LoggerFactory.getLogger(StoryDesignService.class);
-
     static final String SPEC_INPUT = "story_spec.md";
-    static final String REVIEW_FILE = "story_spec_review.md";
 
     private final StoryRepository storyRepo;
     private final EpicRepository epicRepo;
@@ -58,7 +53,6 @@ public class StoryDesignService {
     private final AuthorizationService authService;
     private final StorySpecService specService;
     private final UploadService uploadService;
-    private final ArtifactService artifactService;
     private final TemplateGraphIdResolver graphIdResolver;
     private final RunEventPublisher eventPublisher;
     private final EpicReadinessAssembler readinessAssembler;
@@ -77,7 +71,6 @@ public class StoryDesignService {
             AuthorizationService authService,
             StorySpecService specService,
             UploadService uploadService,
-            ArtifactService artifactService,
             TemplateGraphIdResolver graphIdResolver,
             RunEventPublisher eventPublisher,
             EpicReadinessAssembler readinessAssembler,
@@ -92,7 +85,6 @@ public class StoryDesignService {
         this.authService = authService;
         this.specService = specService;
         this.uploadService = uploadService;
-        this.artifactService = artifactService;
         this.graphIdResolver = graphIdResolver;
         this.eventPublisher = eventPublisher;
         this.readinessAssembler = readinessAssembler;
@@ -408,32 +400,24 @@ public class StoryDesignService {
 
     /**
      * The current spec, plus the final review behind every approved version so the revision does
-     * not silently reverse what an earlier review decided. A version with no design run (or whose
-     * run lost its review file) contributes no review.
+     * not silently reverse what an earlier review decided. Reads only the versions, never a run's
+     * storage, so a revision still gets every review once the runs that produced them are gone. A
+     * version with no design run contributes no review; one with a design run whose review the
+     * reconciler has not captured yet refuses the whole start rather than silently drop it.
      */
     private Map<String, String> revisionInputs(StorySpecVersion current) {
         Map<String, String> files = new LinkedHashMap<>();
         files.put(SPEC_INPUT, current.getContent());
-        for (StorySpecVersion version : specService.versions(current.getStoryId())) {
+        for (StorySpecVersionReviewView version : specService.reviews(current.getStoryId())) {
             if (version.getRunId() == null) {
                 continue;
             }
-            Optional<NodeExecution> review = specService.finalReview(version.getRunId());
-            if (review.isEmpty()) {
-                continue;
+            if (version.getReviewCapturedAt() == null) {
+                throw new ConflictException("Story spec v" + version.getVersion() + " (run " + version.getRunId()
+                        + ") has not captured its final review yet; try again once it has");
             }
-            try {
-                files.put(
-                        "prior_review_v" + version.getVersion() + ".md",
-                        artifactService.getArtifactContent(
-                                version.getRunId(), review.get().getId(), REVIEW_FILE));
-            } catch (NotFoundException e) {
-                log.warn(
-                        "Story {} spec v{}: run {} has no {}, so the revision runs without that review",
-                        current.getStoryId(),
-                        version.getVersion(),
-                        version.getRunId(),
-                        REVIEW_FILE);
+            if (isNotBlank(version.getFinalReview())) {
+                files.put("prior_review_v" + version.getVersion() + ".md", version.getFinalReview());
             }
         }
         return files;

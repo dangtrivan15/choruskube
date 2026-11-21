@@ -26,25 +26,42 @@ class StorySpecReconcilerTest {
         reconciler = new StorySpecReconciler(lifecycle);
     }
 
-    /** Recording first lets a revision that just completed release its conflicts in the same pass. */
+    /**
+     * Recording first lets a revision that just completed release its conflicts in the same pass;
+     * backfilling before conflicts lets a conflict-driven revision start against an already-captured
+     * version even when both land in the same tick.
+     */
     @Test
-    void reconcile_recordsCompletedDesignsThenProcessesConflicts() {
+    void reconcile_recordsThenBackfillsThenProcessesConflicts() {
         when(lifecycle.recordCompletedDesigns()).thenReturn(2);
+        when(lifecycle.backfillReviews()).thenReturn(1);
         when(lifecycle.processConflicts()).thenReturn(1);
 
         reconciler.reconcile();
 
         InOrder order = inOrder(lifecycle);
         order.verify(lifecycle).recordCompletedDesigns();
+        order.verify(lifecycle).backfillReviews();
         order.verify(lifecycle).processConflicts();
     }
 
     @Test
-    void reconcile_failingRecordStep_doesNotStopTheConflictStep() {
+    void reconcile_failingRecordStep_doesNotStopTheLaterSteps() {
         when(lifecycle.recordCompletedDesigns()).thenThrow(new IllegalStateException("database unavailable"));
 
         assertThatCode(reconciler::reconcile).doesNotThrowAnyException();
 
+        verify(lifecycle).backfillReviews();
+        verify(lifecycle).processConflicts();
+    }
+
+    @Test
+    void reconcile_failingBackfillStep_doesNotSkipConflictProcessing() {
+        when(lifecycle.backfillReviews()).thenThrow(new IllegalStateException("database unavailable"));
+
+        assertThatCode(reconciler::reconcile).doesNotThrowAnyException();
+
+        verify(lifecycle).recordCompletedDesigns();
         verify(lifecycle).processConflicts();
     }
 
@@ -55,5 +72,6 @@ class StorySpecReconcilerTest {
         assertThatCode(reconciler::reconcile).doesNotThrowAnyException();
 
         verify(lifecycle).recordCompletedDesigns();
+        verify(lifecycle).backfillReviews();
     }
 }

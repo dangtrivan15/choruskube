@@ -285,6 +285,52 @@ class StorySpecLifecycleServiceConflictTest extends SharedContextTest {
         verify(storyDesignService, times(1)).startRevisionForConflicts(eq(storyId), any(), any());
     }
 
+    /** v1 has no design run and {@code recordApproved} captures v2's review on insert: nothing to wait for. */
+    @Test
+    void revision_startsOnAStoryWhoseVersionsAreAllCaptured() {
+        UUID storyId = makeStory("conflict-all-captured");
+        approveSpec(storyId, "# Spec v1");
+        Parked first = parkedTaskRun(storyId, 1);
+        lifecycle.processConflicts();
+        UUID firstRevisionId = specService.openDesignRun(storyId).orElseThrow().getId();
+        completeRevision(storyId, firstRevisionId, "# Spec v2");
+        Parked second = parkedTaskRun(storyId, 2);
+
+        assertThatCode(() -> lifecycle.processConflicts()).doesNotThrowAnyException();
+
+        UUID secondRevisionId = specService.openDesignRun(storyId).orElseThrow().getId();
+        assertThat(secondRevisionId).isNotEqualTo(firstRevisionId);
+        assertThat(conflict(second).getRevisionRunId()).isEqualTo(secondRevisionId);
+        assertThat(conflict(first).getReleasedAt()).isNotNull();
+    }
+
+    @Test
+    void revision_refusedWhileAVersionIsUncaptured_startsOnceTheBackfillCapturesIt() {
+        UUID storyId = makeStory("conflict-uncaptured-review");
+        approveSpec(storyId, "# Spec v1");
+        UUID designRunId = designRun(storyId, WorkflowRunStatus.completed).getId();
+        StorySpecFixtures.insertUncaptured(jdbc, storyId, designRunId);
+        Parked parked = parkedTaskRun(storyId, 2);
+
+        List<ILoggingEvent> warnings = captureWarnings(() -> lifecycle.processConflicts());
+
+        assertThat(conflict(parked).getRevisionRunId()).isNull();
+        assertThat(specService.openDesignRun(storyId)).isEmpty();
+        assertThat(warnings)
+                .filteredOn(e -> e.getFormattedMessage().contains("has not captured its final review yet"))
+                .singleElement()
+                .satisfies(e -> {
+                    assertThat(e.getFormattedMessage()).contains(storyId.toString(), designRunId.toString());
+                    assertThat(e.getThrowableProxy()).isNull();
+                });
+
+        lifecycle.backfillReviews();
+        lifecycle.processConflicts();
+
+        UUID revisionId = specService.openDesignRun(storyId).orElseThrow().getId();
+        assertThat(conflict(parked).getRevisionRunId()).isEqualTo(revisionId);
+    }
+
     @Test
     void awaitGateNotOpen_skipped() {
         UUID storyId = makeStory("conflict-gate-not-open");
@@ -739,7 +785,7 @@ class StorySpecLifecycleServiceConflictTest extends SharedContextTest {
 
     private void completeRevision(UUID storyId, UUID revisionId, String spec) {
         setStatus(revisionId, WorkflowRunStatus.completed);
-        specService.recordApproved(storyId, revisionId, spec);
+        specService.recordApproved(storyId, revisionId, spec, null);
     }
 
     private void setStatus(UUID runId, WorkflowRunStatus status) {

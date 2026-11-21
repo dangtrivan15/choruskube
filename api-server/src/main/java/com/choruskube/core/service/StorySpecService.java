@@ -14,10 +14,13 @@ import com.choruskube.core.model.enums.WorkflowRunStatusGroups;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.StoryConflictRepository;
 import com.choruskube.core.repository.StoryRepository;
+import com.choruskube.core.repository.StorySpecVersionMetaView;
 import com.choruskube.core.repository.StorySpecVersionRepository;
+import com.choruskube.core.repository.StorySpecVersionReviewView;
 import com.choruskube.core.repository.StoryVersionView;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumSet;
@@ -78,9 +81,16 @@ public class StorySpecService {
                 .collect(Collectors.toMap(StoryVersionView::getStoryId, StoryVersionView::getVersion));
     }
 
+    /** Oldest first, without the spec and review text that loading the entity would read. */
     @Transactional(readOnly = true)
-    public List<StorySpecVersion> versions(UUID storyId) {
-        return versionRepo.findByStoryIdOrderByVersionAsc(storyId);
+    public List<StorySpecVersionMetaView> versions(UUID storyId) {
+        return versionRepo.findMetaByStoryIdOrderByVersionAsc(storyId);
+    }
+
+    /** Each version's final review, oldest first, without its spec text. */
+    @Transactional(readOnly = true)
+    public List<StorySpecVersionReviewView> reviews(UUID storyId) {
+        return versionRepo.findReviewsByStoryIdOrderByVersionAsc(storyId);
     }
 
     @Transactional(readOnly = true)
@@ -90,9 +100,14 @@ public class StorySpecService {
                 .orElseThrow(() -> new NotFoundException("Story " + storyId + " has no spec version " + v));
     }
 
-    /** Idempotent on {@code runId}: a repeated call returns the row the first one wrote. */
+    /**
+     * Idempotent on {@code runId}: a repeated call returns the row the first one wrote, review
+     * included. {@code finalReviewOrNull} is the run's final review text, or null when it had none;
+     * either way the row is captured immediately, so it never needs the backfill that an earlier,
+     * pre-capture version still does.
+     */
     @Transactional
-    public StorySpecVersion recordApproved(UUID storyId, UUID runId, String content) {
+    public StorySpecVersion recordApproved(UUID storyId, UUID runId, String content, String finalReviewOrNull) {
         Optional<StorySpecVersion> recorded = versionRepo.findByRunId(runId);
         if (recorded.isPresent()) {
             return recorded.get();
@@ -105,10 +120,27 @@ public class StorySpecService {
         }
         StorySpecVersion row = new StorySpecVersion();
         row.setStoryId(storyId);
-        row.setVersion(current(storyId).map(v -> v.getVersion() + 1).orElse(1));
+        row.setVersion(currentVersions(List.of(storyId)).getOrDefault(storyId, 0) + 1);
         row.setContent(content);
         row.setRunId(runId);
+        row.setFinalReview(finalReviewOrNull);
+        row.setReviewCapturedAt(Instant.now());
         return versionRepo.save(row);
+    }
+
+    /**
+     * Writes {@code finalReviewOrNull} only while the version is still uncaptured. Returns whether
+     * it wrote: false means a concurrent pass (or an earlier call) already captured this version.
+     */
+    @Transactional
+    public boolean captureReview(UUID versionId, String finalReviewOrNull) {
+        return versionRepo.captureReview(versionId, finalReviewOrNull, Instant.now()) > 0;
+    }
+
+    /** Versions recorded before review capture existed, oldest first so the backfill order is stable. */
+    @Transactional(readOnly = true)
+    public List<StorySpecVersionMetaView> uncapturedReviews() {
+        return versionRepo.findMetaByReviewCapturedAtIsNullOrderByApprovedAtAsc();
     }
 
     @Transactional(readOnly = true)
