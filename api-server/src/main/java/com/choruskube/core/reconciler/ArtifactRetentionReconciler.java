@@ -7,8 +7,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Expires closed runs' storage trees once the retention period a deployment sets has passed. The
- * period is the only switch: while it is unset a pass returns before reading anything.
+ * Expires closed runs' storage trees and sweeps abandoned staged uploads once the retention period
+ * a deployment sets has passed. The period is the only switch: while it is unset a pass returns
+ * before reading anything.
  */
 @Component
 public class ArtifactRetentionReconciler {
@@ -29,7 +30,15 @@ public class ArtifactRetentionReconciler {
                 log.info("ArtifactRetentionReconciler expired the artifacts of {} run(s)", expired);
             }
         } catch (Exception e) {
-            log.error("ArtifactRetentionReconciler could not run its pass: {}", e.getMessage(), e);
+            log.error("ArtifactRetentionReconciler could not run its run-expiry pass: {}", e.getMessage(), e);
+        }
+        try {
+            int swept = retention.deleteAbandonedStaging();
+            if (swept > 0) {
+                log.info("ArtifactRetentionReconciler deleted {} abandoned staging object(s)", swept);
+            }
+        } catch (Exception e) {
+            log.error("ArtifactRetentionReconciler could not run its staging sweep: {}", e.getMessage(), e);
         }
     }
 }
