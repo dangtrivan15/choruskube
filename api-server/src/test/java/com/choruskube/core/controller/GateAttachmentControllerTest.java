@@ -1,5 +1,7 @@
 package com.choruskube.core.controller;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -8,6 +10,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.choruskube.core.exception.GlobalExceptionHandler;
 import com.choruskube.core.model.NodeExecution;
 import com.choruskube.core.model.WorkflowRun;
+import com.choruskube.core.model.enums.NodeExecutionStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatusGroups;
 import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.service.AuthorizationService;
@@ -15,16 +20,22 @@ import com.choruskube.core.service.StoragePrefixResolver;
 import com.choruskube.core.service.UploadService;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 /**
- * Standalone (no Spring context) unit tests for GateAttachmentController. Covers happy path, 404
- * on unknown run, 403 on wrong org access, and 404 when the nodeExecId does not belong to the
- * specified run.
+ * Standalone (no Spring context) unit tests for GateAttachmentController. Covers happy path, the
+ * admission check (an awaiting gate on a run that has not closed), 404 on unknown run, 403 on
+ * wrong org access, and 404 when the nodeExecId does not belong to the specified run.
  */
 class GateAttachmentControllerTest {
 
@@ -54,80 +65,154 @@ class GateAttachmentControllerTest {
                 .build();
     }
 
-    private WorkflowRun buildRun() {
+    private static Stream<WorkflowRunStatus> activeRunStatuses() {
+        return WorkflowRunStatusGroups.ACTIVE.stream();
+    }
+
+    private static Stream<WorkflowRunStatus> terminalRunStatuses() {
+        return WorkflowRunStatusGroups.TERMINAL.stream();
+    }
+
+    private WorkflowRun buildRun(WorkflowRunStatus status) {
         WorkflowRun run = new WorkflowRun();
+        run.setStatus(status);
         return run;
     }
 
     private NodeExecution buildNodeExec(UUID workflowRunId) {
+        return buildNodeExec(workflowRunId, NodeExecutionStatus.awaiting_human);
+    }
+
+    private NodeExecution buildNodeExec(UUID workflowRunId, NodeExecutionStatus status) {
         NodeExecution ne = new NodeExecution();
         ne.setWorkflowRunId(workflowRunId);
+        ne.setStatus(status);
         return ne;
     }
 
-    @Test
-    void uploadGateAttachments_happyPath_returnsAttachmentRefs() throws Exception {
-        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun()));
+    private MockMultipartFile sampleFile() {
+        return new MockMultipartFile("files", "doc.pdf", "application/pdf", "content".getBytes());
+    }
+
+    private ResultActions postAttachment() throws Exception {
+        return mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
+                .file(sampleFile()));
+    }
+
+    private void verifyNothingWritten() throws Exception {
+        verify(storagePrefixResolver, never()).storagePrefixForRun(any());
+        verify(uploadService, never()).uploadGateFiles(any(), any(), any(), anyList());
+    }
+
+    @ParameterizedTest
+    @MethodSource("activeRunStatuses")
+    void uploadGateAttachments_happyPath_returnsAttachmentRefs(WorkflowRunStatus runStatus) throws Exception {
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(runStatus)));
         when(nodeExecRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(buildNodeExec(RUN_ID)));
         when(uploadService.uploadGateFiles(eq("acme"), eq(RUN_ID), eq(NODE_EXEC_ID), anyList()))
                 .thenReturn("{\"doc.pdf\":\"acme/runs/" + RUN_ID + "/gate-attachments/" + NODE_EXEC_ID + "/doc.pdf\"}");
 
-        MockMultipartFile file = new MockMultipartFile("files", "doc.pdf", "application/pdf", "content".getBytes());
-
-        mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(file))
+        postAttachment()
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.attachmentRefs").exists());
+
+        verify(uploadService).uploadGateFiles(eq("acme"), eq(RUN_ID), eq(NODE_EXEC_ID), anyList());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = NodeExecutionStatus.class, mode = EnumSource.Mode.EXCLUDE, names = "awaiting_human")
+    void uploadGateAttachments_execNotAwaiting_returns409WithNoUpload(NodeExecutionStatus execStatus) throws Exception {
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(WorkflowRunStatus.running)));
+        when(nodeExecRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(buildNodeExec(RUN_ID, execStatus)));
+
+        postAttachment().andExpect(status().isConflict());
+
+        verifyNothingWritten();
+    }
+
+    @ParameterizedTest
+    @MethodSource("terminalRunStatuses")
+    void uploadGateAttachments_runClosed_returns409WithNoUploadEvenIfGateAwaits(WorkflowRunStatus runStatus)
+            throws Exception {
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(runStatus)));
+        when(nodeExecRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(buildNodeExec(RUN_ID)));
+
+        postAttachment().andExpect(status().isConflict());
+
+        verifyNothingWritten();
+    }
+
+    @Test
+    void uploadGateAttachments_cancelledRunWithSkippedExec_returns409WithNoUpload() throws Exception {
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(WorkflowRunStatus.cancelled)));
+        when(nodeExecRepo.findById(NODE_EXEC_ID))
+                .thenReturn(Optional.of(buildNodeExec(RUN_ID, NodeExecutionStatus.skipped)));
+
+        postAttachment().andExpect(status().isConflict());
+
+        verifyNothingWritten();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"completed, awaiting_human, run has closed", "running, running, not awaiting a human decision"})
+    void uploadGateAttachments_conflictBody_namesCauseAndCarriesNoObjectPath(
+            WorkflowRunStatus runStatus, NodeExecutionStatus execStatus, String cause) throws Exception {
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(runStatus)));
+        when(nodeExecRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(buildNodeExec(RUN_ID, execStatus)));
+
+        postAttachment()
+                .andExpect(status().isConflict())
+                .andExpect(content().string(containsString(cause)))
+                .andExpect(content().string(not(containsString("gate-attachments/"))))
+                .andExpect(content().string(not(containsString("runs/" + RUN_ID))));
     }
 
     @Test
     void uploadGateAttachments_runNotFound_returns404() throws Exception {
         when(runRepo.findById(any())).thenReturn(Optional.empty());
 
-        MockMultipartFile file = new MockMultipartFile("files", "doc.pdf", "application/pdf", "content".getBytes());
+        postAttachment().andExpect(status().isNotFound());
 
-        mockMvc.perform(multipart("/api/v1/runs/" + UUID.randomUUID() + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(file))
-                .andExpect(status().isNotFound());
+        verifyNothingWritten();
     }
+
+    // The refusals below use a closed run and a decided gate, so moving the admission check above
+    // any of them turns its answer into a 409.
 
     @Test
     void uploadGateAttachments_wrongOrg_returns403() throws Exception {
-        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun()));
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(WorkflowRunStatus.completed)));
+        when(nodeExecRepo.findById(NODE_EXEC_ID))
+                .thenReturn(Optional.of(buildNodeExec(RUN_ID, NodeExecutionStatus.completed)));
         doThrow(new com.choruskube.core.exception.ForbiddenException("Access denied"))
                 .when(authService)
                 .checkOrgAccess(anyString(), eq(RUN_ID));
 
-        MockMultipartFile file = new MockMultipartFile("files", "doc.pdf", "application/pdf", "content".getBytes());
+        postAttachment().andExpect(status().isForbidden());
 
-        mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(file))
-                .andExpect(status().isForbidden());
+        verifyNothingWritten();
     }
 
     @Test
     void uploadGateAttachments_nodeExecNotFound_returns404() throws Exception {
-        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun()));
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(WorkflowRunStatus.completed)));
         when(nodeExecRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.empty());
 
-        MockMultipartFile file = new MockMultipartFile("files", "doc.pdf", "application/pdf", "content".getBytes());
+        postAttachment().andExpect(status().isNotFound());
 
-        mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(file))
-                .andExpect(status().isNotFound());
+        verifyNothingWritten();
     }
 
     @Test
     void uploadGateAttachments_nodeExecBelongsToDifferentRun_returns404() throws Exception {
         UUID otherRunId = UUID.randomUUID();
-        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun()));
+        when(runRepo.findById(RUN_ID)).thenReturn(Optional.of(buildRun(WorkflowRunStatus.completed)));
         // nodeExec belongs to a different run
-        when(nodeExecRepo.findById(NODE_EXEC_ID)).thenReturn(Optional.of(buildNodeExec(otherRunId)));
+        when(nodeExecRepo.findById(NODE_EXEC_ID))
+                .thenReturn(Optional.of(buildNodeExec(otherRunId, NodeExecutionStatus.completed)));
 
-        MockMultipartFile file = new MockMultipartFile("files", "doc.pdf", "application/pdf", "content".getBytes());
+        postAttachment().andExpect(status().isNotFound());
 
-        mockMvc.perform(multipart("/api/v1/runs/" + RUN_ID + "/nodes/" + NODE_EXEC_ID + "/attachments")
-                        .file(file))
-                .andExpect(status().isNotFound());
+        verifyNothingWritten();
     }
 }

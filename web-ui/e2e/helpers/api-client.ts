@@ -448,9 +448,28 @@ export class TestApiClient {
   async signalNode(
     runId: string,
     nodeExecId: string,
-    body: { decision: string; feedback?: string },
+    body: { decision: string; feedback?: string; attachmentRefs?: string },
   ): Promise<void> {
     return this.post(`/api/v1/runs/${runId}/nodes/${nodeExecId}/signal`, body);
+  }
+
+  /** Posts files to a gate as multipart, as the web UI does before it signals with the refs. */
+  async uploadGateAttachments(
+    runId: string,
+    nodeExecId: string,
+    files: { name: string; content: string }[],
+  ): Promise<{ attachmentRefs: string }> {
+    const path = `/api/v1/runs/${runId}/nodes/${nodeExecId}/attachments`;
+    const headers = await this.authHeaders();
+    const form = new FormData();
+    for (const file of files) {
+      form.append("files", new Blob([file.content]), file.name);
+    }
+    const res = await fetch(`${this.baseUrl}${path}`, { method: "POST", headers, body: form });
+    if (!res.ok) {
+      throw new Error(`POST ${path} → ${res.status}: ${await res.text()}`);
+    }
+    return res.json() as Promise<{ attachmentRefs: string }>;
   }
 
   /** A node execution's accumulated log entries, oldest first. */

@@ -267,4 +267,43 @@ test.describe("Human Gates", () => {
       await api.cancelRun(run.id).catch(() => {});
     }
   });
+
+  test("gate attachment upload is admitted only while its gate awaits a decision", async ({
+    api,
+  }) => {
+    // A run of its own: the second half of this test re-uploads after the run has
+    // completed, which would be timing-dependent against parkedGateRun's shared gate.
+    const template = await api.getTemplateByName("e2e-human-gate");
+    const runName = uniqueName("gate-attach");
+    const run = await api.startRun({
+      graphTemplateId: template.id,
+      name: runName,
+    });
+
+    try {
+      const exec = await api.waitForNodeStatus(run.id, "review_gate", ["awaiting_human"], 60_000);
+
+      const { attachmentRefs } = await api.uploadGateAttachments(run.id, exec.id, [
+        { name: "note.txt", content: "looks good" },
+      ]);
+      expect(attachmentRefs).toContain("note.txt");
+
+      await api.signalNode(run.id, exec.id, { decision: "approved", attachmentRefs });
+
+      // The gate is claimed now (no longer awaiting), so a second upload to it is refused.
+      await expect(
+        api.uploadGateAttachments(run.id, exec.id, [{ name: "late.txt", content: "too late" }]),
+      ).rejects.toThrow(/→ 409:/);
+
+      const finished = await api.waitForRunStatus(run.id, ["completed"], 60_000);
+      expect(finished.status).toBe("completed");
+
+      // The run has closed too, so the same upload is refused on that ground as well.
+      await expect(
+        api.uploadGateAttachments(run.id, exec.id, [{ name: "late.txt", content: "too late" }]),
+      ).rejects.toThrow(/→ 409:/);
+    } finally {
+      await api.cancelRun(run.id).catch(() => {});
+    }
+  });
 });
