@@ -12,6 +12,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.choruskube.core.SharedContextTest;
@@ -125,9 +126,11 @@ class ArtifactRetentionServiceTest extends SharedContextTest {
         int deleted = retention(PERIOD).deleteAbandonedStaging();
 
         assertThat(deleted).isEqualTo(5);
+        verify(deleter).storagePrefixes();
         verify(deleter).deleteModifiedBefore(eq("acme/" + UploadService.STAGING_SEGMENT), any());
         verify(deleter).deleteModifiedBefore(eq("other/" + UploadService.STAGING_SEGMENT), any());
-        verify(deleter, never()).deleteAll(anyString());
+        // Nothing else — no deleteAll, and no prefix outside staging, so no run's tree is ever named.
+        verifyNoMoreInteractions(deleter);
     }
 
     @Test

@@ -7,9 +7,9 @@
 A file attached in the run-start dialog waits in a staging area under the storage prefix until a
 run takes it. A start moves it into the run and deletes the staging copy on a best-effort basis, so
 a staged object can be left behind: the dialog is abandoned, a run-start fails before it discards
-its staging copy, or the move's own best-effort delete fails. Nothing ever deleted these objects, so
-the run-expiry pass — which finds a run's tree through its run row — could never reach them either:
-a staged object has no run row to key off.
+its staging copy, or the move's own best-effort delete fails. Nothing deleted these objects: the
+run-expiry pass finds a run's tree through its run row, and a staged object has no run row to key
+off.
 
 ## Decision
 
