@@ -406,6 +406,18 @@ that already mounts something at `/workspace` keeps its own mount. The Worker re
 when the template is missing or malformed, and reads it once per process — restart the Worker after
 editing it.
 
+**Pod Security contract.** A namespace enforcing the Kubernetes Pod Security `baseline` level
+admits every pod shape this executor builds. With Docker, that holds only as long as the
+template-supplied parts also meet `baseline`: the `dind` sidecar must not be privileged, must add
+no capability outside `baseline`'s allowed set, must bind no host port, and must set no unconfined
+seccomp or AppArmor profile; no template volume may be a host path. `executor/k8s/podsecurity_test.go`
+runs every pod shape `Execute` builds through the upstream `k8s.io/pod-security-admission` evaluator
+to prove this. A pod a namespace refuses on these grounds leaves its Job with a `FailedCreate`
+event; a namespace running Pod Security in `warn` mode instead puts the violation in the Worker's
+log at Job create, through client-go's default warning logger — the Worker's own Kubernetes client
+(`cmd/worker/main.go`) sets no `WarningHandler` override, so this is the default logging behavior,
+unchanged by this contract.
+
 ## Build and test
 
 ```sh
