@@ -75,7 +75,17 @@ export class RunListPage {
     await expect(this.page.getByText("Start a New Run")).toBeVisible();
   }
 
-  async startRun(templateName: string, runName?: string) {
+  /** Sets files on the file-upload zone's input while the Start Run dialog is open. */
+  async attachFiles(files: { name: string; mimeType: string; buffer: Buffer }[]) {
+    const fileInput = this.page.getByTestId("file-upload-zone").locator('input[type="file"]');
+    await fileInput.setInputFiles(files);
+  }
+
+  async startRun(
+    templateName: string,
+    runName?: string,
+    files?: { name: string; mimeType: string; buffer: Buffer }[],
+  ) {
     await this.openStartRunDialog();
 
     // Select template
@@ -86,6 +96,10 @@ export class RunListPage {
     if (runName) {
       await this.runNameInput.clear();
       await this.runNameInput.fill(runName);
+    }
+
+    if (files && files.length > 0) {
+      await this.attachFiles(files);
     }
 
     // Click start

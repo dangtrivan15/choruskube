@@ -222,6 +222,11 @@ public class RunService {
 
         validateInputs(template.getInputSchema(), mergedInputs);
 
+        // Admitted before the run row exists or any object-store call is made, so a forged ref
+        // leaves nothing to roll back. uploadService.copyStagingToRun below is handed exactly
+        // this map and never re-reads request.inputAttachmentRefs() itself.
+        Map<String, String> admittedInputRefs = uploadService.admitStagingRefs(request.inputAttachmentRefs());
+
         WorkflowRun run = new WorkflowRun();
         run.setGraphTemplateId(request.graphTemplateId());
         run.setName(trimName(request.name()));
@@ -232,11 +237,13 @@ public class RunService {
         }
 
         // input_artifact_refs is intentionally left at the entity default ("{}") here.
-        // Staged attachments live under {orgSlug}/staging/{stagingId}/, which is outside
-        // the agent's per-execution presign scope. We move them into the run-scoped
-        // prefix below — once we have a runId — and persist the rewritten refs as part
-        // of the second save (alongside externalRunId) so the column never holds a
-        // staging path the agent would later be forbidden from reading.
+        // admittedInputRefs above already refused anything outside the caller's own staging
+        // area or under a non-plain name, so everything that reaches the move below is safe to
+        // copy. Staged attachments live under {orgSlug}/staging/{stagingId}/, which is outside
+        // the agent's per-execution presign scope. We move the admitted refs into the run-scoped
+        // prefix below — once we have a runId — and persist the rewritten refs as part of the
+        // second save (alongside externalRunId) so the column never holds a staging path the
+        // agent would later be forbidden from reading.
 
         quotaService.ifPresent(runQuotaCheck); // throws QuotaExceededException (429)
 
@@ -255,11 +262,10 @@ public class RunService {
 
         credentialPreflightChecker.checkPreflight(run.getId()); // throws InvalidCredentialException (400)
 
-        String inputRefs = request.inputAttachmentRefs();
-        if (inputRefs != null && !inputRefs.isBlank() && !"{}".equals(inputRefs)) {
+        if (!admittedInputRefs.isEmpty()) {
             String orgSlug = storagePrefixResolver.storagePrefixForRun(run.getId());
             try {
-                run.setInputArtifactRefs(uploadService.copyStagingToRun(orgSlug, run.getId(), inputRefs));
+                run.setInputArtifactRefs(uploadService.copyStagingToRun(orgSlug, run.getId(), admittedInputRefs));
             } catch (Exception e) {
                 throw new RuntimeException("Failed to move staged attachments into run scope: " + e.getMessage(), e);
             }

@@ -88,7 +88,7 @@ class RunServiceTemplateAuthorizationTest {
                 null, // softwareProjectRepo
                 null, // repoGroupMemberRepo
                 null, // credentialPreflightChecker
-                null, // uploadService
+                mock(UploadService.class), // uploadService
                 null, // taskRepo
                 null, // storyRepo
                 null, // epicRepo

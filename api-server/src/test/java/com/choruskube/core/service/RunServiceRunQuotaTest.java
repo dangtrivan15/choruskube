@@ -3,11 +3,13 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +18,7 @@ import com.choruskube.core.config.WorkflowClientRegistry;
 import com.choruskube.core.credential.CredentialPreflightChecker;
 import com.choruskube.core.dto.CreateRunRequest;
 import com.choruskube.core.dto.ValidationResponse;
+import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.QuotaExceededException;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.model.WorkflowRun;
@@ -107,6 +110,12 @@ class RunServiceRunQuotaTest {
     private CredentialPreflightChecker credentialPreflightChecker;
 
     @Mock
+    private UploadService uploadService;
+
+    @Mock
+    private ApplicationEventPublisher applicationEventPublisher;
+
+    @Mock
     private WorkflowStub workflowStub;
 
     private RunService service;
@@ -143,12 +152,12 @@ class RunServiceRunQuotaTest {
                 softwareProjectRepo,
                 repoGroupMemberRepo,
                 credentialPreflightChecker,
-                null,
+                uploadService,
                 null,
                 null, // storyRepo
                 null, // epicRepo
                 null,
-                mock(ApplicationEventPublisher.class),
+                applicationEventPublisher,
                 new com.choruskube.core.scope.NoOpScopeProvider(),
                 new DecisionOptionsResolver(),
                 null,
@@ -199,8 +208,49 @@ class RunServiceRunQuotaTest {
         verify(runRepo, never()).save(any());
     }
 
+    @Test
+    void startRun_refsRefused_propagatesBeforeAnyQuotaSaveEventOrPlacement() {
+        stubTemplate();
+        when(uploadService.admitStagingRefs(anyString()))
+                .thenThrow(new BadRequestException(UploadService.INPUT_REFS_REFUSED));
+
+        assertThatThrownBy(() -> service.startRun(requestWithRefs("{\"a.txt\":\"other/staging/x/a.txt\"}")))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(UploadService.INPUT_REFS_REFUSED);
+
+        verifyNoInteractions(quotaService);
+        verify(runRepo, never()).save(any());
+        verify(applicationEventPublisher, never()).publishEvent(any());
+        verify(placements, never()).placeFor(any());
+    }
+
+    @Test
+    void startRun_noRefs_neverCallsTheMove() throws Exception {
+        stubStartPath();
+
+        service.startRun(request());
+
+        verify(uploadService, never()).copyStagingToRun(any(), any(), any());
+    }
+
+    @Test
+    void startRun_admittedRefs_passesExactlyThatMapInstanceToTheMove() throws Exception {
+        stubStartPath();
+        Map<String, String> admitted = Map.of("a.txt", "acme/staging/s1/a.txt");
+        when(uploadService.admitStagingRefs(anyString())).thenReturn(admitted);
+        when(uploadService.copyStagingToRun(anyString(), any(), same(admitted))).thenReturn("{}");
+
+        service.startRun(requestWithRefs("{\"a.txt\":\"acme/staging/s1/a.txt\"}"));
+
+        verify(uploadService).copyStagingToRun(anyString(), any(), same(admitted));
+    }
+
     private static CreateRunRequest request() {
         return new CreateRunRequest(TEMPLATE_ID, Map.of(), "quota-run", null);
+    }
+
+    private static CreateRunRequest requestWithRefs(String refs) {
+        return new CreateRunRequest(TEMPLATE_ID, Map.of(), "quota-run", refs);
     }
 
     private void stubTemplate() {

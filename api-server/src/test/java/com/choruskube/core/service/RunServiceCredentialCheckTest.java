@@ -144,7 +144,7 @@ class RunServiceCredentialCheckTest {
                 softwareProjectRepo,
                 repoGroupMemberRepo,
                 credentialPreflightChecker,
-                null,
+                mock(UploadService.class),
                 null,
                 null, // storyRepo
                 null, // epicRepo

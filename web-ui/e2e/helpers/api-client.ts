@@ -95,6 +95,9 @@ export interface WorkflowRun {
   name: string | null;
   status: string;
   nodeExecutions: NodeExecution[];
+  // The backend's RunResponse carries this as a JSON-encoded string column (jsonb, not a nested
+  // object) — JSON.parse it to read a name → run-scoped-key entry.
+  inputArtifactRefs?: string;
 }
 
 export interface NodeExecution {
@@ -426,8 +429,29 @@ export class TestApiClient {
     graphTemplateId: string;
     inputs?: Record<string, string>;
     name?: string;
+    inputAttachmentRefs?: string;
   }): Promise<WorkflowRun> {
     return this.post("/api/v1/runs", body);
+  }
+
+  /**
+   * Like {@link startRun}, but returns the raw status and body instead of throwing on a non-2xx
+   * — for asserting a refusal's status code and fixed message.
+   */
+  async startRunRaw(body: {
+    graphTemplateId: string;
+    inputs?: Record<string, string>;
+    name?: string;
+    inputAttachmentRefs?: string;
+  }): Promise<{ status: number; body: string }> {
+    const headers: Record<string, string> = await this.authHeaders();
+    headers["Content-Type"] = "application/json";
+    const res = await fetch(`${this.baseUrl}/api/v1/runs`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: await res.text() };
   }
 
   async cancelRun(id: string): Promise<void> {
@@ -451,6 +475,26 @@ export class TestApiClient {
     body: { decision: string; feedback?: string; attachmentRefs?: string },
   ): Promise<void> {
     return this.post(`/api/v1/runs/${runId}/nodes/${nodeExecId}/signal`, body);
+  }
+
+  /**
+   * Posts files to the run-start staging endpoint as multipart, as the Run Start Dialog does
+   * before it starts a run with the returned refs.
+   */
+  async uploadStagingAttachments(
+    files: { name: string; content: string }[],
+  ): Promise<{ stagingRefs: string }> {
+    const path = "/api/v1/attachments/temp";
+    const headers = await this.authHeaders();
+    const form = new FormData();
+    for (const file of files) {
+      form.append("files", new Blob([file.content]), file.name);
+    }
+    const res = await fetch(`${this.baseUrl}${path}`, { method: "POST", headers, body: form });
+    if (!res.ok) {
+      throw new Error(`POST ${path} → ${res.status}: ${await res.text()}`);
+    }
+    return res.json() as Promise<{ stagingRefs: string }>;
   }
 
   /** Posts files to a gate as multipart, as the web UI does before it signals with the refs. */
