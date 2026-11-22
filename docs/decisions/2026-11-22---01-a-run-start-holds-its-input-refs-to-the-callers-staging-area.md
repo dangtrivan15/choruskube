@@ -7,13 +7,12 @@
 A run start's `inputAttachmentRefs` names a map of file name to a staged object key, built by an
 earlier upload. The start moved every named key into the run's own tree with platform credentials
 and then deleted it from its source — trusting the request completely. Nothing checked that a key
-sat in the caller's own staging area, or that a name was safe to file a run input under and hand an
-agent verbatim. A forged ref could copy another tree's object into a run under attacker control, and
-the delete step would then also remove it from wherever it actually lived, with its owner never
-told why.
+sat in the caller's own staging area, or that a name was a plain file name. A forged ref could copy
+another tree's object into a run under attacker control, and the delete step would then also remove
+it from wherever it actually lived, with its owner never told why.
 
-This extends `2026-11-12---01` to a fifth writer: a run start's `inputAttachmentRefs`, which that
-entry's list did not yet cover. It does not touch anything that entry already decided.
+This extends `2026-11-12---01` to one more write that entry's writers did not include: a run
+start's `inputAttachmentRefs`. It does not touch anything that entry already decided.
 
 ## Decision
 

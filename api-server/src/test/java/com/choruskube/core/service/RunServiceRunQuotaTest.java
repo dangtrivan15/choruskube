@@ -209,7 +209,7 @@ class RunServiceRunQuotaTest {
     }
 
     @Test
-    void startRun_refsRefused_propagatesBeforeAnyQuotaSaveEventOrPlacement() {
+    void startRun_refsRefused_propagatesBeforeAnyQuotaSaveEventPlacementPreflightOrMove() throws Exception {
         stubTemplate();
         when(uploadService.admitStagingRefs(anyString()))
                 .thenThrow(new BadRequestException(UploadService.INPUT_REFS_REFUSED));
@@ -222,6 +222,8 @@ class RunServiceRunQuotaTest {
         verify(runRepo, never()).save(any());
         verify(applicationEventPublisher, never()).publishEvent(any());
         verify(placements, never()).placeFor(any());
+        verify(credentialPreflightChecker, never()).checkPreflight(any());
+        verify(uploadService, never()).copyStagingToRun(any(), any(), any());
     }
 
     @Test

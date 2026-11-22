@@ -237,13 +237,11 @@ public class RunService {
         }
 
         // input_artifact_refs is intentionally left at the entity default ("{}") here.
-        // admittedInputRefs above already refused anything outside the caller's own staging
-        // area or under a non-plain name, so everything that reaches the move below is safe to
-        // copy. Staged attachments live under {orgSlug}/staging/{stagingId}/, which is outside
+        // Staged attachments live under {orgSlug}/staging/{stagingId}/, which is outside
         // the agent's per-execution presign scope. We move the admitted refs into the run-scoped
-        // prefix below — once we have a runId — and persist the rewritten refs as part of the
-        // second save (alongside externalRunId) so the column never holds a staging path the
-        // agent would later be forbidden from reading.
+        // prefix below — once we have a runId — and persist the rewritten refs as part
+        // of the second save (alongside externalRunId) so the column never holds a
+        // staging path the agent would later be forbidden from reading.
 
         quotaService.ifPresent(runQuotaCheck); // throws QuotaExceededException (429)
 

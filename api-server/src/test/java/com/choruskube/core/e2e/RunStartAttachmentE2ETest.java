@@ -251,7 +251,7 @@ class RunStartAttachmentE2ETest extends SharedContextTest {
 
         String refs = objectMapper.writeValueAsString(
                 Map.of("honest.txt", honestKey, "foreign.txt", "other/staging/" + UUID.randomUUID() + "/x.txt"));
-        String uniqueName = "attach-seam-mixed-" + UUID.randomUUID();
+        String uniqueName = shortUniqueRunName("mixed");
         Map<String, Object> body = Map.of(
                 "graphTemplateId", templateId, "inputs", Map.of(), "name", uniqueName, "inputAttachmentRefs", refs);
 
@@ -264,6 +264,12 @@ class RunStartAttachmentE2ETest extends SharedContextTest {
         assertThat(runRepo.findAll()).noneMatch(r -> uniqueName.equals(r.getName()));
         verify(s3Client, never()).copyObject(any(CopyObjectRequest.class));
         verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+    }
+
+    // A name past RunService.RUN_NAME_MAX_LENGTH (30) is stored truncated, which would make every
+    // "no run row with this name" assertion here pass even if the refused start had saved one.
+    private static String shortUniqueRunName(String prefix) {
+        return prefix + "-" + UUID.randomUUID().toString().substring(0, 8);
     }
 
     private UUID startBareRun() throws Exception {
@@ -289,7 +295,7 @@ class RunStartAttachmentE2ETest extends SharedContextTest {
     }
 
     private void assertRawRefsRefused(String inputAttachmentRefs) throws Exception {
-        String uniqueName = "attach-seam-refused-" + UUID.randomUUID();
+        String uniqueName = shortUniqueRunName("refused");
         Map<String, Object> body = Map.of(
                 "graphTemplateId",
                 templateId,

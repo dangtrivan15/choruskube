@@ -227,10 +227,9 @@ public class UploadService {
     }
 
     /**
-     * Whether {@code name} is safe to file a run input under and hand an agent verbatim: non-null,
-     * non-empty, not a dot segment, and exactly what {@link #sanitiseFilename} would have produced
-     * from it. A client composing refs by hand is therefore held to the upload sanitiser's own
-     * alphabet.
+     * Whether {@code name} is a plain file name: non-null, non-empty, not a dot segment, and exactly
+     * what {@link #sanitiseFilename} would have produced from it. A client composing refs by hand is
+     * therefore held to the upload sanitiser's own alphabet.
      */
     static boolean isPlainFileName(String name) {
         if (name == null || name.isEmpty() || ".".equals(name) || "..".equals(name)) {

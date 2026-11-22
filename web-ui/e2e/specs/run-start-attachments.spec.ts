@@ -35,7 +35,8 @@ test.describe("Run Start — attachments", () => {
     const refs = JSON.parse(run.inputArtifactRefs ?? "{}") as Record<string, string>;
     expect(refs["notes.md"]).toMatch(new RegExp(`^[^/]+/runs/${run.id}/inputs/notes\\.md$`));
 
-    await api.cancelRun(run.id);
+    // Best-effort: the mock agent can finish the pipeline first, and a terminal run refuses cancel.
+    await api.cancelRun(run.id).catch(() => {});
   });
 
   test("a ref naming a key outside the caller's own staging area is refused with a fixed 400", async ({
@@ -47,7 +48,9 @@ test.describe("Run Start — attachments", () => {
     const ownKey = JSON.parse(uploaded.stagingRefs)["x.txt"] as string;
     const prefix = ownKey.split("/staging/")[0];
 
-    const foreignPrefixName = uniqueName("e2e-attach-foreign-prefix");
+    // Short prefixes: a run name past 30 chars is stored truncated, so the absence checks below
+    // would pass even if a refused start had saved its run.
+    const foreignPrefixName = uniqueName("e2e-att-pfx");
     const foreignPrefixRes = await api.startRunRaw({
       graphTemplateId: template.id,
       name: foreignPrefixName,
@@ -57,7 +60,7 @@ test.describe("Run Start — attachments", () => {
     });
     expect(foreignPrefixRes.status).toBe(400);
 
-    const runTreeName = uniqueName("e2e-attach-run-tree");
+    const runTreeName = uniqueName("e2e-att-run");
     const runTreeRes = await api.startRunRaw({
       graphTemplateId: template.id,
       name: runTreeName,
