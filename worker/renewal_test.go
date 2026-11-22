@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestTokenCacheGetSetIsolatesKeys(t *testing.T) {
@@ -337,5 +339,86 @@ func TestRenewOnceSwapsInTheRenewedAPICredential(t *testing.T) {
 	// A server that minted nothing this tick is saying "keep what you have".
 	if got := creds.get(); got != "ckw_second" {
 		t.Fatalf("credential after a blank renewal = %q, want the previous one kept", got)
+	}
+}
+
+// providerResult is one canned answer for sequenceProvider to hand back.
+type providerResult struct {
+	reg Registration
+	err error
+}
+
+// sequenceProvider returns its results in order, then repeats the last one -- so a test can
+// script a run of failures followed by a success without a real Fleet registration server.
+type sequenceProvider struct {
+	mu      sync.Mutex
+	calls   int
+	results []providerResult
+}
+
+func (p *sequenceProvider) Fleets(context.Context) (Registration, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	idx := p.calls
+	if idx >= len(p.results) {
+		idx = len(p.results) - 1
+	}
+	p.calls++
+	r := p.results[idx]
+	return r.reg, r.err
+}
+
+func (p *sequenceProvider) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
+}
+
+// TestRenewLoopRetriesAfterARefusedRenewal pins the README's claim at the loop level, not just
+// renewOnce's: a renewal a server refuses is logged and retried on the next tick, both cached
+// credentials stay exactly as they were through every failure, and the loop picks the next
+// success back up once the server starts accepting the token again.
+func TestRenewLoopRetriesAfterARefusedRenewal(t *testing.T) {
+	served := Fleet{Namespace: "ns", TaskQueue: "q", Token: "old"}
+	tokens := newTokenCache([]Fleet{served})
+	creds := newCredentialCache("held")
+
+	refused := providerResult{err: errors.New("register: unexpected status 403")}
+	renewed := Fleet{Namespace: "ns", TaskQueue: "q", Token: "new"}
+	accepted := providerResult{reg: Registration{Fleets: []Fleet{renewed}, InternalToken: "minted"}}
+	provider := &sequenceProvider{results: []providerResult{refused, refused, accepted}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		renewLoop(ctx, provider, tokens, creds, 10*time.Millisecond, nil)
+	}()
+
+	// (1) Two refusals have landed; the loop is still running and both caches are untouched.
+	require.Eventually(t, func() bool { return provider.callCount() >= 2 }, time.Second, time.Millisecond,
+		"renewLoop should have retried the refused renewal at least twice")
+	select {
+	case <-done:
+		t.Fatal("renewLoop returned after a refused renewal; it must keep retrying")
+	default:
+	}
+	require.Equal(t, "old", tokens.get(fleetKey(served)), "a refused renewal must not disturb the cached Temporal token")
+	require.Equal(t, "held", creds.get(), "a refused renewal must not disturb the cached API-server credential")
+
+	// (2) The provider keeps being called, and once it accepts the token both caches pick up
+	// the renewed values.
+	require.Eventually(t, func() bool { return tokens.get(fleetKey(served)) == "new" }, time.Second, time.Millisecond,
+		"renewLoop should adopt the renewed token once the provider accepts it")
+	require.Equal(t, "minted", creds.get())
+	require.GreaterOrEqual(t, provider.callCount(), 3, "the success call must follow the two refusals, not replace them")
+
+	// (3) Cancelling the context makes renewLoop return.
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("renewLoop did not return after its context was cancelled")
 	}
 }

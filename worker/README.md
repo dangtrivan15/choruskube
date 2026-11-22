@@ -66,6 +66,29 @@ hard-cutover terms as the declared mode.
 Use this path when you want one place to change the answer, or when you intend to grow into a
 deployment that has more than one Fleet.
 
+### When the server stops accepting the Fleet token
+
+`FLEET_TOKEN` is read once, at start (see [Environment](#environment)). The Worker never
+re-reads it, so picking up a new token — after it is rotated or revoked — takes a restart.
+
+A server that stops accepting the token refuses every renewal. The Worker logs each one as
+`fleet token renewal failed, will retry next interval: …` and retries on its next renewal
+tick, at most a minute apart. It does not exit, so a process supervisor sees no failure.
+
+Meanwhile it keeps serving its Fleets on the Temporal credential and the API-server
+credential its last successful registration returned. That lasts until Temporal refuses the
+Temporal credential (polls get no work) or the API server refuses the API-server credential
+(workload prepare, complete and status calls fail). On a server that mints no API-server
+credential, that credential is the Fleet token itself, so it is refused as soon as the token
+is.
+
+A Worker started, or restarted, with a token the server refuses exits at start with
+`worker exited: resolve fleets: register: unexpected status …`, so under a restart policy it
+crash-loops until it is given a token the server accepts.
+
+Operators: watch for the renewal-failure log line, and restart every Worker on the new token
+after the server's token changes.
+
 ### Configure the Fleet directly
 
 Set `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` and `WORKER_INTERNAL_TOKEN`. The Worker serves
@@ -185,7 +208,7 @@ callback port inside the Fleet's own network.
 | `TEMPORAL_ADDRESS` | static path, or when registration supplies no endpoint | Temporal frontend to dial. A registered Fleet may override it. |
 | `API_SERVER_URL` | yes | api-server base URL, for registration and the workload executor. The Worker also passes it along as every agent's own configured `api_server_url`, so it is the base URL every agent calls too. |
 | `CALLBACK_URL` | yes | Where a launched agent container reports its result. |
-| `FLEET_TOKEN` | one of | Selects registration. Must match the server's `WORKER_REGISTRATION_TOKEN`. |
+| `FLEET_TOKEN` | one of | Selects registration. Must match the server's `WORKER_REGISTRATION_TOKEN`. Read once at start; a new value takes a restart — see [When the server stops accepting the Fleet token](#when-the-server-stops-accepting-the-fleet-token). |
 | `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | one of | Select the static single Fleet. |
 | `WORKER_INTERNAL_TOKEN` | static path | Authenticates this Worker on the api-server's `/worker/**` routes. Must equal the server's `WORKER_REGISTRATION_TOKEN`. Ignored when registering. |
 | `TEMPORAL_TLS_DISABLED` | no | Set `true` for a Temporal that serves plaintext gRPC. |
