@@ -73,7 +73,10 @@ executes. To replace it:
 ```
 
 A Worker running on another host (not this compose stack) takes the same value as its
-own `FLEET_TOKEN` — copy it out of `.env` by hand after rotating.
+own `FLEET_TOKEN` — copy it out of `.env` by hand after rotating, then restart that
+Worker: it reads `FLEET_TOKEN` only at start and keeps retrying the old token rather than
+picking up the new value on its own (see
+[When the server stops accepting the Fleet token](worker/README.md#when-the-server-stops-accepting-the-fleet-token)).
 
 ## Run a real AI workflow
 

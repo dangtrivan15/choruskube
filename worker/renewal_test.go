@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestTokenCacheGetSetIsolatesKeys(t *testing.T) {
@@ -337,5 +339,80 @@ func TestRenewOnceSwapsInTheRenewedAPICredential(t *testing.T) {
 	// A server that minted nothing this tick is saying "keep what you have".
 	if got := creds.get(); got != "ckw_second" {
 		t.Fatalf("credential after a blank renewal = %q, want the previous one kept", got)
+	}
+}
+
+// refusingProvider refuses every call until accept is called, then returns the accepted
+// registration. The test, not a call count, decides when refusals end, so nothing can land a
+// success while it is still asserting what the refusals left behind.
+type refusingProvider struct {
+	mu       sync.Mutex
+	calls    int
+	accepted *Registration
+}
+
+func (p *refusingProvider) Fleets(context.Context) (Registration, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls++
+	if p.accepted == nil {
+		return Registration{}, errors.New("register: unexpected status 403")
+	}
+	return *p.accepted, nil
+}
+
+func (p *refusingProvider) accept(reg Registration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.accepted = &reg
+}
+
+func (p *refusingProvider) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
+}
+
+// TestRenewLoopRetriesAfterARefusedRenewal covers renewLoop itself, not just renewOnce: refused
+// renewals are retried without the loop returning or either cache changing, and the first
+// renewal the server accepts again replaces both cached credentials.
+func TestRenewLoopRetriesAfterARefusedRenewal(t *testing.T) {
+	served := Fleet{Namespace: "ns", TaskQueue: "q", Token: "old"}
+	tokens := newTokenCache([]Fleet{served})
+	creds := newCredentialCache("held")
+	provider := &refusingProvider{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		renewLoop(ctx, provider, tokens, creds, 10*time.Millisecond, nil)
+	}()
+
+	// Two refusals have landed; the loop is still running and both caches are untouched.
+	require.Eventually(t, func() bool { return provider.callCount() >= 2 }, time.Second, time.Millisecond,
+		"renewLoop should have retried the refused renewal at least twice")
+	select {
+	case <-done:
+		t.Fatal("renewLoop returned after a refused renewal; it must keep retrying")
+	default:
+	}
+	require.Equal(t, "old", tokens.get(fleetKey(served)), "a refused renewal must not disturb the cached Temporal token")
+	require.Equal(t, "held", creds.get(), "a refused renewal must not disturb the cached API-server credential")
+
+	// The loop keeps calling after the refusals, so the first accepted renewal replaces both caches.
+	renewed := Fleet{Namespace: "ns", TaskQueue: "q", Token: "new"}
+	provider.accept(Registration{Fleets: []Fleet{renewed}, InternalToken: "minted"})
+	require.Eventually(t, func() bool { return tokens.get(fleetKey(served)) == "new" }, time.Second, time.Millisecond,
+		"renewLoop should adopt the renewed token once the provider accepts it")
+	require.Equal(t, "minted", creds.get())
+
+	// Cancelling the context makes renewLoop return.
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("renewLoop did not return after its context was cancelled")
 	}
 }
