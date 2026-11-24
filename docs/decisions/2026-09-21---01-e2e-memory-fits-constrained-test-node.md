@@ -1,6 +1,7 @@
 # The e2e suite fits a memory-constrained Test-node agent
 
-**Status:** current
+**Status:** current; its 2560m test-heap default is superseded by
+[2026-11-24---01](2026-11-24---01-test-contexts-run-grouped-and-two-stay-cached.md)
 
 ## Context
 

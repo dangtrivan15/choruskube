@@ -7,11 +7,6 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/**
- * Gated by {@code choruskube.autopilot.enabled} and switched off in the test profile — every
- * {@code @SpringBootTest} boots the full context, scheduling included, and an engaged Autopilot
- * would start real workflow runs during the unit suite.
- */
 @Component
 @ConditionalOnProperty(name = "choruskube.autopilot.enabled", havingValue = "true", matchIfMissing = true)
 public class AutopilotReconciler {
