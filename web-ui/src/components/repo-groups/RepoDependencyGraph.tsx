@@ -43,10 +43,22 @@ type RepoNodeType = Node<RepoNodeData, "repo">;
 type DependencyEdgeType = Edge<DependencyEdgeData, "dependency">;
 
 // Lets Enter or Space on a dot do what a click does, so an arrow can be drawn from the keyboard.
+// React Flow resolves the target handle of a click-connect via `elementFromPoint` at the
+// native event's clientX/Y, not the DOM node the click fired on — a coordinate-less
+// `.click()` resolves against whatever sits at (0,0) instead of this handle, so dispatch a
+// click carrying the handle's own center point.
 function clickOnEnter(event: KeyboardEvent<HTMLDivElement>) {
   if (event.key === "Enter" || event.key === " ") {
     event.preventDefault();
-    event.currentTarget.click();
+    const { left, top, width, height } = event.currentTarget.getBoundingClientRect();
+    event.currentTarget.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        clientX: left + width / 2,
+        clientY: top + height / 2,
+      }),
+    );
   }
 }
 
