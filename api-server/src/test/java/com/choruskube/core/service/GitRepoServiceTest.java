@@ -291,6 +291,7 @@ class GitRepoServiceTest extends SharedContextTest {
 
     @Test
     void reconcileTombstonedBatch_cleansUpAndReturnsCount() {
+        drainTombstonesFromOtherTests();
         var r1 = service.create(
                 new GitRepoRequest("https://github.com/test/a", "main", null, null, null, false, null, null, null));
         var r2 = service.create(
@@ -311,6 +312,7 @@ class GitRepoServiceTest extends SharedContextTest {
 
     @Test
     void reconcileTombstonedBatch_respectsBatchSize() {
+        drainTombstonesFromOtherTests();
         for (int i = 0; i < 5; i++) {
             var c = service.create(new GitRepoRequest(
                     "https://github.com/test/batch-" + i, "main", null, null, null, false, null, null, null));
@@ -324,5 +326,11 @@ class GitRepoServiceTest extends SharedContextTest {
         assertThat(secondPass).isEqualTo(3);
 
         assertThat(repo.findTombstonedBatch(100)).isEmpty();
+    }
+
+    // The suite shares one database and nothing sweeps it between classes, so tombstones other tests
+    // leave behind (GitRepoSoftDeleteE2ETest keeps one on purpose) would count in this batch.
+    private void drainTombstonesFromOtherTests() {
+        service.reconcileTombstonedBatch(Integer.MAX_VALUE);
     }
 }

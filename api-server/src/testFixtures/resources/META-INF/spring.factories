@@ -1,1 +1,2 @@
 org.springframework.context.ApplicationContextInitializer=com.choruskube.core.config.TestContainersInitializer
+org.springframework.test.context.ContextCustomizerFactory=com.choruskube.core.ReleaseInlineMocksContextCustomizerFactory

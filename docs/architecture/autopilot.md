@@ -629,7 +629,7 @@ the payload straight into its query cache and never polls this topic.
 
 | Property | Default | Effect |
 |---|---|---|
-| `choruskube.autopilot.enabled` | `${AUTOPILOT_ENABLED:true}` | Gates the `AutopilotReconciler` bean. Set to `false` in the test profile (an engaged Autopilot would start real runs during the suite) and in `docker-compose.e2e.yaml` (the e2e suite drives `POST /tick` instead) |
+| `choruskube.autopilot.enabled` | `${AUTOPILOT_ENABLED:true}` | Gates the `AutopilotReconciler` bean. Set to `false` in `docker-compose.e2e.yaml` (the e2e suite drives `POST /tick` instead). The test profile sets `choruskube.scheduling.enabled=false`, which stops every `@Scheduled` tick, this one included (an engaged Autopilot would start real runs during the suite) |
 | `choruskube.autopilot.interval` | `${AUTOPILOT_INTERVAL:PT30S}` | `@Scheduled(fixedDelayString = ...)` |
 | `choruskube.autopilot.tick-lease-ttl` | `PT5M` | Lease TTL. **Refuses to start below 30s** — see below |
 | `choruskube.autopilot.stale-pending-after` | `PT15M` | How long a `pending` run may hold a slot before it is named in `whyIdle`. Surfaced, never reaped: cancelling a run whose workflow may in fact be running is the worse mistake |
