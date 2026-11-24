@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
+import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -17,6 +18,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -211,7 +214,8 @@ class UploadServiceTest {
         UUID runId = UUID.randomUUID();
 
         String staged = uploadService.stageTexts(Map.of("story_spec.md", "# Spec"));
-        String moved = uploadService.copyStagingToRun("acme", runId, staged);
+        Map<String, String> admitted = uploadService.admitStagingRefs(staged);
+        String moved = uploadService.copyStagingToRun("acme", runId, admitted);
 
         assertThat(objectMapper.readTree(moved).get("story_spec.md").asText())
                 .isEqualTo("acme/runs/" + runId + "/inputs/story_spec.md");
@@ -233,8 +237,9 @@ class UploadServiceTest {
     void copyStagingToRun_movesEachStagedObjectIntoRunPrefix() throws Exception {
         UUID runId = UUID.randomUUID();
         String stagingId = UUID.randomUUID().toString();
-        String stagingRefs = String.format(
-                "{\"a.txt\":\"acme/staging/%s/a.txt\",\"b.png\":\"acme/staging/%s/b.png\"}", stagingId, stagingId);
+        Map<String, String> stagingRefs = new LinkedHashMap<>();
+        stagingRefs.put("a.txt", "acme/staging/" + stagingId + "/a.txt");
+        stagingRefs.put("b.png", "acme/staging/" + stagingId + "/b.png");
 
         String result = uploadService.copyStagingToRun("acme", runId, stagingRefs);
 
@@ -265,7 +270,7 @@ class UploadServiceTest {
 
     @Test
     void copyStagingToRun_emptyRefs_isNoop() throws Exception {
-        String result = uploadService.copyStagingToRun("acme", UUID.randomUUID(), "{}");
+        String result = uploadService.copyStagingToRun("acme", UUID.randomUUID(), Map.of());
 
         assertThat(result).isEqualTo("{}");
         verify(s3Client, never()).copyObject(any(CopyObjectRequest.class));
@@ -278,8 +283,9 @@ class UploadServiceTest {
         // caller can safely retry from the still-intact staging objects.
         UUID runId = UUID.randomUUID();
         String stagingId = UUID.randomUUID().toString();
-        String stagingRefs = String.format(
-                "{\"a.txt\":\"acme/staging/%s/a.txt\",\"b.png\":\"acme/staging/%s/b.png\"}", stagingId, stagingId);
+        Map<String, String> stagingRefs = new LinkedHashMap<>();
+        stagingRefs.put("a.txt", "acme/staging/" + stagingId + "/a.txt");
+        stagingRefs.put("b.png", "acme/staging/" + stagingId + "/b.png");
 
         when(s3Client.copyObject(any(CopyObjectRequest.class)))
                 .thenReturn(null) // first succeeds
@@ -299,7 +305,7 @@ class UploadServiceTest {
         // run-scoped copy already exists and is what the agent reads.
         UUID runId = UUID.randomUUID();
         String stagingId = UUID.randomUUID().toString();
-        String stagingRefs = String.format("{\"a.txt\":\"acme/staging/%s/a.txt\"}", stagingId);
+        Map<String, String> stagingRefs = Map.of("a.txt", "acme/staging/" + stagingId + "/a.txt");
 
         doThrow(new RuntimeException("delete failed")).when(s3Client).deleteObject(any(DeleteObjectRequest.class));
 
@@ -308,6 +314,168 @@ class UploadServiceTest {
         // Move still reports success and returns the rewritten ref
         JsonNode rewritten = objectMapper.readTree(result);
         assertThat(rewritten.get("a.txt").asText()).isEqualTo("acme/runs/" + runId + "/inputs/a.txt");
+    }
+
+    // ----------------------------
+    // admitStagingRefs
+    // ----------------------------
+
+    @Test
+    void admitStagingRefs_honestRefsFromUploadTempFiles_admittedUnchangedAndInOrder() throws Exception {
+        when(storagePrefixResolver.currentStoragePrefix()).thenReturn("acme");
+        MockMultipartFile a = new MockMultipartFile("files", "a.txt", "text/plain", "a".getBytes());
+        MockMultipartFile b = new MockMultipartFile("files", "b.txt", "text/plain", "b".getBytes());
+        String refsJson = uploadService.uploadTempFiles("acme", List.of(a, b));
+        JsonNode built = objectMapper.readTree(refsJson);
+
+        Map<String, String> admitted = uploadService.admitStagingRefs(refsJson);
+
+        assertThat(admitted.keySet()).containsExactly("a.txt", "b.txt");
+        assertThat(admitted.get("a.txt")).isEqualTo(built.get("a.txt").asText());
+        assertThat(admitted.get("b.txt")).isEqualTo(built.get("b.txt").asText());
+    }
+
+    @Test
+    void admitStagingRefs_honestRefsFromStageTexts_admittedUnchangedAndInOrder() throws Exception {
+        when(storagePrefixResolver.currentStoragePrefix()).thenReturn("acme");
+        Map<String, String> texts = new LinkedHashMap<>();
+        texts.put("a.txt", "A");
+        texts.put("b.txt", "B");
+        String refsJson = uploadService.stageTexts(texts);
+        JsonNode built = objectMapper.readTree(refsJson);
+
+        Map<String, String> admitted = uploadService.admitStagingRefs(refsJson);
+
+        assertThat(admitted.keySet()).containsExactly("a.txt", "b.txt");
+        assertThat(admitted.get("a.txt")).isEqualTo(built.get("a.txt").asText());
+        assertThat(admitted.get("b.txt")).isEqualTo(built.get("b.txt").asText());
+    }
+
+    @Test
+    void admitStagingRefs_nullBlankOrEmptyObject_returnsEmptyMapWithoutResolvingPrefix() {
+        assertThat(uploadService.admitStagingRefs(null)).isEmpty();
+        assertThat(uploadService.admitStagingRefs("")).isEmpty();
+        assertThat(uploadService.admitStagingRefs("   ")).isEmpty();
+        assertThat(uploadService.admitStagingRefs("{}")).isEmpty();
+
+        verifyNoInteractions(storagePrefixResolver);
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "not json",
+                "[]",
+                "\"just a string\"",
+                "{\"a.txt\": 1}",
+                "{\"a.txt\": null}",
+                "{\"a.txt\": {\"nested\": \"x\"}}"
+            })
+    void admitStagingRefs_malformedValue_refusedWithFixedMessageAndNoS3Interaction(String refsJson) {
+        assertThatThrownBy(() -> uploadService.admitStagingRefs(refsJson))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(UploadService.INPUT_REFS_REFUSED);
+        verifyNoInteractions(s3Client);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"other/staging/x/a.txt", "acme-api/staging/x/a.txt"})
+    void admitStagingRefs_keyOutsideCallersStagingArea_refused(String foreignKey) throws Exception {
+        when(storagePrefixResolver.currentStoragePrefix()).thenReturn("acme");
+        String refsJson = objectMapper.writeValueAsString(Map.of("a.txt", foreignKey));
+
+        assertThatThrownBy(() -> uploadService.admitStagingRefs(refsJson))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(UploadService.INPUT_REFS_REFUSED);
+        verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    void admitStagingRefs_keyInTheCallersOwnRunTree_refused() throws Exception {
+        when(storagePrefixResolver.currentStoragePrefix()).thenReturn("acme");
+        String refsJson =
+                objectMapper.writeValueAsString(Map.of("a.txt", "acme/runs/" + UUID.randomUUID() + "/inputs/a.txt"));
+
+        assertThatThrownBy(() -> uploadService.admitStagingRefs(refsJson))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(UploadService.INPUT_REFS_REFUSED);
+        verifyNoInteractions(s3Client);
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "acme/staging/../other/staging/x/a.txt",
+                "acme/staging/x/..",
+            })
+    void admitStagingRefs_keyWithDoubleDotAnywhere_refused(String keyWithDotDot) throws Exception {
+        when(storagePrefixResolver.currentStoragePrefix()).thenReturn("acme");
+        String refsJson = objectMapper.writeValueAsString(Map.of("a.txt", keyWithDotDot));
+
+        assertThatThrownBy(() -> uploadService.admitStagingRefs(refsJson))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(UploadService.INPUT_REFS_REFUSED);
+        verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    void admitStagingRefs_bareStagingSegmentWithNothingBelow_refused() throws Exception {
+        when(storagePrefixResolver.currentStoragePrefix()).thenReturn("acme");
+        String refsJson = objectMapper.writeValueAsString(Map.of("a.txt", "acme/staging/"));
+
+        assertThatThrownBy(() -> uploadService.admitStagingRefs(refsJson))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(UploadService.INPUT_REFS_REFUSED);
+        verifyNoInteractions(s3Client);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", ".", "..", "a/b.txt", "a\\b.txt", "a..b", "it's.txt", "a\"b", "é.txt"})
+    void admitStagingRefs_nonPlainName_refused(String name) throws Exception {
+        when(storagePrefixResolver.currentStoragePrefix()).thenReturn("acme");
+        String key = "acme/staging/" + UUID.randomUUID() + "/x.txt";
+        String refsJson = objectMapper.writeValueAsString(Map.of(name, key));
+
+        assertThatThrownBy(() -> uploadService.admitStagingRefs(refsJson))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(UploadService.INPUT_REFS_REFUSED);
+        verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    void admitStagingRefs_oneHonestAndOneForeignRef_refusedAsAWhole() throws Exception {
+        when(storagePrefixResolver.currentStoragePrefix()).thenReturn("acme");
+        Map<String, String> refs = new LinkedHashMap<>();
+        refs.put("honest.txt", "acme/staging/s1/honest.txt");
+        refs.put("foreign.txt", "other/staging/s2/foreign.txt");
+        String refsJson = objectMapper.writeValueAsString(refs);
+
+        assertThatThrownBy(() -> uploadService.admitStagingRefs(refsJson))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(UploadService.INPUT_REFS_REFUSED);
+        verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    void admitStagingRefs_repeatedName_ownThenForeign_refused() {
+        when(storagePrefixResolver.currentStoragePrefix()).thenReturn("acme");
+        String refsJson = "{\"a.txt\":\"acme/staging/s1/a.txt\",\"a.txt\":\"other/staging/s2/a.txt\"}";
+
+        assertThatThrownBy(() -> uploadService.admitStagingRefs(refsJson))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessage(UploadService.INPUT_REFS_REFUSED);
+        verifyNoInteractions(s3Client);
+    }
+
+    @Test
+    void admitStagingRefs_repeatedName_foreignThenOwn_admitsOnlyTheOwnKey() {
+        when(storagePrefixResolver.currentStoragePrefix()).thenReturn("acme");
+        String refsJson = "{\"a.txt\":\"other/staging/s2/a.txt\",\"a.txt\":\"acme/staging/s1/a.txt\"}";
+
+        Map<String, String> admitted = uploadService.admitStagingRefs(refsJson);
+
+        assertThat(admitted).containsExactly(Map.entry("a.txt", "acme/staging/s1/a.txt"));
+        verifyNoInteractions(s3Client);
     }
 
     // ----------------------------
@@ -380,6 +548,37 @@ class UploadServiceTest {
         verify(s3Client).putObject(captor.capture(), any(RequestBody.class));
         String key = captor.getValue().key();
         assertThat(key).endsWith("/my-file_v1.0.txt");
+    }
+
+    @Test
+    void sanitise_nullOutput_agreesWithThePlainNameRule() {
+        assertThat(UploadService.isPlainFileName(UploadService.sanitiseFilename(null)))
+                .isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "",
+                ".",
+                "..",
+                "...",
+                "../../etc/passwd",
+                "C:\\x\\y.txt",
+                "a..b",
+                "résumé.pdf",
+                "my file (1).txt",
+                ".hidden"
+            })
+    void sanitise_everyOutput_agreesWithThePlainNameRule(String original) {
+        assertThat(UploadService.isPlainFileName(UploadService.sanitiseFilename(original)))
+                .isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {".", "..", "..."})
+    void sanitise_dotsOnly_yieldsTheFilePlaceholder(String dotsOnly) {
+        assertThat(UploadService.sanitiseFilename(dotsOnly)).isEqualTo("file");
     }
 
     // ----------------------------

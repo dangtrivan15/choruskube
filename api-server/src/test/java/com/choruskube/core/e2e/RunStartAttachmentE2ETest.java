@@ -19,6 +19,7 @@ import com.choruskube.core.repository.NodeExecutionRepository;
 import com.choruskube.core.repository.TemplateNodeRepository;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.service.PresignService;
+import com.choruskube.core.service.UploadService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.temporal.client.WorkflowOptions;
@@ -199,5 +200,120 @@ class RunStartAttachmentE2ETest extends SharedContextTest {
                         .header("Authorization", "Bearer " + JOB_SECRET))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("Access denied: path outside allowed scope"));
+    }
+
+    @Test
+    void forgedKey_outsideCallersStagingArea_refusedWithFixedMessage() throws Exception {
+        assertKeyRefused("other/staging/" + UUID.randomUUID() + "/a.txt");
+    }
+
+    @Test
+    void forgedKey_siblingPrefixThatBeginsWithTheCallers_refusedWithFixedMessage() throws Exception {
+        assertKeyRefused("system-x/staging/" + UUID.randomUUID() + "/a.txt");
+    }
+
+    @Test
+    void forgedKey_inAnExistingRunsTree_refusedWithFixedMessage() throws Exception {
+        UUID existingRunId = startBareRun();
+        assertKeyRefused("system/runs/" + existingRunId + "/inputs/a.txt");
+    }
+
+    @Test
+    void forgedKey_withDoubleDotAnywhere_refusedWithFixedMessage() throws Exception {
+        assertKeyRefused("system/staging/../x");
+    }
+
+    @Test
+    void nameWithSlashDotDotOrQuote_refusedWithFixedMessage() throws Exception {
+        assertNameRefused("a/b.txt");
+        assertNameRefused("..");
+        assertNameRefused("a\"b");
+    }
+
+    @Test
+    void malformedRefsValue_answers400NotTheOldFiveHundred() throws Exception {
+        assertRawRefsRefused("[]");
+        assertRawRefsRefused("not json");
+    }
+
+    @Test
+    void mixedRequest_honestAndForeignRef_refusedAsAWhole_deletesNoStagedFile() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("files", "honest.txt", "text/plain", "x".getBytes());
+        MvcResult uploadResult = mockMvc.perform(
+                        multipart("/api/v1/attachments/temp").file(file))
+                .andExpect(status().isOk())
+                .andReturn();
+        String stagingRefs = objectMapper
+                .readTree(uploadResult.getResponse().getContentAsString())
+                .get("stagingRefs")
+                .asText();
+        String honestKey = objectMapper.readTree(stagingRefs).get("honest.txt").asText();
+
+        String refs = objectMapper.writeValueAsString(
+                Map.of("honest.txt", honestKey, "foreign.txt", "other/staging/" + UUID.randomUUID() + "/x.txt"));
+        String uniqueName = shortUniqueRunName("mixed");
+        Map<String, Object> body = Map.of(
+                "graphTemplateId", templateId, "inputs", Map.of(), "name", uniqueName, "inputAttachmentRefs", refs);
+
+        mockMvc.perform(post("/api/v1/runs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(UploadService.INPUT_REFS_REFUSED));
+
+        assertThat(runRepo.findAll()).noneMatch(r -> uniqueName.equals(r.getName()));
+        verify(s3Client, never()).copyObject(any(CopyObjectRequest.class));
+        verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+    }
+
+    // A name past RunService.RUN_NAME_MAX_LENGTH (30) is stored truncated, which would make every
+    // "no run row with this name" assertion here pass even if the refused start had saved one.
+    private static String shortUniqueRunName(String prefix) {
+        return prefix + "-" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private UUID startBareRun() throws Exception {
+        Map<String, Object> body = Map.of("graphTemplateId", templateId, "inputs", Map.of());
+        MvcResult result = mockMvc.perform(post("/api/v1/runs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return UUID.fromString(objectMapper
+                .readTree(result.getResponse().getContentAsString())
+                .get("id")
+                .asText());
+    }
+
+    private void assertKeyRefused(String foreignKey) throws Exception {
+        assertRawRefsRefused(objectMapper.writeValueAsString(Map.of("a.txt", foreignKey)));
+    }
+
+    private void assertNameRefused(String name) throws Exception {
+        String ownKey = "system/staging/" + UUID.randomUUID() + "/x.txt";
+        assertRawRefsRefused(objectMapper.writeValueAsString(Map.of(name, ownKey)));
+    }
+
+    private void assertRawRefsRefused(String inputAttachmentRefs) throws Exception {
+        String uniqueName = shortUniqueRunName("refused");
+        Map<String, Object> body = Map.of(
+                "graphTemplateId",
+                templateId,
+                "inputs",
+                Map.of(),
+                "name",
+                uniqueName,
+                "inputAttachmentRefs",
+                inputAttachmentRefs);
+
+        mockMvc.perform(post("/api/v1/runs")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body)))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(UploadService.INPUT_REFS_REFUSED));
+
+        assertThat(runRepo.findAll()).noneMatch(r -> uniqueName.equals(r.getName()));
+        verify(s3Client, never()).copyObject(any(CopyObjectRequest.class));
+        verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
     }
 }

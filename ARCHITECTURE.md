@@ -389,7 +389,13 @@ containment rule every write that records a reference applies before it stores a
   an artifact or attachment reference — a node's status, its review history, a gate's decision —
   refuses a path outside the run's own storage tree with 400, before reading or storing anything.
   Pull-request registration and a repo-base report apply the equivalent rule to a repository,
-  refusing one that is not among `GraphSnapshotBuilder.reposForRun` with 404.
+  refusing one that is not among `GraphSnapshotBuilder.reposForRun` with 404. A run start holds its
+  `inputAttachmentRefs` to the same shape of rule one step earlier, against the caller's own
+  staging area rather than a run that does not exist yet: `UploadService.admitStagingRefs` refuses
+  a key outside `{prefix}/staging/` or a name the upload sanitiser would have changed, before the
+  run row, quota check, placement, preflight, or any object-store call. A deployment whose storage
+  prefix differs per organisation gets this containment for free through the same storage-prefix
+  seam the staging key is built from.
 
 `web-ui/e2e/specs/agent-run-scope.spec.ts` proves all three against a running stack with two runs'
 real `JOB_SECRET`s: one run's secret is refused on every agent route the server's `/v3/api-docs`

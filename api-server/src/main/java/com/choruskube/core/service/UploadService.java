@@ -1,9 +1,11 @@
 package com.choruskube.core.service;
 
+import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.exception.NotFoundException;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -25,6 +27,13 @@ public class UploadService {
 
     /** The staging segment of a staged key, {@code {prefix}/staging/{stagingId}/{file}}. */
     public static final String STAGING_SEGMENT = "staging/";
+
+    /**
+     * Fixed 400 body for a run start's refs: names no key and reads the same whether or not the
+     * named object exists, so it teaches a forger nothing about another tree.
+     */
+    public static final String INPUT_REFS_REFUSED =
+            "inputAttachmentRefs must each name a file in your own staging area, under a plain file name";
 
     private final S3Client s3Client;
     private final ObjectMapper objectMapper;
@@ -70,8 +79,9 @@ public class UploadService {
     }
 
     /**
-     * Returns refs in the shape {@link #copyStagingToRun} consumes. The prefix is the current
-     * tenant's, so an off-request caller must run inside a bound org scope.
+     * Returns refs in the shape a run start's {@code inputAttachmentRefs} consumes — the JSON
+     * {@link #admitStagingRefs} parses before {@link #copyStagingToRun} ever sees the entries. The
+     * prefix is the current tenant's, so an off-request caller must run inside a bound org scope.
      */
     public String stageTexts(Map<String, String> contentByFileName) {
         if (contentByFileName.isEmpty()) {
@@ -110,14 +120,13 @@ public class UploadService {
      * under {@code {orgSlug}/runs/{runId}/}, so staging refs handed to the agent
      * verbatim are rejected with 403.
      *
-     * @param stagingRefsJson JSON map of {@code {filename: stagingObjectKey, ...}}
+     * @param admittedRefs {@code {filename: stagingObjectKey, ...}} already passed {@link
+     *     #admitStagingRefs} — this method does not re-check them
      * @return rewritten JSON with the same filenames pointing at the run-scoped keys
      */
-    public String copyStagingToRun(String orgSlug, UUID runId, String stagingRefsJson) throws Exception {
-        Map<String, String> stagingRefs =
-                objectMapper.readValue(stagingRefsJson, new TypeReference<Map<String, String>>() {});
-        if (stagingRefs.isEmpty()) {
-            return stagingRefsJson;
+    public String copyStagingToRun(String orgSlug, UUID runId, Map<String, String> admittedRefs) throws Exception {
+        if (admittedRefs.isEmpty()) {
+            return objectMapper.writeValueAsString(admittedRefs);
         }
 
         Map<String, String> newRefs = new LinkedHashMap<>();
@@ -125,7 +134,7 @@ public class UploadService {
 
         // Phase 1: copy all. If any copy throws, abort before any deletes — the
         // staging objects are still intact, so the caller can retry the run-create.
-        for (Map.Entry<String, String> entry : stagingRefs.entrySet()) {
+        for (Map.Entry<String, String> entry : admittedRefs.entrySet()) {
             String filename = entry.getKey();
             String stagingKey = entry.getValue();
             String runKey = runPrefix + filename;
@@ -141,7 +150,7 @@ public class UploadService {
         // Phase 2: delete staging copies. Best-effort — a failed delete here doesn't
         // invalidate the move (the run-scoped copies already exist), and a stranded
         // staging object is harmless.
-        for (String stagingKey : stagingRefs.values()) {
+        for (String stagingKey : admittedRefs.values()) {
             try {
                 s3Client.deleteObject(DeleteObjectRequest.builder()
                         .bucket(bucket)
@@ -157,6 +166,76 @@ public class UploadService {
         }
 
         return objectMapper.writeValueAsString(newRefs);
+    }
+
+    /**
+     * Admits a run start's {@code inputAttachmentRefs} value: every key must sit in the caller's
+     * own staging area (see {@link #isStagingKey}) and every name must be a plain file name (see
+     * {@link #isPlainFileName}), or the whole value is refused with {@link #INPUT_REFS_REFUSED}
+     * before anything is written, read or deleted. Parses the value exactly once; {@link
+     * #copyStagingToRun} is handed only what this returns and never re-reads the raw value, so no
+     * ref can reach the move without having passed this check.
+     *
+     * @param refsJson the request's raw {@code inputAttachmentRefs}
+     * @return the admitted entries, in request order; empty for a null, blank or {@code {}} value,
+     *     which also skips resolving the caller's storage prefix
+     */
+    public Map<String, String> admitStagingRefs(String refsJson) {
+        if (refsJson == null || refsJson.isBlank()) {
+            return Map.of();
+        }
+        JsonNode refs;
+        try {
+            refs = objectMapper.readTree(refsJson);
+        } catch (Exception e) {
+            throw new BadRequestException(INPUT_REFS_REFUSED);
+        }
+        if (!refs.isObject()) {
+            throw new BadRequestException(INPUT_REFS_REFUSED);
+        }
+        if (refs.isEmpty()) {
+            return Map.of();
+        }
+
+        String prefix = storagePrefixResolver.currentStoragePrefix();
+        Map<String, String> admitted = new LinkedHashMap<>();
+        Iterator<Map.Entry<String, JsonNode>> fields = refs.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> entry = fields.next();
+            String name = entry.getKey();
+            JsonNode value = entry.getValue();
+            if (!value.isTextual() || !isStagingKey(prefix, value.asText()) || !isPlainFileName(name)) {
+                throw new BadRequestException(INPUT_REFS_REFUSED);
+            }
+            admitted.put(name, value.asText());
+        }
+        return admitted;
+    }
+
+    /**
+     * Whether {@code key} sits inside {@code prefix}'s own staging area: under {@code prefix +
+     * "/" + STAGING_SEGMENT}, with at least one character below it, and no {@code ..} anywhere.
+     * The {@code /} after {@code prefix} is part of the test so a sibling prefix that begins with
+     * this one (e.g. {@code acme-api} against {@code acme}) never admits this prefix's keys.
+     */
+    static boolean isStagingKey(String prefix, String key) {
+        if (key == null || key.contains("..")) {
+            return false;
+        }
+        String stagingRoot = prefix + "/" + STAGING_SEGMENT;
+        return key.startsWith(stagingRoot) && key.length() > stagingRoot.length();
+    }
+
+    /**
+     * Whether {@code name} is a plain file name: non-null, non-empty, not a dot segment, and exactly
+     * what {@link #sanitiseFilename} would have produced from it. A client composing refs by hand is
+     * therefore held to the upload sanitiser's own alphabet.
+     */
+    static boolean isPlainFileName(String name) {
+        if (name == null || name.isEmpty() || ".".equals(name) || "..".equals(name)) {
+            return false;
+        }
+        return name.equals(sanitiseFilename(name));
     }
 
     /**
@@ -276,7 +355,7 @@ public class UploadService {
      * Avoids {@code Paths.get} to prevent {@code InvalidPathException} on non-ASCII filenames
      * in environments where the filesystem locale does not support Unicode paths.
      */
-    private String sanitiseFilename(String original) {
+    static String sanitiseFilename(String original) {
         if (original == null || original.isEmpty()) return "file";
         // Strip any directory component (handles both / and \ separators)
         int lastSep = Math.max(original.lastIndexOf('/'), original.lastIndexOf('\\'));
@@ -284,6 +363,9 @@ public class UploadService {
         if (name.isEmpty()) name = "file";
         // RunStorageScope refuses `..` anywhere in a key, so a name keeping one would yield refs
         // that presign and every artifact-recording write then reject.
-        return name.replaceAll("[^a-zA-Z0-9._-]", "_").replaceAll("\\.{2,}", ".");
+        String sanitised = name.replaceAll("[^a-zA-Z0-9._-]", "_").replaceAll("\\.{2,}", ".");
+        // A name made only of dots collapses to "." above, which isPlainFileName refuses as a dot
+        // segment — fall back to the same placeholder used for an empty name.
+        return ".".equals(sanitised) ? "file" : sanitised;
     }
 }
