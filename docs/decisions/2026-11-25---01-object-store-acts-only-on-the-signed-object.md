@@ -39,9 +39,9 @@ allowlisted proxy only from 4.49 on — a fact about the store, not a choice thi
 - **A policy proxy in front of the object store for agent traffic.** Covers every store release but
   adds a hop to every transfer and a second signing endpoint; the store is the one component every
   path already reaches, so a fix placed there needs no new component.
-- **Routing every agent through a deployment's existing proxy in front of the store.** Leaves the
-  store itself trusting a caller-supplied forwarding prefix, and gives every other backend behind
-  that same proxy the identical exposure for no new defense.
+- **Routing agents next to the store through a deployment's proxy in front of it.** One artifact
+  policy for both paths, but it opens that proxy to agents on an internal path and adds a hop to
+  every transfer, and a compose stack has no such proxy to route through.
 - **Refusing to presign a key that embeds the bucket name as a path segment.** Blocks one shape of
   the retarget while the store still honours the forwarding prefix for every other key.
 
@@ -55,6 +55,6 @@ allowlisted proxy only from 4.49 on — a fact about the store, not a choice thi
 - A standard header added to a presigned PUT (content type, disposition, cache control) is still
   kept by the store; neither it nor the exempted payload-hash and echoed-signing-parameter headers
   changes which object is acted on.
-- Every pin here, and the contract test's own image, names a release tag rather than a digest; a
-  tag that moved under an unchanged pin would be caught only on the next deliberate bump, not by
-  this test.
+- Every pin here, and the contract test's own image, names a release tag rather than a digest, so
+  a re-pushed tag would change the store under an unchanged pin. This is accepted because the
+  contract test runs on that same tag: a build that pulls the moved tag tests what it now names.

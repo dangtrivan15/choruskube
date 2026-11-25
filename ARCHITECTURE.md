@@ -305,8 +305,8 @@ path, because the trusted-proxy allowlist that would admit one is left empty on 
 deployment.
 
 `PresignedRequestStoreContractTest` holds this contract against the exact image this
-repo's compose stacks and store-backed tests pin, between two run ids rather than two
-tenants of a multi-tenant deployment, through the real presign path:
+repo's compose stacks and store-backed tests pin, between two runs, through the real
+presign path:
 
 | Request sent with a URL the real presign path minted | Expected |
 |---|---|

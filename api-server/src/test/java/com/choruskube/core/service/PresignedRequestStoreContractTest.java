@@ -42,7 +42,7 @@ import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 /**
- * Proves against {@link PinnedObjectStore#IMAGE}, cross-run and with production's bucket-scoped
+ * Proves against {@link PinnedObjectStore#IMAGE}, cross-run and with a deployment's bucket-scoped
  * identity shape, that a URL from the real {@link PresignService} acts only on the object it was
  * signed for: an unsigned control header, a forwarding-prefix retarget or an added query parameter
  * is refused, and the same URL sent unmodified succeeds. No Spring context: the service and the
@@ -59,9 +59,9 @@ class PresignedRequestStoreContractTest {
     private static final String SCOPED_SECRET = "contract-scoped-secret";
     private static final String S3_CONFIG_PATH = "/etc/seaweedfs/s3.json";
 
-    // Production's identity shape: an admin identity used only by this test's setup and
-    // verification, plus one identity scoped to exactly List/Read/Tagging/Write on the bucket --
-    // the only grant PresignService ever signs for.
+    // An admin identity for this test's own setup and verification only, plus the identity
+    // PresignService signs with, scoped to exactly List/Read/Tagging/Write on the bucket -- the
+    // least a deployment grants the api-server, so a refusal here is not an artefact of a wider grant.
     private static String identitiesConfig() {
         return """
                 {
@@ -78,9 +78,7 @@ class PresignedRequestStoreContractTest {
                     }
                   ]
                 }
-                """
-                .formatted(
-                        ADMIN_ACCESS, ADMIN_SECRET, SCOPED_ACCESS, SCOPED_SECRET, BUCKET, BUCKET, BUCKET, BUCKET);
+                """.formatted(ADMIN_ACCESS, ADMIN_SECRET, SCOPED_ACCESS, SCOPED_SECRET, BUCKET, BUCKET, BUCKET, BUCKET);
     }
 
     @Container
@@ -146,13 +144,15 @@ class PresignedRequestStoreContractTest {
 
     private static String getAdmin(String key) {
         return adminClient
-                .getObjectAsBytes(GetObjectRequest.builder().bucket(BUCKET).key(key).build())
+                .getObjectAsBytes(
+                        GetObjectRequest.builder().bucket(BUCKET).key(key).build())
                 .asUtf8String();
     }
 
     private static boolean existsAdmin(String key) {
         try {
-            adminClient.headObject(HeadObjectRequest.builder().bucket(BUCKET).key(key).build());
+            adminClient.headObject(
+                    HeadObjectRequest.builder().bucket(BUCKET).key(key).build());
             return true;
         } catch (NoSuchKeyException e) {
             return false;

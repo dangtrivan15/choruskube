@@ -24,13 +24,9 @@ function childOf(promise: ReturnType<typeof run>): ChildProcess {
 // body) to it and prints only the HTTP status code.
 const CURL_PUT_SCRIPT = 'url=$(cat); curl -s -o /dev/null -w "%{http_code}" -X PUT --data-binary "$1" "$url"';
 
-// Reads the signed URL off stdin, never argv. Method, body and headers all arrive as positional
-// args, so a header value never needs shell-quoting. Exactly `count` header pairs are consumed by
-// position -- counting down from an explicit number, not from `$#`/`$1` truthiness -- because an
-// empty header value would otherwise stop the loop early.
-// hasBody travels separately from body itself: an explicit zero-length PUT must still send
-// Content-Length: 0 (--data-binary ""), which an empty-string check alone can't tell apart from
-// "no body at all" (a GET).
+// The signed URL comes off stdin, never argv. Headers go by an explicit pair count, an empty value as
+// curl's `name;` (it drops `name: `), and the body by an explicit flag: a header or Content-Length: 0
+// dropped on the way lets a refusal test pass vacuously.
 const CURL_SEND_SCRIPT = `
 url=$(cat)
 method="$1"; shift
@@ -40,7 +36,7 @@ count="$1"; shift
 i=0
 while [ "$i" -lt "$count" ]; do
   name="$1"; value="$2"; shift 2
-  set -- "$@" -H "$name: $value"
+  if [ -n "$value" ]; then set -- "$@" -H "$name: $value"; else set -- "$@" -H "$name;"; fi
   i=$((i + 1))
 done
 out="/tmp/ck-send-body-$$"
@@ -235,9 +231,8 @@ export interface SendFromWorkloadOptions {
 /**
  * Sends `method` to `url` from inside `container`, with `headers` added, the way an agent adds a
  * header to a presigned request. `url` reaches the container over the exec's stdin, never this
- * host's argv (see `putFromWorkload`); header names and values are passed as positional args so
- * neither needs shell-quoting. On failure this raises a one-line error only -- the original
- * carries the full `docker exec` argv, this request's signed URL included.
+ * host's argv (see `putFromWorkload`). On failure this raises a one-line error only, so the exec's
+ * argv and stderr stay out of a report.
  */
 export async function sendFromWorkload(
   container: string,

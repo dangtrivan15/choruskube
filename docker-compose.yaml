@@ -87,8 +87,8 @@ services:
       start_period: 60s
 
   # S3-compatible object storage for run artifacts (SeaweedFS: master, volume, filer and S3 in one process).
-  # Pinned together with PinnedObjectStore, the object-storage-setup image below and
-  # agent-images/choruskube-dind/preload-stack.txt -- move all four only once
+  # Pinned with object-storage-setup below, docker-compose.e2e.yaml, PinnedObjectStore and
+  # agent-images/choruskube-dind/preload-stack.txt: move them together, and only once
   # PresignedRequestStoreContractTest passes at the new tag.
   object-storage:
     image: chrislusf/seaweedfs:4.54

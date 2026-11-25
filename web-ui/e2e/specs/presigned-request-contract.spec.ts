@@ -81,6 +81,12 @@ test.describe("Presigned request contract, from inside an agent container", () =
       const destGet = await sendFromWorkload(workloadA.container, destGetUrl, { method: "GET" });
       expect(destGet.body).not.toContain(bContent);
 
+      // The same URL and empty body without the header is stored, so the refusal above came from
+      // the copy-source alone.
+      const destPutUnmodified = await sendFromWorkload(workloadA.container, destPutUrl, { method: "PUT", body: "" });
+      expect(destPutUnmodified.status).toBeGreaterThanOrEqual(200);
+      expect(destPutUnmodified.status).toBeLessThan(300);
+
       // Retarget: run A presigns a key in its own tree whose tail spells B's path, then sends the
       // request to B's actual path with a forwarding prefix that rebuilds the signed path.
       const retargetPresignKey = retargetKey(workloadA.outputPath, bKey, bucket);
