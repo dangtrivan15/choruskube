@@ -284,8 +284,91 @@ sequenceDiagram
     API-->>A: presigned URL on the in-cluster host
     A->>S: GET or PUT on the in-cluster host
   end
-  S->>S: verify the signature against the Host received, then authorize the identity
+  S->>S: every x-amz-* header present is signed, or never selects an object, else refuse
+  S->>S: signature computed over method, routed path, query and signed headers, no prefix from an untrusted peer
+  S->>S: authorize the identity
   S-->>A: the object, or 200 stored
+```
+
+### What the object store must refuse
+
+A presigned URL is meant to authorize one method on one object. A header or query
+parameter added after signing is not covered by the signature, so only the object
+store, and anything in front of it, decides what such an addition can do. The
+principle: **an input outside the signature may fail the request, or be dropped or
+ignored before it acts, but it must never pick or change the object.** The store
+computes the signature over the method, the path it routes on, the full query and
+the headers named as signed; it refuses any `x-amz-*` header outside that set. A few
+headers never select an object and are exempt — the payload hash and the signing
+parameters echoed as headers. It never joins a caller's `X-Forwarded-Prefix` to the
+path, because the trusted-proxy allowlist that would admit one is left empty on every
+deployment.
+
+`PresignedRequestStoreContractTest` holds this contract against the exact image this
+repo's compose stacks and store-backed tests pin, between two run ids rather than two
+tenants of a multi-tenant deployment, through the real presign path:
+
+| Request sent with a URL the real presign path minted | Expected |
+|---|---|
+| PUT carrying an unsigned copy-source that names another run's key, in every spelling | refused; the destination does not hold the source's bytes |
+| PUT carrying an unsigned metadata-directive, tagging, ACL, user-metadata or made-up `x-amz-*` header | refused |
+| GET and length-signed PUT sent to another run's key with a forwarding prefix that rebuilds the signed path | refused; the target unchanged |
+| GET sent to the bucket's root with a forwarding prefix that rebuilds the signed path | refused; no listing returned |
+| URL with an added query parameter (a subresource or an upload id) | refused |
+| the same URLs sent unmodified | succeed, so the refusals above are not vacuous |
+
+`web-ui/e2e/specs/presigned-request-contract.spec.ts` repeats the copy-source and
+retarget refusals from inside a real agent container, against a URL the api-server
+actually minted — the one hop the store-backed test cannot reach. Any store a
+deployment of this project uses must leave its trusted-proxy allowlist empty, so a
+caller-supplied forwarding prefix is never joined to the routed path. Why the pin that
+both tests run against may only move to a release at or past 4.49, and what else was
+considered: [docs/decisions/2026-11-25---01-object-store-acts-only-on-the-signed-object.md](docs/decisions/2026-11-25---01-object-store-acts-only-on-the-signed-object.md).
+
+```mermaid
+sequenceDiagram
+  participant A as Agent
+  participant API as api-server
+  participant P as A deployment's proxy in front of the store
+  participant S as Object store S3 gateway
+
+  A->>API: presign path, method and size, Bearer job secret
+  API->>API: run scope, path shape, upload budget
+  API-->>A: URL signed for the run's endpoint: host, plus exact length on a PUT
+  alt an agent next to the store
+    A->>S: GET or PUT on the URL
+  else an agent behind a deployment's proxy
+    A->>P: GET or PUT on the URL over TLS
+    P->>P: drop the caller's forwarding and identity headers, set X-Forwarded-For
+    P->>P: artifact policy: GET or PUT, one key, signing markers, no Authorization, no listed x-amz header
+    P->>S: forwarded with Host, path and query as received
+  end
+  S->>S: every x-amz-* header present is signed or never selects an object, else refuse
+  S->>S: signature over method, routed path, query and signed headers, no prefix from an untrusted peer
+  S->>S: authorize the identity
+  S-->>A: 200 with the object, or stored
+```
+
+A request the signature does not cover is refused on both paths:
+
+```mermaid
+sequenceDiagram
+  participant A as Agent
+  participant P as A deployment's proxy in front of the store
+  participant S as Object store S3 gateway
+
+  Note over A: holds a URL signed for one key in its own run
+  A->>S: PUT with an unsigned copy-source header
+  S-->>A: 403, nothing copied
+  A->>P: the same PUT, behind a deployment's proxy
+  P-->>A: 403, never forwarded
+  A->>S: request to another run's key, with a forwarding prefix that rebuilds the signed path
+  S->>S: prefix ignored, signature computed over the routed path
+  S-->>A: 403, target unchanged
+  A->>P: the same request, behind a deployment's proxy
+  P->>S: forwarded without the forwarding headers
+  S-->>A: 403, target unchanged
+  A->>A: a refusal is a failed transfer, never a missing object
 ```
 
 ### How an upload is sized and budgeted

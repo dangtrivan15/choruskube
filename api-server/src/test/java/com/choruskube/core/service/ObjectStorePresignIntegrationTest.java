@@ -26,7 +26,6 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -59,8 +58,7 @@ class ObjectStorePresignIntegrationTest {
     private static final String BUCKET = "choruskube-it";
 
     @Container
-    static final GenericContainer<?> OBJECT_STORE = new GenericContainer<>(
-                    DockerImageName.parse("chrislusf/seaweedfs:4.37"))
+    static final GenericContainer<?> OBJECT_STORE = new GenericContainer<>(PinnedObjectStore.IMAGE)
             // The S3 gateway's admin identity; without one it would accept unsigned requests and prove
             // nothing about the signatures this test exists to check.
             .withEnv("AWS_ACCESS_KEY_ID", ACCESS)

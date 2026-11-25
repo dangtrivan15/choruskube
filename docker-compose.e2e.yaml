@@ -85,8 +85,11 @@ services:
       start_period: 60s
 
   # S3-compatible object storage for run artifacts.
+  # Pinned together with PinnedObjectStore, the object-storage-setup image below and
+  # agent-images/choruskube-dind/preload-stack.txt -- move all four only once
+  # PresignedRequestStoreContractTest passes at the new tag.
   object-storage:
-    image: chrislusf/seaweedfs:4.37
+    image: chrislusf/seaweedfs:4.54
     dns_search: .
     mem_limit: 256m
     command: server -dir=/data -s3 -s3.port=9000
@@ -108,7 +111,7 @@ services:
       retries: 10
 
   object-storage-setup:
-    image: chrislusf/seaweedfs:4.37
+    image: chrislusf/seaweedfs:4.54
     dns_search: .
     networks:
       - choruskube-e2e
