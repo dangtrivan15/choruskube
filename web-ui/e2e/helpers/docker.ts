@@ -24,6 +24,32 @@ function childOf(promise: ReturnType<typeof run>): ChildProcess {
 // body) to it and prints only the HTTP status code.
 const CURL_PUT_SCRIPT = 'url=$(cat); curl -s -o /dev/null -w "%{http_code}" -X PUT --data-binary "$1" "$url"';
 
+// The signed URL comes off stdin, never argv. Headers go by an explicit pair count, an empty value as
+// curl's `name;` (it drops `name: `), and the body by an explicit flag: a header or Content-Length: 0
+// dropped on the way lets a refusal test pass vacuously.
+const CURL_SEND_SCRIPT = `
+url=$(cat)
+method="$1"; shift
+hasBody="$1"; shift
+body="$1"; shift
+count="$1"; shift
+i=0
+while [ "$i" -lt "$count" ]; do
+  name="$1"; value="$2"; shift 2
+  if [ -n "$value" ]; then set -- "$@" -H "$name: $value"; else set -- "$@" -H "$name;"; fi
+  i=$((i + 1))
+done
+out="/tmp/ck-send-body-$$"
+if [ "$hasBody" = "1" ]; then
+  code=$(curl -s -o "$out" -w "%{http_code}" -X "$method" --data-binary "$body" "$@" "$url")
+else
+  code=$(curl -s -o "$out" -w "%{http_code}" -X "$method" "$@" "$url")
+fi
+echo "$code"
+cat "$out"
+rm -f "$out"
+`;
+
 export interface WorkloadObjects {
   /** Names of containers (the agent container and/or its DinD sidecar) labelled for the run. */
   containers: string[];
@@ -194,4 +220,53 @@ export async function putFromWorkload(container: string, signedUrl: string, body
   childOf(promise).stdin?.end(signedUrl);
   const { stdout } = await promise;
   return Number(stdout.trim());
+}
+
+export interface SendFromWorkloadOptions {
+  method: "GET" | "PUT";
+  body?: string;
+  headers?: Record<string, string>;
+}
+
+/**
+ * Sends `method` to `url` from inside `container`, with `headers` added, the way an agent adds a
+ * header to a presigned request. `url` reaches the container over the exec's stdin, never this
+ * host's argv (see `putFromWorkload`). On failure this raises a one-line error only, so the exec's
+ * argv and stderr stay out of a report.
+ */
+export async function sendFromWorkload(
+  container: string,
+  url: string,
+  opts: SendFromWorkloadOptions,
+): Promise<{ status: number; body: string }> {
+  const headerPairs = Object.entries(opts.headers ?? {}).flat();
+  try {
+    const promise = run("docker", [
+      "exec",
+      "-i",
+      container,
+      "sh",
+      "-c",
+      CURL_SEND_SCRIPT,
+      "sh",
+      opts.method,
+      opts.body !== undefined ? "1" : "0",
+      opts.body ?? "",
+      String(headerPairs.length / 2),
+      ...headerPairs,
+    ]);
+    childOf(promise).stdin?.end(url);
+    const { stdout } = await promise;
+    const newlineIndex = stdout.indexOf("\n");
+    if (newlineIndex === -1) {
+      return { status: Number(stdout.trim()), body: "" };
+    }
+    return {
+      status: Number(stdout.slice(0, newlineIndex).trim()),
+      body: stdout.slice(newlineIndex + 1),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`sendFromWorkload(${opts.method}): ${message.split("\n")[0]}`);
+  }
 }

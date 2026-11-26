@@ -21,7 +21,6 @@ import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.images.builder.Transferable;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 import software.amazon.awssdk.core.pagination.sync.SdkIterable;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -34,7 +33,7 @@ import software.amazon.awssdk.services.s3.model.S3Object;
 import software.amazon.awssdk.services.s3.paginators.ListObjectsV2Iterable;
 
 /**
- * Deletes against a real SeaweedFS 4.37, as an identity holding only List, Read, Tagging and Write
+ * Deletes against the pinned SeaweedFS, as an identity holding only List, Read, Tagging and Write
  * on the bucket — the least a deployment grants the api-server — so a store that wanted a separate
  * delete grant, or refused a batch delete, fails here rather than on the first retention pass.
  */
@@ -57,8 +56,7 @@ class ObjectTreeDeleterIntegrationTest {
             """.formatted(ADMIN_ACCESS, ADMIN_SECRET, API_ACCESS, API_SECRET, BUCKET, BUCKET, BUCKET, BUCKET);
 
     @Container
-    static final GenericContainer<?> OBJECT_STORE = new GenericContainer<>(
-                    DockerImageName.parse("chrislusf/seaweedfs:4.37"))
+    static final GenericContainer<?> OBJECT_STORE = new GenericContainer<>(PinnedObjectStore.IMAGE)
             .withCopyToContainer(Transferable.of(IDENTITIES), "/etc/seaweedfs/s3.json")
             .withCommand("server", "-dir=/data", "-s3", "-s3.port=9000", "-s3.config=/etc/seaweedfs/s3.json")
             .withExposedPorts(9000)
