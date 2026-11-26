@@ -37,6 +37,7 @@ cd api-server && ./gradlew jacocoTestCoverageVerification
 - Tests use JUnit 5 + TestContainers (PostgreSQL) — no mocking the database
 - JVM test flag required: `-Dnet.bytebuddy.experimental=true` (already in `build.gradle`)
 - Dependencies: add to `api-server/build.gradle`
+- **Beans only the e2e stack runs go in `api-server/src/e2e/java`, never `src/main`** — they build into an add-on jar that only `Dockerfile.e2e` loads beside the production bootJar, and still carry `@Profile("e2e")`. `E2eCodeStaysOutOfProductionTest` fails the build on e2e code in `src/main`. See `docs/decisions/2026-11-26---01-e2e-beans-ship-outside-the-production-jar.md`
 
 ## Go Conventions (orchestrator)
 

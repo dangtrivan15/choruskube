@@ -1,8 +1,10 @@
 # E2E-only packaging of a bootJar that scripts/e2e-up.sh builds on the host, so the e2e stack never
 # runs a Gradle build inside Docker. Published images build from Dockerfile: keep this runtime stage
-# identical to its final stage, or e2e tests a different runtime than the one that ships.
+# identical to its final stage apart from the e2e add-on, or e2e tests a runtime that never ships.
 FROM eclipse-temurin:25-jre-alpine
 WORKDIR /app
 COPY build/libs/*-boot.jar app.jar
+# The e2e beans are not in the bootJar; PropertiesLauncher scans the jars on loader.path with it.
+COPY build/e2e-addon/ /app/e2e/
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-Dloader.path=/app/e2e", "-cp", "app.jar", "org.springframework.boot.loader.launch.PropertiesLauncher"]

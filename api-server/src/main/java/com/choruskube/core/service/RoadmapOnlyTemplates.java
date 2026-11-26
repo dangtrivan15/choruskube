@@ -1,10 +1,11 @@
 package com.choruskube.core.service;
 
 import com.choruskube.core.config.GraphIds;
-import com.choruskube.core.config.e2e.E2eTemplateGraphIdResolver;
+import com.choruskube.core.config.TemplateGraphIdResolver;
 import com.choruskube.core.exception.BadRequestException;
 import com.choruskube.core.model.GraphTemplate;
 import com.choruskube.core.repository.GraphTemplateRepository;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,23 +26,26 @@ public class RoadmapOnlyTemplates {
     private static final String DELIVERY_CHECK_REASON =
             "Starts from a Task: use Close as delivered on the Task's page.";
 
-    // The e2e copies are listed too: the mock graphs need the same Story or Task the real ones do.
-    private static final Map<String, String> REASON_BY_GRAPH_ID = Map.of(
+    private static final Map<String, String> REASON_BY_CANONICAL_GRAPH_ID = Map.of(
             GraphIds.STORY_DESIGN, STORY_DESIGN_REASON,
-            E2eTemplateGraphIdResolver.STORY_DESIGN_COPY, STORY_DESIGN_REASON,
             GraphIds.TASK_DELIVERY, TASK_DELIVERY_REASON,
-            E2eTemplateGraphIdResolver.TASK_DELIVERY_COPY, TASK_DELIVERY_REASON,
             GraphIds.DELIVERY_CHECK, DELIVERY_CHECK_REASON);
 
     private final GraphTemplateRepository templateRepo;
+    private final Map<String, String> reasonByGraphId;
 
-    public RoadmapOnlyTemplates(GraphTemplateRepository templateRepo) {
+    public RoadmapOnlyTemplates(GraphTemplateRepository templateRepo, TemplateGraphIdResolver graphIdResolver) {
         this.templateRepo = templateRepo;
+        // A Story or Task start runs the template the resolver picks, which needs that Story or Task too.
+        Map<String, String> reasons = new HashMap<>(REASON_BY_CANONICAL_GRAPH_ID);
+        REASON_BY_CANONICAL_GRAPH_ID.forEach(
+                (graphId, reason) -> reasons.put(graphIdResolver.resolve(graphId), reason));
+        this.reasonByGraphId = Map.copyOf(reasons);
     }
 
     /** Why a run of this graph cannot be started on its own; empty when it can. */
-    public static Optional<String> standaloneStartRefusal(String graphId) {
-        return Optional.ofNullable(graphId).map(REASON_BY_GRAPH_ID::get);
+    public Optional<String> standaloneStartRefusal(String graphId) {
+        return Optional.ofNullable(graphId).map(reasonByGraphId::get);
     }
 
     /** For the public start only: the Story and Task starts call {@link RunService#startRun} directly. */
@@ -49,7 +53,7 @@ public class RoadmapOnlyTemplates {
         templateRepo
                 .findById(graphTemplateId)
                 .map(GraphTemplate::getGraphId)
-                .flatMap(RoadmapOnlyTemplates::standaloneStartRefusal)
+                .flatMap(this::standaloneStartRefusal)
                 .ifPresent(reason -> {
                     throw new BadRequestException(reason);
                 });
