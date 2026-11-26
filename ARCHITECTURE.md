@@ -371,6 +371,60 @@ sequenceDiagram
   A->>A: a refusal is a failed transfer, never a missing object
 ```
 
+### Where an agent can reach the object store
+
+An agent container can open a connection to the object store on its S3 port alone, on every path.
+The S3 port is where the store checks every request's signature, so the presigned-request contract
+above governs every request an agent can make. This contract is about *which ports an agent can
+reach at all* — TCP and UDP, to any listener in the store's network namespace — and says nothing
+about what the S3 port itself serves; that remains the presigned-request contract's job. A
+deployment that runs agents outside these compose stacks must hold them to the store's S3 port
+with its own network controls.
+
+In each compose stack, the store's network namespace belongs to a TCP forwarder (`nginx:alpine`'s
+`stream` module), the only listener the network sees. It listens on the S3 port on all interfaces
+and forwards each connection's bytes, unchanged, to the store's S3 gateway on a loopback port of
+its own — one namespace cannot hold a listener on all interfaces and another on loopback on the
+same port. The store joins that namespace and binds and advertises every other listener on
+loopback: master, volume, filer, the S3 gateway's own gRPC port, and the catalog servers. None of
+them faces the network, and the filer's host port is dropped along with the rest. Store
+administration runs from inside the namespace: the one-shot bucket setup joins it and drives the
+master and filer over loopback, and an operator reaches them with an exec into the store's
+containers.
+
+```mermaid
+sequenceDiagram
+  participant Set as Bucket setup
+  participant A as Agent container
+  participant API as api-server
+  participant F as S3 forwarder (owns the store's namespace)
+  participant S as Store S3 gateway (loopback)
+  participant B as Store filer, master and volume (loopback)
+
+  Note over F,B: one network namespace, only the forwarder's S3 port listens off loopback
+  Set->>B: create the bucket over loopback, from inside the namespace
+  A->>API: presign path, method and size, Bearer job secret
+  API-->>A: URL signed for the store's S3 host and port
+  A->>F: GET or PUT on the URL
+  F->>S: the same bytes, over loopback
+  S->>S: signature over method, routed path, query and signed headers
+  S->>B: read or write the one object
+  S-->>F: 200 with the object, or stored
+  F-->>A: the same bytes
+  API->>F: its own S3 calls, under the store's admin identity
+  F->>S: the same bytes, over loopback
+  A-xF: connect to the filer, master, volume, a gRPC or a catalog port
+  Note over A,F: refused by the kernel, nothing listens there off loopback
+```
+
+`web-ui/e2e/specs/object-store-reach.spec.ts` holds this contract from inside a real agent
+container: the 403/presigned-round-trip pair above, a refusal on every other store port, and an
+exhaustive read of the store's own socket table so a future store release that opens a new
+listener fails the spec at the pin bump. `scripts/oss-smoke.sh` asserts the same single-listener
+property on the canonical stack, which no e2e run boots. Why the forwarder owns the namespace
+rather than the store, why it forwards TCP rather than proxying HTTP, and what else was considered:
+[docs/decisions/2026-11-26---02-agents-reach-the-object-store-only-on-its-s3-port.md](docs/decisions/2026-11-26---02-agents-reach-the-object-store-only-on-its-s3-port.md).
+
 ### How an upload is sized and budgeted
 
 An upload is admitted once, at presign, and the URL it gets back enforces that

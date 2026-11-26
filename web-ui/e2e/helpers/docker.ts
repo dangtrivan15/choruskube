@@ -10,6 +10,7 @@
  */
 import { execFile, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
+import { parseProcNetListeners, type Listener } from "./socket-table";
 
 const run = promisify(execFile);
 
@@ -81,20 +82,105 @@ export async function workloadObjectsForRun(runId: string): Promise<WorkloadObje
 }
 
 /**
- * Name of the compose stack's one `worker` service container, found by its
+ * Name of the one running container for a compose `service`, found by its
  * `com.docker.compose.service` label rather than a guessed container name -- compose prefixes
- * and suffixes that name in ways that vary by compose version and project name.
+ * and suffixes that name in ways that vary by compose version and project name. Running only
+ * (`docker ps`, no `-a`): a stopped one-shot service (`object-storage-setup`) must not be returned
+ * as if it were still there to exec into.
+ */
+export async function composeServiceContainer(service: string): Promise<string> {
+  const { stdout } = await run("docker", ["ps", "--filter", `label=com.docker.compose.service=${service}`, "--format", "{{.Names}}"]);
+  const container = splitLines(stdout)[0];
+  if (!container) {
+    throw new Error(`no running container for compose service "${service}"`);
+  }
+  return container;
+}
+
+/**
+ * Name of the compose stack's one `worker` service container, or null if it isn't running --
+ * unlike {@link composeServiceContainer}, callers of this one treat "not there" as a normal case.
  */
 async function findWorkerContainer(): Promise<string | null> {
-  const { stdout } = await run("docker", [
-    "ps",
-    "-a",
-    "--filter",
-    "label=com.docker.compose.service=worker",
-    "--format",
-    "{{.Names}}",
-  ]);
-  return splitLines(stdout)[0] ?? null;
+  try {
+    return await composeServiceContainer("worker");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every listening TCP socket and every bound UDP socket inside `container`'s network namespace,
+ * read from the kernel's own socket table rather than a client-side port scan -- a scan cannot see
+ * a listener bound to loopback, which is exactly what this is used to prove absent.
+ */
+export async function listenersOf(container: string): Promise<Listener[]> {
+  const protos: Listener["proto"][] = ["tcp", "tcp6", "udp", "udp6"];
+  const texts = await Promise.all(
+    protos.map((proto) => run("docker", ["exec", container, "cat", `/proc/net/${proto}`]).then((r) => r.stdout)),
+  );
+  const files = Object.fromEntries(protos.map((proto, i) => [proto, texts[i]])) as Record<Listener["proto"], string>;
+  return parseProcNetListeners(files);
+}
+
+/**
+ * `container`'s `HostConfig.NetworkMode`. Compose's `network_mode: "service:<name>"` resolves to
+ * `container:<id>` once the container exists, so a caller comparing this to another container's
+ * namespace needs that container's id too -- see {@link containerIdOf}.
+ */
+export async function networkModeOf(container: string): Promise<string> {
+  const { stdout } = await run("docker", ["inspect", "--format", "{{.HostConfig.NetworkMode}}", container]);
+  return stdout.trim();
+}
+
+/** `container`'s full 64-character id, to compare against a `container:<id>` network mode. */
+export async function containerIdOf(container: string): Promise<string> {
+  const { stdout } = await run("docker", ["inspect", "--format", "{{.Id}}", container]);
+  return stdout.trim();
+}
+
+/**
+ * `container`'s own ports that carry a host binding, as `"<port>/<proto>"` -- what the compose
+ * file's `ports:` list actually published, not what the image exposes.
+ */
+export async function publishedPortsOf(container: string): Promise<string[]> {
+  const { stdout } = await run("docker", ["inspect", "--format", "{{json .NetworkSettings.Ports}}", container]);
+  const ports = parseJsonQuietly(stdout, "NetworkSettings.Ports") as Record<string, unknown[] | null>;
+  return Object.keys(ports).filter((port) => Array.isArray(ports[port]) && ports[port]!.length > 0);
+}
+
+export type ConnectResult = "connected" | "refused" | "timeout" | "other";
+
+/**
+ * Attempts a plain HTTP connection from inside `container` to `host:port`, the way an agent
+ * container would reach a store port on the shared network -- never from this host, whose own
+ * network path may differ. Maps curl's own exit code (never an HTTP status: without `-f`, curl
+ * exits 0 on any HTTP response at all, including an error status) so a refusal before any request
+ * is sent is distinguishable from one the store itself returned.
+ */
+export async function connectFromWorkload(container: string, host: string, port: number): Promise<ConnectResult> {
+  try {
+    await run("docker", [
+      "exec",
+      container,
+      "curl",
+      "-s",
+      "-o",
+      "/dev/null",
+      "--connect-timeout",
+      "5",
+      `http://${host}:${port}/`,
+    ]);
+    return "connected";
+  } catch (err) {
+    const code = (err as { code?: number }).code;
+    if (code === 7) return "refused";
+    if (code === 28) return "timeout";
+    // 52/56 are a connection that was made but got an empty or malformed reply (e.g. a bare gRPC
+    // or binary-protocol port) -- the TCP connect itself still succeeded.
+    if (code === 52 || code === 56) return "connected";
+    return "other";
+  }
 }
 
 // Must match the DOCKER_STAGING_DIR the worker service is given in docker-compose.e2e.yaml

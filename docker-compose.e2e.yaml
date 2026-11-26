@@ -20,7 +20,6 @@
 #   25432  postgres
 #   27233  temporal
 #   29000  object-storage API
-#   29001  object-storage filer UI
 #   29080  orchestrator
 #   28085  wiremock (admin + stub API)
 
@@ -84,24 +83,24 @@ services:
       retries: 30
       start_period: 60s
 
-  # S3-compatible object storage for run artifacts.
-  # Pinned with object-storage-setup below, docker-compose.yaml, PinnedObjectStore and
-  # agent-images/choruskube-dind/preload-stack.txt: move them together, and only once
-  # PresignedRequestStoreContractTest passes at the new tag.
+  # S3-compatible object storage for run artifacts, sitting behind this TCP forwarder, which owns
+  # the namespace both containers share. One namespace cannot hold a listener on all interfaces and
+  # another on loopback on the same port, so the store below binds everything to loopback and this
+  # nginx stream proxy on :9000 is the only listener the network sees. See
+  # ARCHITECTURE.md#where-an-agent-can-reach-the-object-store. The config is written by the
+  # container's own command, not a bind mount, which does not resolve on a remote or sysbox DinD
+  # daemon.
   object-storage:
-    image: chrislusf/seaweedfs:4.54
+    image: nginx:alpine
     dns_search: .
-    mem_limit: 256m
-    command: server -dir=/data -s3 -s3.port=9000
-    environment:
-      # The S3 gateway's admin identity; without one it would accept anonymous requests.
-      AWS_ACCESS_KEY_ID: objectstore-dev
-      AWS_SECRET_ACCESS_KEY: objectstore-dev-secret
+    command:
+      [
+        "sh",
+        "-c",
+        "printf 'events {} stream { server { listen 9000; proxy_pass 127.0.0.1:8333; } }' > /etc/nginx/nginx.conf && exec nginx -g 'daemon off;'",
+      ]
     ports:
       - "29000:9000"
-      - "29001:8888"
-    volumes:
-      - object-storage-data:/data
     networks:
       - choruskube-e2e
     healthcheck:
@@ -110,11 +109,32 @@ services:
       timeout: 3s
       retries: 10
 
+  # Pinned with object-storage-setup below, docker-compose.yaml, PinnedObjectStore and
+  # agent-images/choruskube-dind/preload-stack.txt: move them together, and only once
+  # PresignedRequestStoreContractTest passes at the new tag.
+  object-storage-server:
+    image: chrislusf/seaweedfs:4.54
+    mem_limit: 256m
+    # Joins object-storage's namespace instead of getting its own: starting this service again (an
+    # OOM recovery) rejoins it, while a restart of the forwarder alone would strand this container
+    # outside it. Carries no ports/networks/dns_search/hostname — network_mode: service: forbids them.
+    network_mode: "service:object-storage"
+    command: server -dir=/data -ip=127.0.0.1 -ip.bind=127.0.0.1 -s3 -s3.port=8333
+    environment:
+      # The S3 gateway's admin identity; without one it would accept anonymous requests.
+      AWS_ACCESS_KEY_ID: objectstore-dev
+      AWS_SECRET_ACCESS_KEY: objectstore-dev-secret
+    volumes:
+      - object-storage-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   object-storage-setup:
     image: chrislusf/seaweedfs:4.54
-    dns_search: .
-    networks:
-      - choruskube-e2e
+    network_mode: "service:object-storage"
     depends_on:
       object-storage:
         condition: service_healthy
@@ -122,9 +142,9 @@ services:
     entrypoint: >
       /bin/sh -c "
       echo 's3.bucket.create -name choruskube' |
-      timeout 60 weed shell -master=object-storage:9333 -filer=object-storage:8888 &&
+      timeout 60 weed shell -master=127.0.0.1:9333 -filer=127.0.0.1:8888 &&
       echo 's3.bucket.list' |
-      timeout 60 weed shell -master=object-storage:9333 -filer=object-storage:8888 | grep -qw choruskube &&
+      timeout 60 weed shell -master=127.0.0.1:9333 -filer=127.0.0.1:8888 | grep -qw choruskube &&
       echo 'Object storage bucket ready'
       "
 

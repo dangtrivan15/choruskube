@@ -4,6 +4,8 @@
 # Proves the PUBLISHED images run under the canonical OSS wiring, with only a
 # throwaway dummy Claude token (no real token, no real Claude call, no PR):
 #   1. health-check the booted stack,
+#   1a. assert the object store's network namespace has no listener off loopback other
+#       than the forwarder's S3 port, and that neither container publishes any other port,
 #   2. drive ONE seeded feature-dev run (no auth — AUTH_ENABLED=false),
 #   3. assert the worker (EXECUTOR_TYPE=docker) pulls & spawns an agent
 #      container FROM a published image (registry.choruskube.com/*).
@@ -68,6 +70,71 @@ echo "  PASS  api-server health"
 # /api/v1/** is open in single-tenant mode (no 401).
 templates_open_probe "$API_URL" || fail "api /graph-templates not reachable (auth open?)"
 echo "  PASS  api /graph-templates reachable (no auth)"
+
+# --- 1a. Object store reach (listener confinement) ----------------------------
+# Proves the published-image stack holds the same contract the e2e Playwright spec
+# (web-ui/e2e/specs/object-store-reach.spec.ts) checks against the built stack: the only
+# listener off loopback anywhere in the store's network namespace is the forwarder's S3
+# port, and neither container publishes any other port on the host.
+echo "=== Object store reach (listener confinement) ==="
+STORE_CONTAINER=$(docker ps -a --filter "label=com.docker.compose.project=choruskube" \
+    --filter "label=com.docker.compose.service=object-storage-server" --format '{{.ID}}' | head -1)
+[ -n "$STORE_CONTAINER" ] || fail "no object-storage-server container found"
+FORWARDER_CONTAINER=$(docker ps -a --filter "label=com.docker.compose.project=choruskube" \
+    --filter "label=com.docker.compose.service=object-storage" --format '{{.ID}}' | head -1)
+[ -n "$FORWARDER_CONTAINER" ] || fail "no object-storage (forwarder) container found"
+
+# Hex-decodes a /proc/net/{tcp,tcp6,udp,udp6} address field without relying on a
+# strtonum() extension, so this runs under busybox awk as well as gawk. TCP's LISTEN
+# state is 0A; UDP has no such state machine, so every bound UDP row counts.
+AWK_DECODE_LISTENERS='
+function hex2dec(h,    i,c,v,d) {
+  v = 0
+  for (i = 1; i <= length(h); i++) {
+    c = toupper(substr(h, i, 1))
+    if (c >= "0" && c <= "9") d = index("0123456789", c) - 1
+    else d = index("ABCDEF", c) + 9
+    v = v * 16 + d
+  }
+  return v
+}
+function first_octet(w) { return hex2dec(substr(w, 7, 2)) }
+{
+  if ($1 == "sl") next
+  if ((proto == "tcp" || proto == "tcp6") && $4 != "0A") next
+  split($2, parts, ":")
+  addrhex = parts[1]
+  loop = 0
+  if (length(addrhex) == 8) {
+    loop = (first_octet(addrhex) == 127)
+  } else {
+    w0 = substr(addrhex, 1, 8); w1 = substr(addrhex, 9, 8)
+    w2 = substr(addrhex, 17, 8); w3 = substr(addrhex, 25, 8)
+    if (w0 == "00000000" && w1 == "00000000" && w2 == "00000000" && w3 == "01000000") loop = 1
+    else if (w0 == "00000000" && w1 == "00000000" && w2 == "FFFF0000" && first_octet(w3) == 127) loop = 1
+  }
+  if (!loop) print proto, addrhex, hex2dec(parts[2])
+}
+'
+OFFLOOP=""
+for proto in tcp tcp6 udp udp6; do
+    rows=$(docker exec "$STORE_CONTAINER" cat "/proc/net/$proto" 2>/dev/null \
+        | awk -v proto="$proto" "$AWK_DECODE_LISTENERS")
+    [ -n "$rows" ] && OFFLOOP="$OFFLOOP$rows
+"
+done
+BAD=$(echo "$OFFLOOP" | awk '{ if (!(($1 == "tcp" || $1 == "tcp6") && $3 == 9000)) print }')
+[ -z "$(echo "$BAD" | tr -d '[:space:]')" ] \
+    || fail "object store namespace has a listener off loopback other than TCP 9000:
+$BAD"
+echo "  PASS  object store namespace: only TCP 9000 off loopback"
+
+FWD_PORTS=$(docker port "$FORWARDER_CONTAINER" | awk '{print $1}' | sort -u | tr '\n' ' ')
+[ "$(echo "$FWD_PORTS" | xargs)" = "9000/tcp" ] \
+    || fail "object-storage (forwarder) publishes unexpected ports: $FWD_PORTS"
+STORE_PORTS=$(docker port "$STORE_CONTAINER")
+[ -z "$STORE_PORTS" ] || fail "object-storage-server has a published port (expected none): $STORE_PORTS"
+echo "  PASS  only the forwarder publishes a port (9000/tcp)"
 
 # --- 1b. Ensure the DinD sidecar image is present -----------------------------
 # The seeded system-org GitRepo is enableDocker=true, so the executor starts a

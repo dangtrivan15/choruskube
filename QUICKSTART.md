@@ -51,7 +51,7 @@ Then open the web UI and explore:
 | API       | http://localhost:38080 (Swagger at `/swagger-ui.html`) |
 | Postgres  | localhost:35432                                 |
 | Temporal  | localhost:37233                                 |
-| Object storage | http://localhost:39000 (S3 API) · http://localhost:39001 (filer UI) |
+| Object storage | http://localhost:39000 (S3 API) |
 
 ## Tear down
 
