@@ -9,34 +9,8 @@
 import { test, expect } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
 import { agentWorkload, sendFromWorkload } from "../helpers/docker";
-import { expandPath, EXECUTION_SCOPED_PREFIX } from "../helpers/agent-routes";
+import { presign } from "../helpers/agent-presign";
 import { bucketOf, retargetKey, forwardingPrefixFor, retargetUrl } from "../helpers/presigned-requests";
-
-const API_BASE_URL = process.env.E2E_API_URL ?? "http://localhost:28080";
-
-/** Plain `fetch`, never Playwright's `request` fixture, whose traces would record the secret. */
-async function presign(
-  runId: string,
-  execId: string,
-  bearer: string,
-  objectPath: string,
-  method: "GET" | "PUT",
-  size?: number,
-): Promise<string> {
-  const query = new URLSearchParams({ path: objectPath, method });
-  if (size !== undefined) {
-    query.set("size", String(size));
-  }
-  const presignPath = expandPath(`${EXECUTION_SCOPED_PREFIX}/presign`, runId, execId);
-  const res = await fetch(`${API_BASE_URL}${presignPath}?${query.toString()}`, {
-    headers: { Authorization: `Bearer ${bearer}` },
-  });
-  const json = (await res.json().catch(() => ({}))) as { url?: string };
-  if (res.status !== 200 || typeof json.url !== "string") {
-    throw new Error(`presign failed with status ${res.status}`);
-  }
-  return json.url;
-}
 
 test.describe("Presigned request contract, from inside an agent container", () => {
   test("acts only on the signed object whatever headers or forwarding prefix are added", async ({ api }) => {

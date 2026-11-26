@@ -86,13 +86,10 @@ services:
       retries: 30
       start_period: 60s
 
-  # S3-compatible object storage for run artifacts (SeaweedFS: master, volume, filer and S3 in one
-  # process) sits behind this TCP forwarder, which owns the namespace both containers share. One
-  # namespace cannot hold a listener on all interfaces and another on loopback on the same port, so
-  # the store below binds everything to loopback and this nginx stream proxy on :9000 is the only
-  # listener the network sees. See ARCHITECTURE.md#where-an-agent-can-reach-the-object-store. The
-  # config is written by the container's own command, not a bind mount, which does not resolve on a
-  # remote or sysbox DinD daemon.
+  # S3-compatible object storage for run artifacts, behind this forwarder: it owns the store's
+  # network namespace and is its only listener off loopback, passing bytes unchanged to the store's
+  # loopback S3 gateway (ARCHITECTURE.md#where-an-agent-can-reach-the-object-store). Config comes
+  # from the command: a bind mount does not resolve on a remote or sysbox DinD daemon.
   object-storage:
     image: nginx:alpine
     dns_search: .
@@ -117,9 +114,8 @@ services:
   # PresignedRequestStoreContractTest passes at the new tag.
   object-storage-server:
     image: chrislusf/seaweedfs:4.54
-    # Joins object-storage's namespace instead of getting its own: starting this service again (an
-    # OOM recovery) rejoins it, while a restart of the forwarder alone would strand this container
-    # outside it. Carries no ports/networks/dns_search/hostname — network_mode: service: forbids them.
+    # Joins the forwarder's namespace rather than owning it: starting the store alone again (an OOM
+    # recovery) rejoins it, where an owning store would strand the forwarder and fail every transfer.
     network_mode: "service:object-storage"
     command: server -dir=/data -ip=127.0.0.1 -ip.bind=127.0.0.1 -s3 -s3.port=8333
     environment:
@@ -139,6 +135,8 @@ services:
     network_mode: "service:object-storage"
     depends_on:
       object-storage:
+        condition: service_healthy
+      object-storage-server:
         condition: service_healthy
     # The list check is what fails the setup, not the create: weed shell exits non-zero when the
     # bucket already exists (a reused volume, e.g. this compose file's own restart), so a ";" here

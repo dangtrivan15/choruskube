@@ -82,23 +82,29 @@ describe("parseProcNetListeners", () => {
   });
 
   it("offLoopback on a fixture of the measured 4.54 table returns only TCP 9000", () => {
-    // Measured against the pinned chrislusf/seaweedfs:4.54 image behind the forwarder: every store
-    // listener on loopback, the forwarder's S3 port the only one off it, plus Docker's embedded DNS.
+    // Read from the pinned chrislusf/seaweedfs:4.54 store behind the forwarder: Lance catalog, filer,
+    // S3, master, volume, Iceberg catalog, the forwarder's 9000, S3/volume/master/filer gRPC, Docker's
+    // embedded DNS, and one TIME_WAIT connection to the S3 gateway that must not count as a listener.
     const tcpText = `${HEADER_TCP}
-${tcpLine("0B00007F:A5DB", "0A")}
-${tcpLine("0100007F:2465", "0A")}
+${tcpLine("0100007F:238D", "0A")}
+${tcpLine("0100007F:22B8", "0A")}
 ${tcpLine("0100007F:208D", "0A")}
-${tcpLine("0100007F:2385", "0A")}
-${tcpLine("0100007F:22B9", "0A")}
-${tcpLine("0100007F:4BB9", "0A")}
-${tcpLine("0100007F:47B1", "0A")}
+${tcpLine("0100007F:2475", "0A")}
 ${tcpLine("0100007F:1F90", "0A")}
-${tcpLine("0100007F:46A0", "0A")}
-${tcpLine("0100007F:1FA0", "0A")}
+${tcpLine("0100007F:1FF5", "0A")}
 ${tcpLine("00000000:2328", "0A")}
+${tcpLine("0100007F:479D", "0A")}
+${tcpLine("0100007F:46A0", "0A")}
+${tcpLine("0100007F:4B85", "0A")}
+${tcpLine("0100007F:49C8", "0A")}
+${tcpLine("0B00007F:8607", "0A")}
+${tcpLine("0100007F:ADAE", "06")}
 `;
-    const udpText = `${HEADER_UDP}\n${udpLine("0B00007F:8C37", "07")}\n`;
+    const udpText = `${HEADER_UDP}\n${udpLine("0B00007F:D666", "07")}\n`;
     const listeners = parseProcNetListeners({ tcp: tcpText, tcp6: `${HEADER_TCP}\n`, udp: udpText, udp6: `${HEADER_UDP}\n` });
+    expect(listeners.filter((l) => l.proto === "tcp").map((l) => l.port)).toEqual([
+      9101, 8888, 8333, 9333, 8080, 8181, 9000, 18333, 18080, 19333, 18888, 34311,
+    ]);
     expect(offLoopback(listeners)).toEqual([{ proto: "tcp", address: "0.0.0.0", port: 9000 }]);
   });
 });

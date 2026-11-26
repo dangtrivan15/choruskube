@@ -118,11 +118,15 @@ function first_octet(w) { return hex2dec(substr(w, 7, 2)) }
 '
 OFFLOOP=""
 for proto in tcp tcp6 udp udp6; do
-    rows=$(docker exec "$STORE_CONTAINER" cat "/proc/net/$proto" 2>/dev/null \
-        | awk -v proto="$proto" "$AWK_DECODE_LISTENERS")
-    [ -n "$rows" ] && OFFLOOP="$OFFLOOP$rows
+    table=$(docker exec "$STORE_CONTAINER" cat "/proc/net/$proto") \
+        || fail "could not read /proc/net/$proto inside the object-storage-server container"
+    OFFLOOP="$OFFLOOP$(awk -v proto="$proto" "$AWK_DECODE_LISTENERS" <<< "$table")
 "
 done
+# Without the forwarder's own listener in the table, the store is not in its namespace and the
+# check below would pass on a table that proves nothing.
+grep -Eq '^tcp6? [0-9A-F]+ 9000$' <<< "$OFFLOOP" \
+    || fail "the forwarder's TCP 9000 is not in the object store's namespace"
 BAD=$(echo "$OFFLOOP" | awk '{ if (!(($1 == "tcp" || $1 == "tcp6") && $3 == 9000)) print }')
 [ -z "$(echo "$BAD" | tr -d '[:space:]')" ] \
     || fail "object store namespace has a listener off loopback other than TCP 9000:

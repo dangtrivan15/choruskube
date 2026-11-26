@@ -37,11 +37,12 @@ peer container's connection outright.
 
 **The forwarder owns the namespace and the store joins it, not the other way round.** A container
 that joins another's network namespace is stranded when that owner restarts, and rejoins when it
-restarts itself; no service in these stacks restarts on its own except the store recovering from an
-out-of-memory kill under the e2e stack's memory cap. The container that gets started again on its
-own must be the one that joins, so the store keeps that role and the forwarder takes over the
-store's old service name, published S3 port and the health-gate role dependents wait on. The
-forwarder's own health check probes through itself to the store's gateway, so a store stranded
+restarts itself. Neither container has a restart policy, so every restart is an operator's or a
+compose run's, and the one recovery needs is the store's: an out-of-memory kill under the e2e
+stack's memory cap stops it, and recovery starts it again alone. The container that gets started
+again on its own must be the one that joins, so the store keeps that role and the forwarder takes
+over the store's old service name, published S3 port and the health-gate role dependents wait on.
+The forwarder's own health check probes through itself to the store's gateway, so a store stranded
 outside the namespace (an operator restarting it by its old name) turns the forwarder unhealthy
 rather than failing silently.
 

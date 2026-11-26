@@ -1,54 +1,34 @@
 /**
  * From inside a real agent container, the object store's S3 port is the only way in: an unsigned
  * request to it is refused by the store itself (403), a presigned transfer still succeeds, and
- * every other port the store's SeaweedFS process opens -- filer, master, volume, their gRPC ports
- * and both catalog servers -- refuses the connection outright, because nothing listens there off
- * loopback. The store's own listener table and both containers' published ports are asserted
+ * every port the store's SeaweedFS process opens -- its own S3 gateway, filer, master, volume,
+ * their gRPC ports and both catalog servers -- refuses the connection outright, because nothing
+ * listens there off loopback. The store's own listener table and both containers' published ports are asserted
  * directly, so a future store release adding a new network-facing listener fails this spec rather
  * than going unnoticed. See ARCHITECTURE.md#where-an-agent-can-reach-the-object-store.
  */
 import { test, expect } from "../fixtures";
 import { uniqueName } from "../helpers/api-client";
-import { agentWorkload, sendFromWorkload } from "../helpers/docker";
+import { presign } from "../helpers/agent-presign";
 import {
+  agentWorkload,
   composeServiceContainer,
   connectFromWorkload,
   containerIdOf,
   listenersOf,
   networkModeOf,
   publishedPortsOf,
+  sendFromWorkload,
 } from "../helpers/docker";
-import { offLoopback } from "../helpers/socket-table";
-import { expandPath, EXECUTION_SCOPED_PREFIX } from "../helpers/agent-routes";
+import { offLoopback, type Listener } from "../helpers/socket-table";
 
-const API_BASE_URL = process.env.E2E_API_URL ?? "http://localhost:28080";
+// Every listener the pinned store opens behind the forwarder: the S3 gateway itself and its gRPC
+// port, filer, master and volume (each HTTP + gRPC), and the Iceberg and Lance catalogs.
+const REFUSED_STORE_PORTS = [8333, 18333, 8888, 18888, 9333, 19333, 8080, 18080, 8181, 9101];
 
-// The store's other listeners, measured against the pinned image behind the forwarder: S3 gRPC,
-// filer (HTTP + gRPC), master (HTTP + gRPC), volume (HTTP + gRPC), the Iceberg and Lance catalogs.
-const REFUSED_STORE_PORTS = [18333, 8888, 18888, 9333, 19333, 8080, 18080, 8181, 9101];
-
-/** Plain `fetch`, never Playwright's `request` fixture, whose traces would record the secret. */
-async function presign(
-  runId: string,
-  execId: string,
-  bearer: string,
-  objectPath: string,
-  method: "GET" | "PUT",
-  size?: number,
-): Promise<string> {
-  const query = new URLSearchParams({ path: objectPath, method });
-  if (size !== undefined) {
-    query.set("size", String(size));
-  }
-  const presignPath = expandPath(`${EXECUTION_SCOPED_PREFIX}/presign`, runId, execId);
-  const res = await fetch(`${API_BASE_URL}${presignPath}?${query.toString()}`, {
-    headers: { Authorization: `Bearer ${bearer}` },
-  });
-  const json = (await res.json().catch(() => ({}))) as { url?: string };
-  if (res.status !== 200 || typeof json.url !== "string") {
-    throw new Error(`presign failed with status ${res.status}`);
-  }
-  return json.url;
+/** The forwarder's S3 port on the IPv4 wildcard, or on the IPv6 one if nginx ever binds it too. */
+function isForwarderListener(l: Listener): boolean {
+  return l.port === 9000 && ((l.proto === "tcp" && l.address === "0.0.0.0") || (l.proto === "tcp6" && l.address === "::"));
 }
 
 test.describe("Object store reach, from inside an agent container", () => {
@@ -79,7 +59,7 @@ test.describe("Object store reach, from inside an agent container", () => {
       expect(get.status).toBe(200);
       expect(get.body).toBe(content);
 
-      // Every other store port refuses the connection outright -- nothing listens there off loopback.
+      // Every port the store itself opens refuses the connection -- nothing listens there off loopback.
       const connectResults = await Promise.all(
         REFUSED_STORE_PORTS.map((port) => connectFromWorkload(workload.container, "object-storage", port)),
       );
@@ -98,21 +78,13 @@ test.describe("Object store reach, from inside an agent container", () => {
 
       // The only listener off loopback, anywhere in that shared namespace, is the forwarder's own
       // S3 port -- exhaustively, so a future store release that opens a new listener fails here.
-      const listeners = await listenersOf(storeContainer);
-      const offLoop = offLoopback(listeners).map((l) => ({ ...l, proto: l.proto === "tcp6" ? "tcp" : l.proto }));
-      for (const listener of offLoop) {
-        expect(listener.port, JSON.stringify(listener)).toBe(9000);
-        expect(listener.proto, JSON.stringify(listener)).toBe("tcp");
-      }
-      expect(offLoop.length).toBeGreaterThan(0);
+      const offLoop = offLoopback(await listenersOf(storeContainer));
+      expect(offLoop.filter((l) => !isForwarderListener(l))).toEqual([]);
+      expect(offLoop).toContainEqual({ proto: "tcp", address: "0.0.0.0", port: 9000 });
 
       // Published ports match the compose wiring exactly: only the forwarder faces the host.
       expect(await publishedPortsOf(forwarderContainer)).toEqual(["9000/tcp"]);
       expect(await publishedPortsOf(storeContainer)).toEqual([]);
-      const setupContainer = await composeServiceContainer("object-storage-setup").catch(() => null);
-      if (setupContainer) {
-        expect(await publishedPortsOf(setupContainer)).toEqual([]);
-      }
     } finally {
       await api.cancelRun(run.id).catch(() => {});
     }
