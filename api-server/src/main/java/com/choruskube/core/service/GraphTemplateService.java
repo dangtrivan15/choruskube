@@ -47,6 +47,7 @@ public class GraphTemplateService {
     private final AuthorizationService authService;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final ScopeProvider scopeProvider;
+    private final RoadmapOnlyTemplates roadmapOnlyTemplates;
 
     public GraphTemplateService(
             GraphTemplateRepository repo,
@@ -54,13 +55,15 @@ public class GraphTemplateService {
             ObjectMapper objectMapper,
             AuthorizationService authService,
             ApplicationEventPublisher applicationEventPublisher,
-            ScopeProvider scopeProvider) {
+            ScopeProvider scopeProvider,
+            RoadmapOnlyTemplates roadmapOnlyTemplates) {
         this.repo = repo;
         this.workflowRunRepo = workflowRunRepo;
         this.objectMapper = objectMapper;
         this.authService = authService;
         this.applicationEventPublisher = applicationEventPublisher;
         this.scopeProvider = scopeProvider;
+        this.roadmapOnlyTemplates = roadmapOnlyTemplates;
     }
 
     /**
@@ -185,7 +188,7 @@ public class GraphTemplateService {
                 gt.isSystem(),
                 gt.getCreatedAt(),
                 gt.getUpdatedAt(),
-                RoadmapOnlyTemplates.standaloneStartRefusal(gt.getGraphId()).orElse(null));
+                roadmapOnlyTemplates.standaloneStartRefusal(gt.getGraphId()).orElse(null));
     }
 
     private JsonNode parseJsonField(String json, String fallback) {

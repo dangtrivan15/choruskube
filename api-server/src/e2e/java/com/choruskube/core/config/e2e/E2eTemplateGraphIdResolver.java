@@ -3,11 +3,13 @@ package com.choruskube.core.config.e2e;
 import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.TemplateGraphIdResolver;
 import java.util.Map;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 /** The e2e stack runs the mock agent, so server-started runs use the mock copies of these graphs. */
 @Component
+@Primary
 @Profile("e2e")
 public class E2eTemplateGraphIdResolver implements TemplateGraphIdResolver {
 

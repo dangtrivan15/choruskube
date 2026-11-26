@@ -140,12 +140,7 @@ public class RunControllerTest extends SharedContextTest {
     }
 
     @ParameterizedTest
-    @CsvSource({
-        "story-design, Starts from a Story",
-        "e2e-story-design, Starts from a Story",
-        "task-delivery, Starts from a Task",
-        "e2e-task-delivery, Starts from a Task"
-    })
+    @CsvSource({"story-design, Starts from a Story", "task-delivery, Starts from a Task"})
     void startRun_roadmapStartedTemplate_isRefused(String graphId, String reason) throws Exception {
         GraphTemplate template = graphTemplateRepo
                 .findFirstByGraphIdOrderByVersionDesc(graphId)

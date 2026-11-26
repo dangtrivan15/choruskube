@@ -4,6 +4,8 @@
 # coexist with the canonical local stack (docker-compose.yaml, 3xxxx ports).
 # The api-server boots under the "e2e" Spring profile, which activates
 # E2eTestDataSeeder and seeds mock node definitions + graph templates at startup.
+# The seeder and the other e2e beans ship in an add-on jar beside the production
+# bootJar, never inside it (api-server/Dockerfile.e2e).
 # External API calls (GitHub, Anthropic) are intercepted by a WireMock service;
 # stub mappings are pushed in via WireMock's admin API after the container is
 # healthy (see scripts/e2e-up.sh).

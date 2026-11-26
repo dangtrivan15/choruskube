@@ -3,6 +3,9 @@ package com.choruskube.core.service;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import com.choruskube.core.config.DefaultTemplateGraphIdResolver;
+import com.choruskube.core.config.GraphIds;
+import com.choruskube.core.config.TemplateGraphIdResolver;
 import com.choruskube.core.dto.GraphTemplateRequest;
 import com.choruskube.core.dto.GraphTemplateResponse;
 import com.choruskube.core.exception.ConflictException;
@@ -37,13 +40,18 @@ class GraphTemplateServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new GraphTemplateService(
+        service = serviceResolvingGraphIdsWith(new DefaultTemplateGraphIdResolver());
+    }
+
+    private GraphTemplateService serviceResolvingGraphIdsWith(TemplateGraphIdResolver graphIdResolver) {
+        return new GraphTemplateService(
                 repo,
                 workflowRunRepo,
                 objectMapper,
                 new AuthorizationService(new AlwaysAllowAuthorizationStrategy(), false),
                 mock(ApplicationEventPublisher.class),
-                new com.choruskube.core.scope.NoOpScopeProvider());
+                new com.choruskube.core.scope.NoOpScopeProvider(),
+                new RoadmapOnlyTemplates(repo, graphIdResolver));
     }
 
     // --- Helper ---
@@ -151,8 +159,8 @@ class GraphTemplateServiceTest {
                         makeTemplate("Feature Development", "feature-development", 53),
                         makeTemplate("Story Design", "story-design", 2),
                         makeTemplate("Task Delivery", "task-delivery", 2),
-                        makeTemplate("E2E Story Design", "e2e-story-design", 1),
-                        makeTemplate("E2E Task Delivery", "e2e-task-delivery", 1)));
+                        makeTemplate("Delivery Check", "delivery-check", 1),
+                        makeTemplate("Story Design copy", "story-design-copy", 1)));
 
         List<GraphTemplateResponse> result = service.list(true);
 
@@ -162,8 +170,29 @@ class GraphTemplateServiceTest {
                         tuple("feature-development", null),
                         tuple("story-design", "Starts from a Story: use Design Story on the Story's page."),
                         tuple("task-delivery", "Starts from a Task: use Start on the Task's page."),
-                        tuple("e2e-story-design", "Starts from a Story: use Design Story on the Story's page."),
-                        tuple("e2e-task-delivery", "Starts from a Task: use Start on the Task's page."));
+                        tuple("delivery-check", "Starts from a Task: use Close as delivered on the Task's page."),
+                        tuple("story-design-copy", null));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void list_marksTheTemplateAStoryStartResolvesTo() {
+        GraphTemplateService resolvingToACopy = serviceResolvingGraphIdsWith(
+                graphId -> GraphIds.STORY_DESIGN.equals(graphId) ? "story-design-copy" : graphId);
+        when(repo.findAll(any(Specification.class)))
+                .thenReturn(List.of(
+                        makeTemplate("Story Design", "story-design", 2),
+                        makeTemplate("Story Design copy", "story-design-copy", 1),
+                        makeTemplate("Task Delivery", "task-delivery", 2)));
+
+        List<GraphTemplateResponse> result = resolvingToACopy.list(true);
+
+        assertThat(result)
+                .extracting(GraphTemplateResponse::graphId, GraphTemplateResponse::standaloneStartRefusal)
+                .containsExactly(
+                        tuple("story-design", "Starts from a Story: use Design Story on the Story's page."),
+                        tuple("story-design-copy", "Starts from a Story: use Design Story on the Story's page."),
+                        tuple("task-delivery", "Starts from a Task: use Start on the Task's page."));
     }
 
     // --- update ---

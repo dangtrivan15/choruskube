@@ -21,6 +21,16 @@ repositories {
     mavenCentral()
 }
 
+// The e2e stack's own beans (data seeder, mock-graph resolver, test-only endpoints) build into a jar of
+// their own that Dockerfile.e2e loads beside the bootJar, so no production artifact contains them. A
+// feature variant, like testFixtures, so a downstream build can package it with its own.
+sourceSets.create('e2e')
+java {
+    registerFeature('e2e') {
+        usingSourceSet(sourceSets.e2e)
+    }
+}
+
 dependencies {
     // Core. Spring framework starters are `api`, not `implementation`: core's public types
     // (e.g. the AuthConfigurer interface exposes HttpSecurity, DTOs expose jakarta.validation)
@@ -83,7 +93,10 @@ dependencies {
     // compiling against it.
     testFixturesImplementation 'com.tngtech.archunit:archunit:1.5.1'
 
+    e2eImplementation project
+
     // Testing
+    testImplementation sourceSets.e2e.output
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
     testImplementation 'org.testcontainers:testcontainers:2.0.3'
@@ -211,4 +224,11 @@ tasks.named('bootJar') {
 tasks.named('jar') {
     enabled = true
     archiveClassifier = ''
+}
+
+tasks.register('e2eAddOn', Sync) {
+    from(tasks.named('e2eJar')) {
+        rename { 'core-e2e.jar' }
+    }
+    into layout.buildDirectory.dir('e2e-addon')
 }
