@@ -18,6 +18,7 @@ import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.TaskGithubIssue;
 import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.GithubIssueState;
+import com.choruskube.core.model.enums.WorkItemStatus;
 import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.repository.AutopilotRepository;
 import com.choruskube.core.repository.GitRepoRepository;
@@ -32,6 +33,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -47,6 +49,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import software.amazon.awssdk.services.s3.S3Client;
 
 /**
@@ -277,6 +280,84 @@ public class DefaultTaskServiceAutopilotTest extends SharedContextTest {
         Mockito.verify(workflowClient, Mockito.times(1))
                 .newUntypedWorkflowStub(
                         ArgumentMatchers.eq("CloseTaskIssueWorkflow"), ArgumentMatchers.any(WorkflowOptions.class));
+    }
+
+    /**
+     * {@code reopenCore} locks the Task row as {@code startCore} does. Unlocked, a reopen that read
+     * the finished run while a re-trigger was committing its new one would write backlog over that
+     * live run, and a later delete would detach a running run from its Task. The interleaving is
+     * pinned rather than raced: the re-trigger's stand-in holds the row until the reopen is waiting.
+     */
+    @Test
+    void reopen_waitsForARetriggerHoldingTheTaskRow_thenRefusesItsLiveRun() throws Exception {
+        GitRepo r = makeRepo("reopen-race");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("Contended", "D"));
+        TaskResponse started = service.start(task.id());
+        WorkflowRun run = runRepo.findById(started.latestRunId()).orElseThrow();
+        run.setStatus(WorkflowRunStatus.failed);
+        runRepo.saveAndFlush(run);
+
+        TransactionTemplate tx = new TransactionTemplate(txManager);
+        CountDownLatch rowHeld = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> retrigger = pool.submit(() -> tx.executeWithoutResult(status -> {
+                jdbc.queryForObject("SELECT id FROM task WHERE id = ? FOR UPDATE", UUID.class, task.id());
+                jdbc.update(
+                        "UPDATE workflow_run SET status = 'running'::workflow_run_status WHERE id = ?", run.getId());
+                rowHeld.countDown();
+                awaitOrFail(release);
+            }));
+            assertThat(rowHeld.await(30, TimeUnit.SECONDS)).isTrue();
+
+            Future<Throwable> reopen = pool.submit(() -> {
+                try {
+                    service.updateStatus(task.id(), WorkItemStatus.backlog, null, null);
+                    return null;
+                } catch (Throwable t) {
+                    return t;
+                }
+            });
+            awaitALockWait();
+            release.countDown();
+            retrigger.get(30, TimeUnit.SECONDS);
+
+            assertThat(reopen.get(30, TimeUnit.SECONDS))
+                    .as("the reopen sees the re-trigger's live run once the row is released")
+                    .isInstanceOf(ConflictException.class);
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+        assertThat(service.get(task.id()).status()).isEqualTo("in_progress");
+    }
+
+    private static void awaitOrFail(CountDownLatch latch) {
+        try {
+            if (!latch.await(30, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("latch not released");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** Waits until some backend in this database is blocked on a lock: the reopen, queued on the row. */
+    private void awaitALockWait() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (System.nanoTime() < deadline) {
+            Integer waiting = jdbc.queryForObject(
+                    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+                    Integer.class);
+            if (waiting != null && waiting > 0) {
+                return;
+            }
+            Thread.sleep(20);
+        }
+        throw new AssertionError("the reopen never queued on the Task row");
     }
 
     private TaskGithubIssue makeLinkage(UUID taskId, UUID gitRepoId, int issueNumber, GithubIssueState state) {
