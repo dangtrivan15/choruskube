@@ -127,6 +127,8 @@ The entrypoint passes every clone to Claude Code as a working directory (`--add-
 - **Object storage** → the `OBJECT_STORE_*` env vars (`OBJECT_STORE_ENDPOINT`, `_ACCESS_KEY`, `_SECRET_KEY`, `_BUCKET`) configure the API server; the agent never sees them (presigned URLs only)
 - **Agent entrypoint contract** (`agent-images/claude-code/entrypoint.sh`: env vars set, CLI tools on PATH, workspace layout) changes ripple to every agent run
 
+**The compose stacks are a trusted single-operator environment, not a security boundary.** A container on a stack's network may reach every service in it. Don't add isolation whose only purpose is to stop one stack container reaching another (loopback binds, forwarders, split networks, egress rules), or a spec or smoke step that asserts it; prove a security property where a deployment enforces it. See `docs/decisions/2026-11-28---01-compose-stacks-are-a-trusted-environment-not-a-boundary.md`
+
 **Before declaring a stack/wiring change complete:** `./scripts/oss-smoke.sh` boots the published images and runs a full feature-dev run. Run it even for one-line compose / env / image changes — unit tests alone don't exercise Temporal, object storage, or the agent workload path.
 
 ## Security Rules

@@ -41,13 +41,22 @@ This policy covers the components in this repository:
 
 ## Threat model
 
-The open-source core runs **single-tenant** on a trusted developer machine. By
-design it boots with the API open (`AUTH_ENABLED=false`) and is intended to
-**bind to localhost** — it is not hardened for exposure to untrusted networks,
-and every request is scoped to a single seeded "system" organization.
+The open-source core runs **single-tenant** on a trusted developer machine, on a
+network its operator trusts. By design it boots with the API open
+(`AUTH_ENABLED=false`), and the compose stack publishes its services' ports on all
+of the host's interfaces, the database and Temporal included, with development
+credentials. It is not hardened for exposure to untrusted networks, and every
+request is scoped to a single seeded "system" organization.
 
-Please assume this posture when reporting. "The API has no authentication" is
-expected behavior for local single-tenant use, not a vulnerability. Reports
-that meaningfully break this model — for example, escaping the localhost trust
-boundary, agent-container escape, secret leakage, or remote code execution —
-are in scope and very welcome.
+Inside a compose stack every container shares one network, so an agent container
+can reach the database, Temporal and every port of the object store, not only
+the presigned URLs it is handed. The stack is a trusted environment, not a
+security boundary between its containers
+([why](docs/decisions/2026-11-28---01-compose-stacks-are-a-trusted-environment-not-a-boundary.md)).
+
+Please assume this posture when reporting. "The API has no authentication" and
+"an agent container can reach another service in the stack" are expected
+behavior for local single-tenant use, not vulnerabilities. Reports that
+meaningfully break this model — for example, an agent escaping its container
+onto the host, secret leakage, or remote code execution — are in scope and very
+welcome.

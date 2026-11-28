@@ -1,6 +1,7 @@
 # Any object store this project uses must act only on the object a presigned request's signature names
 
-**Status:** current
+**Status:** current; its paragraph naming `presigned-request-contract.spec.ts` is superseded by
+[2026-11-28---01-compose-stacks-are-a-trusted-environment-not-a-boundary](2026-11-28---01-compose-stacks-are-a-trusted-environment-not-a-boundary.md)
 
 ## Context
 

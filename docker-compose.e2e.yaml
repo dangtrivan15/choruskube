@@ -118,11 +118,12 @@ services:
     depends_on:
       object-storage:
         condition: service_healthy
-    # The list check is what fails the setup: weed shell exits 0 even when a command errors.
+    # The list check is what fails the setup; the create's status is ignored. weed shell exits
+    # non-zero on a bucket that already exists, which on a reused volume would block api-server's boot.
     entrypoint: >
       /bin/sh -c "
       echo 's3.bucket.create -name choruskube' |
-      timeout 60 weed shell -master=object-storage:9333 -filer=object-storage:8888 &&
+      timeout 60 weed shell -master=object-storage:9333 -filer=object-storage:8888 ;
       echo 's3.bucket.list' |
       timeout 60 weed shell -master=object-storage:9333 -filer=object-storage:8888 | grep -qw choruskube &&
       echo 'Object storage bucket ready'
