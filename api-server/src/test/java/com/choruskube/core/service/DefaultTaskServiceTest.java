@@ -260,6 +260,24 @@ public class DefaultTaskServiceTest extends SharedContextTest {
     }
 
     @Test
+    void delete_reopenedTaskWithFinishedRun_keepsTheRunUnlinked() {
+        GitRepo r = makeRepo("https://github.com/test/task-delete-keeps-run.git");
+        StoryResponse story = makeStory(r.getId());
+        TaskResponse task = service.create(story.id(), new TaskRequest("T", "D"));
+        UUID runId = service.start(task.id()).latestRunId();
+        markRunTerminal(runId, WorkflowRunStatus.cancelled);
+        service.updateStatus(task.id(), WorkItemStatus.backlog, null, null);
+
+        service.delete(task.id());
+        entityManager.flush();
+
+        assertThat(taskRepo.existsById(task.id())).isFalse();
+        assertThat(jdbc.queryForList("SELECT task_id FROM workflow_run WHERE id = ?", UUID.class, runId))
+                .hasSize(1)
+                .containsOnlyNulls();
+    }
+
+    @Test
     void start_backlogTask_createsRunAndTransitionsToInProgress() {
         GitRepo r = makeRepo("https://github.com/test/task-start.git");
         StoryResponse story = makeStory(r.getId());

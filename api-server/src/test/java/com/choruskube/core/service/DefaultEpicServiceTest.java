@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verify;
 
 import com.choruskube.core.SharedContextTest;
 import com.choruskube.core.StorySpecFixtures;
+import com.choruskube.core.config.GraphIds;
 import com.choruskube.core.config.SingleTenant;
 import com.choruskube.core.dto.CreateDependencyRequest;
 import com.choruskube.core.dto.DependencyEdgeResponse;
@@ -29,16 +30,20 @@ import com.choruskube.core.model.GitRepo;
 import com.choruskube.core.model.RepoGroup;
 import com.choruskube.core.model.RepoGroupMember;
 import com.choruskube.core.model.Task;
+import com.choruskube.core.model.WorkflowRun;
 import com.choruskube.core.model.enums.Priority;
 import com.choruskube.core.model.enums.Readiness;
 import com.choruskube.core.model.enums.WorkItemStatus;
+import com.choruskube.core.model.enums.WorkflowRunStatus;
 import com.choruskube.core.observability.AuditSink;
 import com.choruskube.core.repository.GitRepoRepository;
+import com.choruskube.core.repository.GraphTemplateRepository;
 import com.choruskube.core.repository.RepoGroupRepository;
 import com.choruskube.core.repository.SoftwareProjectRepository;
 import com.choruskube.core.repository.StoryRepository;
 import com.choruskube.core.repository.TaskRepository;
 import com.choruskube.core.repository.WorkItemDependencyRepository;
+import com.choruskube.core.repository.WorkflowRunRepository;
 import com.choruskube.core.util.RepoNameUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -86,6 +91,12 @@ public class DefaultEpicServiceTest extends SharedContextTest {
 
     @Autowired
     private StoryRepository storyRepo;
+
+    @Autowired
+    private WorkflowRunRepository runRepo;
+
+    @Autowired
+    private GraphTemplateRepository templateRepo;
 
     @Autowired
     private WorkItemDependencyService dependencyService;
@@ -301,6 +312,23 @@ public class DefaultEpicServiceTest extends SharedContextTest {
 
         assertThat(storyRepo.findById(story.id())).isEmpty();
         assertThat(taskRepo.findById(task.id())).isEmpty();
+    }
+
+    @Test
+    void delete_withBacklogDescendantTaskThatHadARun_keepsTheRunUnlinked() {
+        GitRepo r = makeRepo("https://github.com/test/del-keeps-task-run.git");
+        EpicResponse epic = service.create(new EpicRequest("T", "D", null, r.getId()), null);
+        var story = makeStory(epic.id(), "S");
+        var task = taskService.create(story.id(), new TaskRequest("T", "D"));
+        UUID runId = finishedTaskRun(task.id());
+
+        service.delete(epic.id());
+        entityManager.flush();
+
+        assertThat(taskRepo.existsById(task.id())).isFalse();
+        assertThat(jdbc.queryForList("SELECT task_id FROM workflow_run WHERE id = ?", UUID.class, runId))
+                .hasSize(1)
+                .containsOnlyNulls();
     }
 
     @Test
@@ -977,6 +1005,17 @@ public class DefaultEpicServiceTest extends SharedContextTest {
         }
         group.setMembers(members);
         return repoGroupRepo.save(group);
+    }
+
+    private UUID finishedTaskRun(UUID taskId) {
+        WorkflowRun run = new WorkflowRun();
+        run.setGraphTemplateId(templateRepo
+                .findFirstByGraphIdOrderByVersionDesc(GraphIds.TASK_DELIVERY)
+                .orElseThrow()
+                .getId());
+        run.setStatus(WorkflowRunStatus.failed);
+        run.setTaskId(taskId);
+        return runRepo.saveAndFlush(run).getId();
     }
 
     private StoryResponse makeStory(UUID epicId, String title) {

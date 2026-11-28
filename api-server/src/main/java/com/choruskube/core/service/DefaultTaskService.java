@@ -655,11 +655,17 @@ public class DefaultTaskService implements TaskService {
      * completion: the most recent run must be terminal.
      */
     private TaskResponse reopenCore(Task task, UUID outcomeRunId) {
-        if (task.getStatus() != WorkItemStatus.in_progress) {
+        // Locked like startCore: a re-trigger committing a new run while this still read the old one
+        // as finished would otherwise be overwritten to backlog, leaving a live run on a backlog Task.
+        UUID id = task.getId();
+        Task locked = repo.findWithLockById(id).orElseThrow(() -> new NotFoundException("Task not found: " + id));
+        entityManager.refresh(locked);
+
+        if (locked.getStatus() != WorkItemStatus.in_progress) {
             throw new ConflictException("Can only reopen tasks that are in progress");
         }
         WorkflowRun mostRecent =
-                mostRecentRun(task.getId()).orElseThrow(() -> new ConflictException("Task has no linked workflow run"));
+                mostRecentRun(id).orElseThrow(() -> new ConflictException("Task has no linked workflow run"));
         if (!TERMINAL_STATUSES.contains(mostRecent.getStatus())) {
             throw new ConflictException(
                     "Cannot reopen: most recent run is still active (status: " + mostRecent.getStatus() + ")");
@@ -669,11 +675,11 @@ public class DefaultTaskService implements TaskService {
                     "runId " + outcomeRunId + " does not match the Task's most recent run " + mostRecent.getId());
         }
 
-        task.setStatus(WorkItemStatus.backlog);
-        task = repo.save(task);
-        TaskResponse response = toResponse(task);
+        locked.setStatus(WorkItemStatus.backlog);
+        Task saved = repo.save(locked);
+        TaskResponse response = toResponse(saved);
         eventPublisher.publishRoadmapItemChanged(
-                "task", task.getId(), task.getStatus().name());
+                "task", saved.getId(), saved.getStatus().name());
         return response;
     }
 
