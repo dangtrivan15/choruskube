@@ -31,7 +31,9 @@ The orchestrator does **not** create containers itself. It dispatches each ready
 as a **Temporal activity**, and a **Worker** — a process subscribed to the node's task
 queue — picks it up and creates the workload itself:
 
-- an **isolated Docker container** when running locally, or
+- a **Docker container** when running locally, on the compose stack's own network beside
+  every other service: a compose stack is a trusted single-operator environment, not a
+  security boundary ([why](docs/decisions/2026-11-28---01-compose-stacks-are-a-trusted-environment-not-a-boundary.md)), or
 - a **Kubernetes Job** when running in a cluster.
 
 The Worker owns the executor, and on a self-hosted install it also holds the
@@ -317,12 +319,9 @@ presign path:
 | URL with an added query parameter (a subresource or an upload id) | refused |
 | the same URLs sent unmodified | succeed, so the refusals above are not vacuous |
 
-`web-ui/e2e/specs/presigned-request-contract.spec.ts` repeats the copy-source and
-retarget refusals from inside a real agent container, against a URL the api-server
-actually minted — the one hop the store-backed test cannot reach. Any store a
-deployment of this project uses must leave its trusted-proxy allowlist empty, so a
-caller-supplied forwarding prefix is never joined to the routed path. Why the pin that
-both tests run against may only move to a release at or past 4.49, and what else was
+Any store a deployment of this project uses must leave its trusted-proxy allowlist
+empty, so a caller-supplied forwarding prefix is never joined to the routed path. Why
+the pin the test runs against may only move to a release at or past 4.49, and what else was
 considered: [docs/decisions/2026-11-25---01-object-store-acts-only-on-the-signed-object.md](docs/decisions/2026-11-25---01-object-store-acts-only-on-the-signed-object.md).
 
 ```mermaid

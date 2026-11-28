@@ -4,7 +4,7 @@
 
 Giving an AI coding agent free rein over your codebase is a leap of faith.
 ChorusKube lets you define work as a directed graph — AI tasks, scripts, and
-human-approval gates — and runs each node as an isolated container, so agents
+human-approval gates — and runs each node in its own container, so agents
 do the work while you keep control. AI nodes run [Claude Code](https://claude.com/claude-code)
 against a target git repo; a Temporal-backed orchestrator drives the graph and
 a Worker owns the container lifecycle.
@@ -16,8 +16,8 @@ the API is open and every request is scoped to a seeded "system" organization.
 
 - **Workflow as a DAG** — model spec → plan → implement → test → review → merge
   as a graph with mandatory gates. Conditional routing and revision loops included.
-- **Container isolation** — every node runs in its own ephemeral container with a
-  unique per-execution secret; agents get autonomy in a sandbox, not your cluster.
+- **A container per node** — every node runs in its own ephemeral container with a
+  unique per-execution secret; agents get autonomy in their own container, not on your host.
 - **Human-in-the-loop** — pause at review gates, inspect predecessor outputs and
   artifacts, then approve, reject, or request changes that feed the next iteration.
 - **Live monitoring** — watch the graph advance node-by-node over WebSocket; the
